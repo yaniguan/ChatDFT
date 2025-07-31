@@ -1,0 +1,281 @@
+{
+  "new": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Ask me about DFT setups, POSCAR/INCAR generation, job submission, error fixes, or post\u2011analysis."
+    },
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": "\u2757 **Backend error**\n\n> HTTPConnectionPool(host='localhost', port=8080): Max retries exceeded with url: /chat/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x1239631f0>: Failed to establish a new connection: [Errno 61] Connection refused'))"
+    }
+  ],
+  "Cu": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "how to simulate cu 111 surface in terms of electronic structure"
+    },
+    {
+      "role": "assistant",
+      "content": "\u2757 **Backend error**\n\n> HTTPConnectionPool(host='localhost', port=8080): Max retries exceeded with url: /chat/ask (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x123d97dc0>: Failed to establish a new connection: [Errno 61] Connection refused'))"
+    },
+    {
+      "role": "user",
+      "content": "how to simulate cu 111 surface in terms of electronic structure\n"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "how to simulate cu 111 surface in terms of electronic structure\n"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "how to simulate cu 111 surface in terms of electronic structure"
+    },
+    {
+      "role": "assistant",
+      "content": "**You asked:** how to simulate cu 111 surface in terms of electronic structure\n\nHere is a brief answer (LLM output here)."
+    },
+    {
+      "role": "user",
+      "content": "how to simulate cu 111 surface in terms of electronic structure\n"
+    },
+    {
+      "role": "assistant",
+      "content": "**You asked:** how to simulate cu 111 surface in terms of electronic structure\n\n\nHere is a brief answer (LLM output here)."
+    }
+  ],
+  "Zn": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "I want to calculate the electronic strcutue properties of Zn"
+    },
+    {
+      "role": "assistant",
+      "content": "\u2757 **Backend error**\n\n> 404 Client Error: Not Found for url: http://localhost:8080/chat/ask (status 404)"
+    }
+  ],
+  "k": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "electronic structure of Zn"
+    },
+    {
+      "role": "assistant",
+      "content": "\u2757 **Backend error**\n\n> 404 Client Error: Not Found for url: http://localhost:8080/chat/ask (status 404)"
+    }
+  ],
+  "zn": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "I want calculate the dos of Cu"
+    },
+    {
+      "role": "assistant",
+      "content": "\u2757 **Backend error**\n\n> 404 Client Error: Not Found for url: http://localhost:8080/chat/ask (status 404)"
+    }
+  ],
+  "cbn": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "electronic structure of Cu"
+    },
+    {
+      "role": "user",
+      "content": "cu surface"
+    },
+    {
+      "role": "user",
+      "content": "what"
+    },
+    {
+      "role": "user",
+      "content": "cao"
+    }
+  ],
+  "test": [],
+  "xcv": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "electronic structure of CuO"
+    },
+    {
+      "role": "user",
+      "content": "Cu dos"
+    },
+    {
+      "role": "user",
+      "content": "electronic structure of CuO\n"
+    }
+  ],
+  "cuo": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "electronic structure dos of cu"
+    },
+    {
+      "role": "user",
+      "content": "electronic structure of Cu"
+    }
+  ],
+  "Cuoo": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "Cu dos"
+    }
+  ],
+  "awe": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "cu dos"
+    },
+    {
+      "role": "user",
+      "content": "cu dos\n"
+    }
+  ],
+  "googo": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "I wan t study the dos of Cu under O"
+    }
+  ],
+  "cchjsdf": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "dos of Cu"
+    }
+  ],
+  "newwwww": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "Cu dos uder O adsorption"
+    }
+  ],
+  "dnkjhsdkgh": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "Cu dos after adsorption of O"
+    }
+  ],
+  "agent": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "cu dos after o adsorption"
+    }
+  ],
+  "cudo2": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "cu dos after o adsorption"
+    }
+  ],
+  "ejksdhfk": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "cu"
+    },
+    {
+      "role": "user",
+      "content": "Cu dos after o adsorption"
+    },
+    {
+      "role": "user",
+      "content": "I want to study the dos change of Cu 111 surface after the adsorption of O"
+    }
+  ],
+  "dosdos": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "dos"
+    }
+  ],
+  "dhfkjahsjl": [
+    {
+      "role": "assistant",
+      "content": "\ud83d\udc4b Hi! Welcome to ChatDFT, what can I help?"
+    },
+    {
+      "role": "user",
+      "content": "dos"
+    }
+  ]
+}
