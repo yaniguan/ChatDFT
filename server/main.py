@@ -8,9 +8,9 @@ from server.chat.history_agent import router as history_router
 from server.chat.session_agent import router as session_router
 
 app = FastAPI()
+app.include_router(session_router)
 app.include_router(intent_router)
+app.include_router(history_router)
+app.include_router(knowledge_router)
 app.include_router(hypothesis_router)
 app.include_router(plan_router)
-app.include_router(knowledge_router)
-app.include_router(history_router)
-app.include_router(session_router)

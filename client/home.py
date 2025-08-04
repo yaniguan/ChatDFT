@@ -86,6 +86,7 @@ Key features:
 - Scientific knowledge retrieval
 - Full chat session history persistence
 """)
+    st.image("utils/figures/ChatDFT_pipeline.png", caption="ChatDFT Pipeline Overview", use_container_width=True)
 
 def render_paper():
     st.header("Paper")
