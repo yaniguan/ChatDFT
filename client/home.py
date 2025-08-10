@@ -1,78 +1,221 @@
+# -*- coding: utf-8 -*-
+"""
+ChatDFT 前端（Streamlit）
+- 工作流计划 & 表单值 per-session 缓存，刷新/编辑不会丢失
+- Expander 打开/关闭状态持久化在 session_state
+- “🔄 Regenerate Plan” 按钮：显式清除 plan 缓存并重新请求
+- 全功能 sidebar: 会话创建、选择、编辑、删除
+- 支持 ChatDFT 主 chat、各 tools 页面、Overview 介绍
+"""
+
+from __future__ import annotations
+import json, hashlib, time
 import streamlit as st
 from utils.api import post
-import time
 
-st.set_page_config(page_title="ChatDFT", layout="wide")
-st.title("🔬 ChatDFT")
+# ------------------------------------------------------------------
+# 🔧  helpers --------------------------------------------------------
+# ------------------------------------------------------------------
 
-# --------- Session State Init -----------
-if "session_id" not in st.session_state:
-    st.session_state.session_id = None
-if "current_chat" not in st.session_state:
-    st.session_state.current_chat = None
-if "workflow_steps" not in st.session_state:
-    st.session_state.workflow_steps = []
-if "workflow_results" not in st.session_state:
-    st.session_state.workflow_results = {}
-if "workflow_last_query" not in st.session_state:
-    st.session_state.workflow_last_query = ""
+def _sig(obj) -> str:
+    """Stable md5 signature of a (JSON-serialisable) object."""
+    return hashlib.md5(json.dumps(obj, sort_keys=True).encode()).hexdigest()
 
-# --------- API Helper -----------
-def get_sessions():
-    res = post("/chat/session/list", {})
-    return res.get("sessions", [])
+def _get_val(key: str, fallback):
+    """Return a value from session_state if it exists (used to persist widgets)."""
+    return st.session_state.get(key, fallback)
 
-def create_session(name):
-    res = post("/chat/session/create", {"name": name})
-    return res.get("session_id", None)
+# ------------------------------------------------------------------
+# ♻️  Per-session plan cache ----------------------------------------
+# ------------------------------------------------------------------
 
-def get_history(session_id):
-    res = post("/chat/history", {"session_id": session_id, "limit": 1000})
-    return res.get("messages", [])
+_PLAN_CACHE_KEY = "cached_plan"
 
+def _get_cached_plan(session_id: int, intent: dict, force: bool = False):
+    cache: dict = st.session_state.setdefault(_PLAN_CACHE_KEY, {})
+    intent_sig = _sig(intent)
+    ent = cache.get(session_id)
+    if ent and not force and ent["sig"] == intent_sig:
+        return ent["tasks"], ent.get("suggestions", {})
+    res = post("/chat/plan", {"session_id": session_id, "intent": intent})
+    tasks        = res.get("tasks", [])
+    suggestions  = res.get("suggestions", {})
+    cache[session_id] = {"sig": intent_sig, "tasks": tasks, "suggestions": suggestions}
+    return tasks, suggestions
+
+# ------------------------------------------------------------------
+# 🖼️  UI helpers ----------------------------------------------------
+# ------------------------------------------------------------------
+
+def _exp(title: str, state_key: str):
+    """Persistent expander – remembers open/close across reruns."""
+    expanded = _get_val(state_key, True)
+    expander = st.expander(title, expanded=expanded)
+    st.session_state[state_key] = expander._is_open  # type: ignore[attr-defined]
+    return expander
+
+# --------- 自动渲染 dict 字段的表单工具 ---------
+def render_dict_form(obj_dict, exclude=("id", "created_at", "updated_at"), prefix=""):
+    new_dict = obj_dict.copy()
+    for k, v in obj_dict.items():
+        if k in exclude:
+            st.text(f"{prefix}{k}: {v}")
+        elif isinstance(v, bool):
+            new_dict[k] = st.checkbox(f"{prefix}{k}", value=v)
+        elif isinstance(v, int) or isinstance(v, float):
+            new_dict[k] = st.number_input(f"{prefix}{k}", value=v)
+        elif isinstance(v, str) or v is None:
+            new_dict[k] = st.text_input(f"{prefix}{k}", value=v or "")
+        elif isinstance(v, dict) or isinstance(v, list):
+            new_dict[k] = st.text_area(f"{prefix}{k}", value=str(v) if v is not None else "")
+        else:
+            new_dict[k] = st.text_input(f"{prefix}{k}", value=str(v))
+    return new_dict
+
+# ------------------------------------------------------------------
+# 🌱  Initial session_state slots -----------------------------------
+# ------------------------------------------------------------------
+
+_DEFAULTS = {
+    "session_id":       None,
+    "current_chat":     None,
+    "workflow_steps":   [],
+    "workflow_results": {},
+    "workflow_last_query": "",
+    "last_intent":      {},
+    "guided_send":      None,
+    "force_send":       False,
+    _PLAN_CACHE_KEY:     {},
+}
+for k, v in _DEFAULTS.items():
+    st.session_state.setdefault(k, v)
+
+# ------------------------------------------------------------------
+# 🔗  Thin API wrappers ---------------------------------------------
+# ------------------------------------------------------------------
+
+def get_sessions():             return post("/chat/session/list",   {}).get("sessions", [])
+def create_session(**kw):       return post("/chat/session/create", kw).get("session_id")
+def update_session(**kwargs):   return post("/chat/session/update", kwargs).get("ok", False)
+def delete_session(sid):        return post("/chat/session/delete", {"id": sid}).get("ok")
+def get_history(sid):           return post("/chat/history", {"session_id": sid, "limit": 1000}).get("messages", [])
+def append_msg(sid, role, txt): post("/chat/message/create", {"session_id": sid, "role": role, "content": txt})
+def get_messages(session_id):   return post("/chat/message/list", {"session_id": session_id}).get("messages", [])
+def create_message(**kwargs):   return post("/chat/message/create", kwargs).get("message_id", None)
+def update_message(**kwargs):   return post("/chat/message/update", kwargs).get("ok", False)
+def delete_message(message_id): return post("/chat/message/delete", {"id": message_id}).get("ok", False)
 def append_message(session_id, role, content):
     post("/chat/message/create", {"session_id": session_id, "role": role, "content": content})
 
-# --------- Sidebar Chat Sessions -----------
-SECTION_NAMES = ["Overview", "ChatDFT", "Tools"]
-section = st.sidebar.selectbox("Section", SECTION_NAMES)
+# ------------------------------------------------------------------
+# 📋  Task & workflow rendering -------------------------------------
+# ------------------------------------------------------------------
 
-if section == "Overview":
-    page = st.sidebar.selectbox("Page", ["Introduction", "Paper"])
-elif section == "ChatDFT":
-    st.sidebar.header("Chat Sessions")
-    sessions = get_sessions()
-    chat_names = [s["name"] for s in sessions]
-    session_ids = [s["id"] for s in sessions]
+def _render_task(session_id: int, t: dict):
+    st.markdown(
+        f"""<div style='background:#f7fbff;border-radius:8px;padding:12px 14px;margin:10px 0;'>
+        <b>{t['id']}. {t.get('name','Task')}</b> <span style='color:#888'>(agent {t.get('agent','-')})</span><br>
+        <span style='color:#222'>{t.get('description','')}</span></div>""",
+        unsafe_allow_html=True)
 
-    new_name = st.sidebar.text_input("New chat name", key="new_chat_name")
-    if st.sidebar.button("🆕 Create Chat"):
-        if new_name.strip():
-            new_session_id = create_session(new_name)
-            st.session_state.session_id = new_session_id
-            st.session_state.current_chat = new_name
-            # 重新拉一次 sessions，刷新 sidebar
-            st.rerun()  # Streamlit 1.24+ 用 st.rerun()
-        else:
-            st.sidebar.warning("Please enter a non-empty name.")
+    # ---- form controls -------------------------------------------
+    form_vals = {}
+    for f in t.get("params", {}).get("form", []):
+        ctrl_key = f"{t['id']}:{f.get('key','k')}"
+        ftype    = f.get("type", "text")
+        label    = f.get("label", ctrl_key)
+        help_t   = f.get("help", "")
+        default  = _get_val(ctrl_key, f.get("value", ""))
 
-    if chat_names:
-        choice = st.sidebar.selectbox("Open chat", chat_names, key="open_chat")
-        if choice:
-            idx = chat_names.index(choice)
-            st.session_state.session_id = session_ids[idx]
-            st.session_state.current_chat = choice
-    page = None
-else:
-    page = st.sidebar.selectbox("Page", [
-        "Materials Obtain 🔍",
-        "POSCAR Builder 💧",
-        "INCAR Copilot 🧪",
-        "Job Submission 🚀",
-        "Error Handling 🐞",
-        "Post Analysis 📊",
-        "Extended Modules",
-    ])
+        if ftype == "number":
+            form_vals[f["key"]] = st.number_input(label, float(default or 0), step=float(f.get("step",1)),
+                                                   key=ctrl_key, help=help_t)
+        elif ftype == "select":
+            opts = f.get("options", [])
+            form_vals[f["key"]] = st.selectbox(label, opts, index=opts.index(default) if default in opts else 0,
+                                                key=ctrl_key, help=help_t)
+        elif ftype == "checkbox":
+            form_vals[f["key"]] = st.checkbox(label, bool(default), key=ctrl_key, help=help_t)
+        elif ftype == "textarea":
+            form_vals[f["key"]] = st.text_area(label, str(default), key=ctrl_key, help=help_t)
+        else:  # text
+            form_vals[f["key"]] = st.text_input(label, str(default), key=ctrl_key, help=help_t)
+
+    # ---- Run button ----------------------------------------------
+    if st.button("Run", key=f"run-{t['id']}"):
+        payload = {"session_id": session_id, **t.get("params", {}).get("payload", {}), **form_vals}
+        with st.spinner("Running agent …"):
+            res = post(f"/agent/{t.get('agent')}", payload)
+        st.success(res.get("result", "Completed.")) if res.get("ok") else st.error(res.get("detail", "Failed."))
+
+def _render_workflow(session_id: int, intent: dict, *, force: bool = False):
+    tasks, suggestions = _get_cached_plan(session_id, intent, force)
+    if not tasks:
+        st.info("Workflow not ready. Try again later.")
+        return
+
+    # 🔄 regenerate button
+    if st.button("🔄 Regenerate Plan", key="regen-plan"):
+        _get_cached_plan(session_id, intent, force=True)  # refresh cache
+        st.rerun()
+
+    # -------- sections -------------------------------------------
+    sections = {
+        "ideas":         ("🧭 Ideas & Literature",     "Ideas & Literature"),
+        "calc_flow":     ("🧪 Calculation Flow",        "Calculation Flow"),
+        "post":          ("📊 Post-analysis",           "Post-analysis"),
+        "report":        ("📝 Report",                  "Report"),
+    }
+    for skey, (title, sec_name) in sections.items():
+        with _exp(title, f"exp_{skey}"):
+            for t in filter(lambda x: x["section"] == sec_name, tasks):
+                _render_task(session_id, t)
+    # suggestions --------------------------------------------------
+    if suggestions:
+        st.markdown("---")
+        for k, vals in suggestions.items():
+            st.markdown(f"**Suggestions – {k}:** " + " ".join(f"`{v}`" for v in vals))
+
+# ------------------------------------------------------------------
+# 🗣️  Chat interaction ---------------------------------------------
+# ------------------------------------------------------------------
+
+def _intent_and_hypothesis(query: str):
+    intent = post("/chat/intent", {"query": query})
+    hypo   = post("/chat/hypothesis", {"fields": intent.get("fields", {})})
+    return intent, hypo
+
+def _pill(intent: dict) -> str:
+    return (
+        f"**🎯 Intent:** {intent.get('intent','-')}  "
+        f"**Stage:** {intent.get('stage','-')}  "
+        f"**Domain:** {intent.get('domain','-')}  "
+        f"**Confidence:** {intent.get('confidence',0):.2f}")
+
+def _handle_query(session_id: int, query: str):
+    if not query.strip():
+        return
+    append_msg(session_id, "user", query)
+    intent, hypo = _intent_and_hypothesis(query)
+    st.session_state["last_intent"] = intent
+    with st.chat_message("assistant"): st.markdown(_pill(intent))
+    with st.chat_message("assistant"): st.markdown(hypo.get("result_md", "**Hypothesis:** N/A"))
+    _render_workflow(session_id, intent)
+
+# ------------------------------------------------------------------
+# 🖼️  Chat session view --------------------------------------------
+# ------------------------------------------------------------------
+
+def _chat_session(session_id: int):
+    st.markdown(f"<h2 style='margin-bottom:4px'>🔬 {_get_val('current_chat','')}</h2>", unsafe_allow_html=True)
+    # ---- history -------------------------------------------------
+    for m in get_history(session_id):
+        with st.chat_message("assistant" if m["role"].startswith("assistant") else "user"):
+            st.markdown(m["content"], unsafe_allow_html=True)
+    # ---- input ---------------------------------------------------
+    if q := st.chat_input("Type your DFT question …"):
+        with st.chat_message("user"): st.markdown(q)
+        _handle_query(session_id, q)
 
 # --------- Overview Pages -----------
 def render_introduction():
@@ -92,146 +235,7 @@ def render_paper():
     st.header("Paper")
     st.info("This section will host the core paper details and annotations—coming soon.")
 
-# --------- Chat Renderer (with DB sync) -----------
-def render_chat_session(session_id):
-    # 拉历史
-    history = get_history(session_id)
-    # st.header(f"🔬 <span style='font-weight:600'>ChatDFT — {st.session_state.current_chat}</span>", unsafe_allow_html=True)
-# st.header(f"🔬 <span style='font-weight:600'>ChatDFT — {st.session_state.current_chat}</span>", unsafe_allow_html=True)
-    st.markdown(
-        f"<h2 style='margin-bottom:6px;'>🔬 <span style='font-weight:600'>ChatDFT — {st.session_state.current_chat}</span></h2>",
-        unsafe_allow_html=True
-    )
-    if not history:
-        welcome = "👋 Hi! Welcome to ChatDFT, what can I help?"
-        with st.chat_message("assistant"):
-            st.markdown(welcome)
-    for msg in history:
-        st.markdown(msg["content"], unsafe_allow_html=True)
-
-    user_input = st.chat_input("Type your DFT question…")
-    if not user_input:
-        show_workflow_steps()
-        return
-
-    # 1. 保存用户消息
-    append_message(session_id, "user", user_input)
-
-    # 2. intent agent
-    try:
-        intent_res = post("/chat/intent", {"query": user_input})
-        intent_msg = f"<b>🎯 Intent:</b> <span style='color:#146c43'>{intent_res.get('intent', 'N/A')}</span> &nbsp; <b>Confidence:</b> <span style='color:#146c43'>{intent_res.get('confidence', 0):.2f}</span>"
-        st.markdown(
-            f"""<div style='background:#e3f6e8;border-radius:10px;padding:10px 16px;margin:8px 0 4px 0;'>{intent_msg}</div>""",
-            unsafe_allow_html=True)
-        append_message(session_id, "assistant_intent", intent_msg)
-    except Exception as e:
-        st.warning(f"Intent agent error: {e}")
-        intent_res = {}
-
-    # 3. hypothesis agent
-    try:
-        hypo_res = post("/chat/hypothesis", {
-            "query": user_input,
-            "intent": intent_res.get("intent", None)
-        })
-        hypo_msg = f"<b>💡 Hypothesis:</b> {hypo_res.get('hypothesis', 'N/A')}"
-        st.markdown(
-            f"""<div style='background:#f8f5e6;border-radius:10px;padding:10px 16px;margin:8px 0 4px 0;'>{hypo_msg}</div>""",
-            unsafe_allow_html=True)
-        append_message(session_id, "assistant_hypothesis", hypo_msg)
-    except Exception as e:
-        st.warning(f"Hypothesis agent error: {e}")
-        hypo_res = {}
-
-    # 4. plan agent
-    try:
-        plan_res = post("/chat/plan", {
-            "query": user_input,
-            "intent": intent_res.get("intent"),
-            "hypothesis": hypo_res.get("hypothesis"),
-            "session_id": session_id,
-        })
-        if plan_res.get("ok") and plan_res.get("tasks"):
-            plan_md = "<div style='margin:10px 0 4px 0;'><b>📋 Workflow Steps</b></div>"
-            for t in plan_res["tasks"]:
-                plan_md += f"""<div style='background:#f2f8fc;border-radius:8px;padding:10px 14px;margin-bottom:6px;'>
-                <b>{t['id']}. {t['name']}</b> <span style='color:#888'>(agent: {t['agent']})</span><br>
-                <span style='color:#222'>{t['description']}</span></div>"""
-            st.markdown(plan_md, unsafe_allow_html=True)
-            append_message(session_id, "assistant_plan", plan_md)
-        else:
-            st.warning("No workflow generated.")
-    except Exception as e:
-        st.warning(f"Plan agent error: {e}")
-
-    # 5. knowledge agent
-    try:
-        knowledge_res = post("/chat/knowledge", {
-            "query": user_input,
-            "intent": intent_res.get("intent")
-        })
-        if knowledge_res and knowledge_res.get("result"):
-            know_md = f"<b>📚 Knowledge:</b> {knowledge_res['result']}"
-            st.markdown(
-                f"""<div style='background:#f2fcf6;border-radius:10px;padding:10px 16px;margin:8px 0 4px 0;'>{know_md}</div>""",
-                unsafe_allow_html=True)
-            # 源文献也存一份
-            srcs = ""
-            for s in knowledge_res.get("sources", []):
-                s_link = f"[{s['title']}]({s.get('url', '#')})" if s.get("url") else s["title"]
-                srcs += f"• {s_link}\n"
-                st.markdown(f"• {s_link}")
-            append_message(session_id, "assistant_knowledge", know_md + "\n" + srcs)
-    except Exception as e:
-        st.info(f"Knowledge agent error: {e}")
-
-    # 6. history agent
-    try:
-        hist = post("/chat/history", {"session_id": session_id, "limit": 5})
-        if hist and hist.get("messages"):
-            with st.expander("Recent History"):
-                for m in hist["messages"]:
-                    st.markdown(f"`{m['role']}`: {m['content']}")
-    except Exception as e:
-        st.info(f"History agent error: {e}")
-
-def show_workflow_steps():
-    steps = st.session_state.get("workflow_steps", [])
-    results = st.session_state.get("workflow_results", {})
-    user_input = st.session_state.get("workflow_last_query", "")
-
-    if steps:
-        st.markdown("<div style='margin-top:18px;margin-bottom:6px;font-weight:600'>📋 Workflow Steps</div>", unsafe_allow_html=True)
-        for t in steps:
-            key = f"workflow-task-{t['id']}"
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                st.markdown(
-                    f"""<div style='background:#f6f9fa;border-radius:8px;padding:10px 14px;margin-bottom:6px;'>
-                    <b>{t['id']}. {t['name']}</b> <span style='color:#888'>(agent: {t['agent']})</span><br>
-                    <span style='color:#222'>{t['description']}</span></div>""",
-                    unsafe_allow_html=True)
-            with col2:
-                clicked = st.button("Run", key=key)
-            if key in results or clicked:
-                if clicked and key not in results:
-                    agent_name = t.get("agent")
-                    if agent_name:
-                        agent_payload = {"query": user_input, "step_id": t["id"]}
-                        agent_res = post(f"/agent/{agent_name}", agent_payload)
-                        results[key] = agent_res
-                        st.session_state.workflow_results = results
-                    else:
-                        results[key] = {"detail": "No agent implemented. Please check or ask LLM for manual instruction."}
-                        st.session_state.workflow_results = results
-                out = results[key]
-                if out.get("ok"):
-                    st.success(out.get("result", "Completed."))
-                else:
-                    st.info(out.get("detail", "No agent response."))
-
-# --------- Tool Pages（你必须有这些定义）----------
+# --------- Tool Pages ----------
 def render_materials_obtain():
     st.header("Materials Obtain 🔍")
     st.write("（此处可实现你的材料获取模块）")
@@ -256,6 +260,70 @@ def render_post_analysis():
     st.header("Post Analysis 📊")
     st.write("（此处可实现后处理分析模块）")
 
+# ------------------------------------------------------------------
+# 🧭  Sidebar (sessions) -------------------------------------------
+# ------------------------------------------------------------------
+
+st.set_page_config(page_title="ChatDFT", layout="wide")
+st.title("🔬 ChatDFT")
+
+SECTION_NAMES = ["Overview", "ChatDFT", "Tools"]
+section = st.sidebar.selectbox("Section", SECTION_NAMES)
+
+if section == "Overview":
+    page = st.sidebar.selectbox("Page", ["Introduction", "Paper"])
+elif section == "ChatDFT":
+    st.sidebar.header("Chat Sessions")
+    sessions = get_sessions()
+    chat_names = [s["name"] for s in sessions]
+    session_ids = [s["id"] for s in sessions]
+    # --- 新建 Chat ---
+    with st.sidebar.expander("➕ New Chat", True):
+        form_new = {k:"" for k in ("name", "user_id", "project", "tags", "description", "status")}
+        form_new["pinned"] = False
+        form_new = render_dict_form(form_new, exclude=("id", "created_at", "updated_at"))
+        if st.button("🆕 Create Chat", key="create_chat_btn"):
+            if form_new["name"].strip():
+                new_session_id = create_session(**form_new)
+                st.session_state.session_id = new_session_id
+                st.session_state.current_chat = form_new["name"]
+                st.rerun()
+            else:
+                st.sidebar.warning("Please enter a non-empty name.")
+    # --- 选择并编辑 Chat ---
+    if chat_names:
+        choice = st.sidebar.selectbox("Open chat", chat_names, key="open_chat")
+        if choice:
+            idx = chat_names.index(choice)
+            st.session_state.session_id = session_ids[idx]
+            st.session_state.current_chat = choice
+            # 编辑当前 session
+            session = [s for s in sessions if s["id"] == st.session_state.session_id][0]
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("#### ✏️ Edit Chat")
+            edited = render_dict_form(session)
+            if st.sidebar.button("💾 Save Edit", key=f"save_{session['id']}"):
+                update_session(**edited)
+                st.sidebar.success("Updated!")
+                st.rerun()
+            if st.sidebar.button("❌ Delete Chat", key=f"del_{session['id']}"):
+                delete_session(session["id"])
+                st.sidebar.success("Deleted.")
+                st.session_state.session_id = None
+                st.session_state.current_chat = None
+                st.rerun()
+    page = None
+else:
+    page = st.sidebar.selectbox("Page", [
+        "Materials Obtain 🔍",
+        "POSCAR Builder 💧",
+        "INCAR Copilot 🧪",
+        "Job Submission 🚀",
+        "Error Handling 🐞",
+        "Post Analysis 📊",
+        "Extended Modules",
+    ])
+
 # --------- Main Dispatch ----------
 if section == "Overview":
     if page == "Introduction":
@@ -264,7 +332,7 @@ if section == "Overview":
         render_paper()
 elif section == "ChatDFT":
     if st.session_state.get("session_id"):
-        render_chat_session(st.session_state.session_id)
+        _chat_session(st.session_state["session_id"])
     else:
         st.info("Create or select a chat session from the sidebar.")
 else:

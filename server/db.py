@@ -1,163 +1,328 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, Float, UniqueConstraint, Boolean
-from datetime import datetime
+# server/db.py
+# -*- coding: utf-8 -*-
+from __future__ import annotations
 
 import os
+from datetime import datetime
+from typing import AsyncGenerator
+from sqlalchemy import (
+    Column, Integer, String, Text, DateTime, ForeignKey, JSON, Float,
+    UniqueConstraint, Boolean, Index
+)
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/chatdft")
+# -----------------------------------------------------------------------------
+# Engine / Session
+# -----------------------------------------------------------------------------
+# 例：postgresql+asyncpg://user:pass@host:5432/chatdft
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql+asyncpg://postgres:password@localhost:5432/chatdft"
+)
 
-engine = create_async_engine(DATABASE_URL, echo=True)
+# echo 可通过环境变量打开：SQLALCHEMY_ECHO=1
+ECHO = bool(int(os.environ.get("SQLALCHEMY_ECHO", "0")))
+
+engine = create_async_engine(DATABASE_URL, echo=ECHO, future=True, pool_pre_ping=True)
 AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
 
-# 用户、会话、任务模型举例
+# -----------------------------------------------------------------------------
+# Models
+# -----------------------------------------------------------------------------
 class ChatSession(Base):
     __tablename__ = "chat_session"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False)
-    user_id = Column(Integer)              # 新增
-    project = Column(String)               # 新增
-    tags = Column(String)                  # 新增，或用 JSON
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    name        = Column(String, nullable=False)
+    user_id     = Column(Integer)
+    project     = Column(String)
+    tags        = Column(JSON)
     description = Column(Text)
-    status = Column(String, default="active")
-    pinned = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    meta = Column(JSON)                    # 预留其它元数据
+    status      = Column(String, default="active")   # active / archived / ...
+    pinned      = Column(Boolean, default=False)
+
+    created_at  = Column(DateTime, default=datetime.utcnow)
+    updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    messages = relationship(
+        "ChatMessage",
+        back_populates="session",
+        cascade="all, delete-orphan",     # 如只做软删除，可注释掉
+        passive_deletes=True
+    )
 
 class ChatMessage(Base):
     __tablename__ = "chat_message"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    session_id = Column(Integer, ForeignKey("chat_session.id"))
-    role = Column(String, nullable=False)
-    content = Column(Text, nullable=False)
-    msg_type = Column(String)              # 新增
-    intent = Column(String)                # 这条对话消息的语义意图。例如 “material_search”。用户每发一句话，经由 intent agent 解析后，存入该字段。这样你后续能直接统计/检索“最近提过哪些意图”，或“intent 和回复内容的关系”。
-    confidence = Column(Float)             # 新增
-    llm_model = Column(String)             # 新增
-    source = Column(String)                # 新增
-    parent_id = Column(Integer)            # 新增，树状对话
-    attachments = Column(JSON)             # 新增
-    references = Column(JSON)              # 新增
-    feedback = Column(Text)                # 用户评价
-    token_usage = Column(Integer)
-    duration = Column(Float)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    session_id       = Column(Integer, ForeignKey("chat_session.id", ondelete="CASCADE"), index=True)
+    role             = Column(String, nullable=False, index=True)  # user / assistant / system
+    content          = Column(Text, nullable=False)
+    msg_type         = Column(String)
+    intent_stage     = Column(String)
+    intent_area      = Column(String)
+    specific_intent  = Column(String)
+    confidence       = Column(Float)
+    llm_model        = Column(String)
+    parent_id        = Column(Integer, ForeignKey("chat_message.id"), nullable=True)
+    attachments      = Column(JSON)
+    references       = Column(JSON)
+    feedback         = Column(Text)
+    token_usage      = Column(Integer)
+    duration         = Column(Float)
+
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    updated_at       = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    session = relationship("ChatSession", back_populates="messages")
+
+    __table_args__ = (
+        Index('idx_chatmessage_session_id', 'session_id'),
+        Index('idx_chatmessage_role', 'role'),
+    )
 
 class Knowledge(Base):
     __tablename__ = "knowledge"
-    id = Column(Integer, primary_key=True)
-    title = Column(String)
-    content = Column(Text)
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    title       = Column(String)
+    content     = Column(Text)
     source_type = Column(String)   # "arxiv", "wiki", "manual", "web", etc.
-    source_id = Column(String)     # 例如 arxiv_id/wiki_id
-    url = Column(String)
-    embedding = Column(JSON)       # 支持向量检索
-    tags = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    source_id   = Column(String)   # e.g. arxiv_id / wiki_id / crossref key
+    url         = Column(String)
+    doi         = Column(String, index=True)  # 稳定回源/去重
+    embedding   = Column(JSON)       # 可用于向量检索（或迁移到 pgvector）
+    tags        = Column(String)
+    created_at  = Column(DateTime, default=datetime.utcnow)
 
-class Paper(Base):
-    __tablename__ = "paper"
-    id = Column(Integer, primary_key=True)
-    arxiv_id = Column(String)
-    title = Column(String)
-    abstract = Column(Text)
-    authors = Column(String)
-    year = Column(Integer)
-    venue = Column(String)
-    url = Column(String)
-    pdf_path = Column(String)
-    tags = Column(String)
-    embedding = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-class Wiki(Base):
-    __tablename__ = "wiki"
-    id = Column(Integer, primary_key=True)
-    title = Column(String)
-    content = Column(Text)
-    url = Column(String)
-    tags = Column(String)
-    embedding = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint('source_type', 'source_id', name='_knowledge_src_uc'),
+        UniqueConstraint('doi', name='_knowledge_doi_uc'),
+    )
 
 class Hypothesis(Base):
     __tablename__ = "hypothesis"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    session_id = Column(Integer, ForeignKey("chat_session.id"))
-    message_id = Column(Integer, ForeignKey("chat_message.id"))
-    intent = Column(String) #  该假说/目标所属的意图类型（比如这条假说是关于 DOS 计算的，intent=postprocess_dos）。通常和 ChatMessage 是 1:1 或 1:n 的关系（一个对话可能推导出多个假说）。便于溯源和跨 session 归纳：如“所有关于 error_analysis 的假说长啥样”。
-    hypothesis = Column(Text, nullable=False)
-    confidence = Column(Float)
-    agent = Column(String)    # "gpt-4o", "user", etc.
-    feedback = Column(Text)
-    tags = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    session_id     = Column(Integer, ForeignKey("chat_session.id", ondelete="SET NULL"))
+    message_id     = Column(Integer, ForeignKey("chat_message.id", ondelete="SET NULL"))
+    intent_stage   = Column(String)
+    intent_area    = Column(String)
+    hypothesis     = Column(Text)
+    confidence     = Column(Float)
+    agent          = Column(String)
+    feedback       = Column(Text)
+    tags           = Column(JSON)
+    created_at     = Column(DateTime, default=datetime.utcnow)
 
 class IntentPhrase(Base):
     __tablename__ = "intent_phrase"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    intent = Column(String, nullable=False)         # 意图分类， 这个短语属于哪种意图（作为意图的 few-shot 表达示例）。存储意图训练数据：比如 “how do I relax the structure” → intent: “structure_building”。
-    phrase = Column(Text, nullable=False)           # 用户表达
-    confidence = Column(Float, default=1.0)         # 可选，置信度
-    source = Column(String, default="user")         # 可选，来源
-    author = Column(String)                         # 可选，创建者
-    example_type = Column(String, default="positive") # Few-shot prompt 辅助
-    lang = Column(String, default="en")             # 语言
-    remark = Column(Text)                           # 管理员备注
-    created_at = Column(DateTime, default=datetime.utcnow)
-    __table_args__ = (UniqueConstraint('intent', 'phrase', name='_intent_phrase_uc'),)
 
-class TaskObjectPhrase(Base):
-    __tablename__ = "task_object_phrase"
-    id = Column(Integer, primary_key=True)
-    task_type = Column(String, nullable=False)
-    object = Column(String)         # 如材料名/模型
-    phrase = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    tags = Column(String)
-    
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    intent_stage  = Column(String)
+    intent_area   = Column(String)
+    specific_task = Column(String)
+    phrase        = Column(Text, nullable=False)
+    confidence    = Column(Float, default=1.0)
+    source        = Column(String, default="user")
+    lang          = Column(String, default="en")
+    remark        = Column(Text)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('intent_stage', 'intent_area', 'specific_task', 'phrase', name='_intent_phrase_uc'),
+    )
+
 class WorkflowTask(Base):
     __tablename__ = "workflow_task"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    session_id = Column(Integer, ForeignKey("chat_session.id"))
-    step_id = Column(Integer)
-    name = Column(String)
-    description = Column(Text)
-    agent = Column(String)
-    status = Column(String, default="idle")
-    result = Column(JSON)
-    intent = Column(String) #  这个工作流 step 属于哪个意图（比如“生成 POSCAR”属于 structure_building）。
-    input_data = Column(JSON)
-    output_data = Column(JSON)
-    parent_task_id = Column(Integer, ForeignKey("workflow_task.id"), nullable=True)
-    priority = Column(Integer, default=0)
-    tags = Column(String)
-    run_time = Column(Float)
-    error_msg = Column(Text)
-    owner = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
 
-class Material(Base):
-    __tablename__ = "material"
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    session_id     = Column(Integer, ForeignKey("chat_session.id", ondelete="CASCADE"), index=True)
+    message_id     = Column(Integer, ForeignKey("chat_message.id", ondelete="SET NULL"))
+    parent_task_id = Column(Integer, ForeignKey("workflow_task.id", ondelete="SET NULL"), nullable=True)
+
+    step_order     = Column(Integer)
+    name           = Column(String)
+    description    = Column(Text)
+    agent          = Column(String)   # e.g. "run_dft" / "post_analysis"
+    engine         = Column(String)   # e.g. "VASP"
+    status         = Column(String, default="idle")
+
+    input_data     = Column(JSON)
+    output_data    = Column(JSON)
+    error_msg      = Column(Text)
+    run_time       = Column(Float)
+
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_workflowtask_session_id', 'session_id'),
+        Index('idx_workflowtask_name', 'name'),
+        Index('idx_workflowtask_agent', 'agent'),
+        Index('idx_workflowtask_status', 'status'),
+    )
+
+# ---------------- Execution Layer Structures ----------------
+class BulkStructure(Base):
+    __tablename__ = "bulk_structure"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    formula       = Column(String)
+    structure_data= Column(JSON)
+
+class SlabStructure(Base):
+    __tablename__ = "slab_structure"
+
+    id                  = Column(Integer, primary_key=True, autoincrement=True)
+    bulk_id             = Column(Integer, ForeignKey("bulk_structure.id", ondelete="CASCADE"))
+
+    miller_index        = Column(String, nullable=False)  # "1 1 1"
+    supercell_size      = Column(String)                  # "4x4x1"
+    layers              = Column(Integer)
+    fixed_layers        = Column(Integer)
+    vacuum_thickness    = Column(Float)                   # Å
+    termination         = Column(String)                  # "O-terminated"
+
+    shift               = Column(Float)
+    symmetry_reduction  = Column(Boolean, default=False)
+    is_symmetric_slab   = Column(Boolean, default=True)
+    min_slab_size       = Column(Float)
+    min_vacuum_size     = Column(Float)
+
+    slab_data           = Column(JSON)
+    cif_path            = Column(String)
+    poscar_path         = Column(String)
+
+    tags                = Column(JSON)
+    created_at          = Column(DateTime, default=datetime.utcnow)
+
+class AdsorptionStructure(Base):
+    __tablename__ = "adsorption_structure"
+
+    id                    = Column(Integer, primary_key=True, autoincrement=True)
+    slab_id               = Column(Integer, ForeignKey("slab_structure.id", ondelete="CASCADE"))
+    adsorbate_name        = Column(String)        # e.g. "H2O"
+    adsorbate_formula     = Column(String)
+    adsorption_site       = Column(String)        # "top", "bridge", "hollow"
+    site_coordinates      = Column(JSON)          # 分数坐标
+    coverage              = Column(Float)         # 覆盖率
+    orientation           = Column(JSON)          # 方向信息
+    height_above_surface  = Column(Float)         # Å
+
+    is_relaxed            = Column(Boolean, default=False)
+    adsorption_energy     = Column(Float)
+    cif_path              = Column(String)
+    poscar_path           = Column(String)
+
+    tags                  = Column(JSON)
+    created_at            = Column(DateTime, default=datetime.utcnow)
+
+class ModificationStructure(Base):
+    __tablename__ = "modification_structure"
+
+    id                 = Column(Integer, primary_key=True, autoincrement=True)
+    parent_type        = Column(String)     # "bulk" | "slab" | "adsorption"
+    parent_id          = Column(Integer)    # 对应 parent 的 ID
+
+    modification_type  = Column(String)     # "doping" | "vacancy" | "strain" | ...
+    parameters         = Column(JSON)
+    modified_data      = Column(JSON)
+    cif_path           = Column(String)
+    poscar_path        = Column(String)
+
+    created_at         = Column(DateTime, default=datetime.utcnow)
+
+# ---------------- Calculation / Scheduling / Post-analysis ----------------
+class CalculationParameter(Base):
+    __tablename__ = "calculation_parameter"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    structure_type  = Column(String)            # "bulk" | "slab" | "adsorption" | "modification"
+    structure_id    = Column(Integer)           # 对应结构 ID
+    engine          = Column(String)            # "VASP" | "CP2K" | ...
+    task_type       = Column(String)            # "relax" | "dos" | "neb" | "bader" | ...
+    incar_settings  = Column(JSON)              # 对 VASP
+    input_files     = Column(JSON)              # 其他引擎输入
+    explanation     = Column(Text)              # LLM 解释
+    suggestions     = Column(JSON)              # 参数优化建议
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+class JobSchedule(Base):
+    __tablename__ = "job_schedule"
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    calculation_id   = Column(Integer, ForeignKey("calculation_parameter.id", ondelete="CASCADE"))
+    scheduler_type   = Column(String)          # "SLURM" | "PBS" | "K8s" | "Cloud"
+    cluster_name     = Column(String)
+    queue            = Column(String)
+    nodes            = Column(Integer)
+    ntasks_per_node  = Column(Integer)
+    walltime         = Column(String)
+    submission_script= Column(Text)
+    status           = Column(String)          # "submitted" | "running" | "completed" | "failed"
+    submitted_at     = Column(DateTime)
+    completed_at     = Column(DateTime)
+    created_at       = Column(DateTime, default=datetime.utcnow)
+
+class PostAnalysis(Base):
+    __tablename__ = "post_analysis"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    calculation_id  = Column(Integer, ForeignKey("calculation_parameter.id", ondelete="CASCADE"))
+    analysis_type   = Column(String)           # "optimization" | "dos" | "band" | "elf" | "bader" | "neb" | ...
+    input_files     = Column(JSON)             # e.g. {"DOSCAR": "...", "ELFCAR": "..."}
+    extracted_data  = Column(JSON)             # e.g. {"band_gap": 1.2, "fermi_level": 5.1}
+    plots           = Column(JSON)             # 路径或元数据
+    llm_summary     = Column(Text)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI Depends 用法:
+        async with get_session() as s: ...  (框架内部处理)
+    """
+    async with AsyncSessionLocal() as s:
+        # 如果你在事务里做 commit/rollback，这里也可以 try/finally
+        yield s
+        # FastAPI 会在退出依赖时结束上下文；不需要手动 close
+
+# 说明：
+# - 开发环境可在 FastAPI 启动时自动建表：
+#   in server/main.py
+#     from server.db import Base, engine
+#     @app.on_event("startup")
+#     async def _create_all():
+#         async with engine.begin() as conn:
+#             await conn.run_sync(Base.metadata.create_all)
+# - 生产环境建议使用 Alembic 做迁移，避免直接 create_all。
+
+# ==== Executions (for records & finetuning) ====
+class ExecutionRun(Base):
+    __tablename__ = "execution_run"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    formula = Column(String, nullable=False)
-    source = Column(String)
-    cif = Column(Text)
-    properties = Column(JSON)
-    mp_id = Column(String)
-    structure_type = Column(String)
-    dimensionality = Column(Integer)
-    spacegroup = Column(String)
-    lattice_params = Column(JSON)
-    elements = Column(JSON)
-    bandgap = Column(Float)
-    magnetic = Column(String)
-    status = Column(String)
-    tags = Column(String)
-    owner = Column(String)
+    session_id = Column(Integer, ForeignKey("chat_session.id"), nullable=True)
+    workdir = Column(String, nullable=False)
+    tasks_json = Column(JSON)        # 全量 tasks（plan 阶段的）
+    selected_ids = Column(JSON)      # 本次执行选择了哪些 id
+    results_json = Column(JSON)      # 每步 {step, status, ...}
+    summary_json = Column(JSON)      # 可选：post_agent 的汇总
+    meta = Column(JSON)              # 预留字段（cluster、dry_run 等）
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+
+class ExecutionStep(Base):
+    __tablename__ = "execution_step"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("execution_run.id"), index=True)
+    step_order = Column(Integer)
+    name = Column(String)
+    agent = Column(String)
+    input_data = Column(JSON)        # 提交前的输入（参数、表单）
+    output_data = Column(JSON)       # 该步的产出（job_id、文件、数值）
+    status = Column(String)          # done / error / skipped
+    created_at = Column(DateTime, default=datetime.utcnow)
+    

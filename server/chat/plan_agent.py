@@ -1,134 +1,558 @@
-from fastapi import APIRouter, Request
-from pydantic import BaseModel
-from typing import List, Optional
-from server.db import AsyncSessionLocal, WorkflowTask
+# server/chat/plan_agent.py
+# -*- coding: utf-8 -*-
+"""
+Plan Agent — LLM-first + validation + light-seed fallback, no scaffolds.
+
+Features
+--------
+/chat/plan
+  - Parse intent (text/structured)
+  - Prefer external graph from hypothesis_agent; else ask LLM
+  - Electrochemical-safe filtering + size limits + confidence gating
+  - Output parallelized tasks (with /agent/* endpoints)
+
+/chat/execute
+  - Submit selected tasks to HPC; avoid raising 500 to frontend
+"""
+
+from __future__ import annotations
+from typing import Any, Dict, List, Tuple, Optional
+from pathlib import Path
+import tempfile, json, os, re
+from .contracts import Plan, Intent, HypothesisBundle
+
+from fastapi import APIRouter, FastAPI, Request, HTTPException
+import unicodedata, re
+
+def _slug(s) -> str:
+    s = str(s or "").strip()
+    try:
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    except Exception:
+        pass
+    s = re.sub(r"[^A-Za-z0-9._-]+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    return s or "job"
+# ---------- LLM wrapper ----------
+try:
+    from server.utils.openai_wrapper import chatgpt_call  # type: ignore
+except Exception:
+    async def chatgpt_call(messages, **kw):
+        return json.dumps({"steps": [], "intermediates": [], "coads": [], "ts": []})
+
+# ---------- Execution Layer ----------
+try:
+    from ..execution.structure_agent       import StructureAgent
+    from ..execution.parameters_agent      import ParametersAgent
+    from ..execution.hpc_agent             import HPCAgent
+    from ..execution.post_analysis_agent   import PostAnalysisAgent
+except Exception:
+    StructureAgent = object  # type: ignore
+    ParametersAgent = object  # type: ignore
+    HPCAgent = object  # type: ignore
+    PostAnalysisAgent = object  # type: ignore
 
 router = APIRouter()
 
-class Step(BaseModel):
-    id: int
-    name: str
-    description: str
-    agent: str
-    intent: Optional[str] = None
+# ========================= Tunables =========================
+DEFAULTS = dict(
+    USE_SEED_POLICY="auto",     # "auto" | "never" | "always"
+    CONF_THRESHOLD=0.55,        # < this -> light merge with seed
+    LIMITS={"inter": 40, "coads": 80, "ts": 40},
+    STRICT=True                 # ban charged species in intermediates (electrochem steps still allowed)
+)
 
-class PlanResult(BaseModel):
-    ok: bool
-    tasks: List[Step]
+# ========================= Intent parsing =========================
+def _extract_intent(body: Dict[str, Any]) -> Dict[str, Any]:
+    intent = body.get("intent") or {}
+    text   = (body.get("query") or body.get("text") or "").strip()
 
-# ---- 1. 内置 workflow map（你可以持续扩展） ----
+    def pick_rxn(t: str) -> str:
+        t = t.lower()
+        if any(k in t for k in ["her","hydrogen evolution"]): return "HER"
+        if any(k in t for k in ["co2rr","co2 reduction","co2->","co2 to"]): return "CO2RR"
+        if any(k in t for k in ["oer","oxygen evolution"]): return "OER"
+        if any(k in t for k in ["orr","oxygen reduction"]): return "ORR"
+        if any(k in t for k in ["msr","steam reform","ch4 reform"]): return "MSR"
+        if any(k in t for k in ["nrr","nitrogen reduction","nh3 synthesis"]): return "NRR"
+        if any(k in t for k in ["nor","nitrogen oxide reduction"]): return "NOR"
+        return "HER"
 
-ELECTRONIC_WORKFLOW = [
-    {"id": 1, "name": "Get Structure", "description": "Obtain target material structure.", "agent": "material", "intent": "material_search"},
-    {"id": 2, "name": "Geometry Optimization", "description": "Relax structure to minimum energy.", "agent": "job", "intent": "structure_building"},
-    {"id": 3, "name": "SCF Calculation", "description": "Run high-precision SCF calculation.", "agent": "job", "intent": "param_benchmark"},
-    {"id": 4, "name": "Electronic Analysis", "description": "Calculate DOS/band/charge as needed.", "agent": "job", "intent": "param_generation"},
-    {"id": 5, "name": "Post-processing", "description": "Analyze outputs (DOS, band, Bader etc).", "agent": "post", "intent": "postprocess_dos"},
-    {"id": 6, "name": "Generate Report", "description": "Summarize and visualize results.", "agent": "report", "intent": "other"}
-]
+    def pick_cat(t: str) -> str:
+        for m in ["pt","cu","ni","co","fe","ag","au","pd","rh","ir","ru"]:
+            if m in t: return m.upper()
+        return "Pt"
 
-GCE_WORKFLOW = [
-    {"id": 1, "name": "Get Catalyst Structure", "description": "Download/build catalyst slab.", "agent": "material", "intent": "material_search"},
-    {"id": 2, "name": "Surface Opt", "description": "Relax slab/adsorbate structure.", "agent": "job", "intent": "structure_building"},
-    {"id": 3, "name": "Symmetry Analysis", "description": "Check/reduce symmetry for surface.", "agent": "job", "intent": "param_suggestion"},
-    {"id": 4, "name": "Implicit Solvation", "description": "Apply continuum solvent & optimize.", "agent": "job", "intent": "param_generation"},
-    {"id": 5, "name": "Surface Charging (GCE)", "description": "Tune charge/run GCE-DFT.", "agent": "job", "intent": "job_submission"},
-    {"id": 6, "name": "Post-processing", "description": "Analyze charge, energy, workfunction.", "agent": "post", "intent": "postprocess_charge_density"},
-    {"id": 7, "name": "Generate Report", "description": "Summarize results and plots.", "agent": "report", "intent": "other"}
-]
+    def pick_facet(t: str) -> str:
+        for f in ["111","100","110","211","533"]:
+            if f in t: return f
+        return "111"
 
-NEB_WORKFLOW = [
-    {"id": 1, "name": "Get Initial Structure", "description": "Obtain initial/final structures.", "agent": "material", "intent": "material_search"},
-    {"id": 2, "name": "Transition State Path", "description": "Set up NEB or CI-NEB path.", "agent": "job", "intent": "param_generation"},
-    {"id": 3, "name": "NEB Calculation", "description": "Run NEB to search TS.", "agent": "job", "intent": "job_submission"},
-    {"id": 4, "name": "Post-process NEB", "description": "Analyze TS, barriers, visualize path.", "agent": "post", "intent": "postprocess_band"},
-    {"id": 5, "name": "Generate Report", "description": "Summarize reaction path.", "agent": "report", "intent": "other"}
-]
+    if not intent and text:
+        rxn = pick_rxn(text)
+        intent = {
+            "domain": "catalysis",
+            "problem_type": rxn,
+            "system": {"material": pick_cat(text), "catalyst": pick_cat(text), "facet": pick_facet(text)},
+        }
 
-WORKFLOW_MAP = {
-    "postprocess_dos": ELECTRONIC_WORKFLOW,
-    "electronic_structure": ELECTRONIC_WORKFLOW,
-    "gce_dft": GCE_WORKFLOW,
-    "grand_canonical": GCE_WORKFLOW,
-    "neb": NEB_WORKFLOW,
-    "transition_state": NEB_WORKFLOW,
-    # ...你可以继续扩展
-}
+    # normalize
+    sys = intent.get("system") or {}
+    intent["system"] = {
+        "material": (sys.get("material") or sys.get("catalyst") or "Pt"),
+        "catalyst": (sys.get("catalyst") or sys.get("material") or "Pt"),
+        "facet": sys.get("facet") or intent.get("facet") or "111",
+    }
+    intent["problem_type"] = intent.get("problem_type") or intent.get("reaction") or "HER"
+    return intent
 
-def match_workflow(intent, query=""):
-    intent = (intent or '').strip().lower()
-    q = (query or "").lower()
-    print("[DEBUG] intent:", intent)
-    for k, workflow in WORKFLOW_MAP.items():
-        print("[DEBUG] compare to:", k)
-        if (intent and intent == k) or (k in q):
-            print("[DEBUG] Matched:", k)
-            return workflow
-    print("[DEBUG] No workflow matched.")
-    return None
+# ========================= Seeds (only for fallback/merge) =========================
+def _seed_for(reaction: str) -> Tuple[List[str], List[str], List[Tuple[str, str]]]:
+    r = (reaction or "").upper()
+    if "HER" in r:
+        steps = ["H+ + e- + * -> H*", "H* + H+ + e- -> H2(g) + *", "H* + H* -> H2(g) + 2*"]
+        inter = ["*","H*","H2(g)","H2O*","OH*"]
+        pairs = [("H*","H*"),("H*","OH*")]
+        return steps, inter, sorted({tuple(sorted(p)) for p in pairs})
+    if "CO2RR" in r:
+        steps = ["CO2(g) + * -> CO2*", "CO2* + H+ + e- -> COOH*", "COOH* + H+ + e- -> CO* + H2O(g) + *", "CO* -> CO(g) + *"]
+        inter = ["*","CO2*","COOH*","CO*","H*","OH*","CO(g)","H2O(g)"]
+        pairs = [("CO*","H*"),("CO*","OH*")]
+        return steps, inter, sorted({tuple(sorted(p)) for p in pairs})
+    if "MSR" in r:
+        steps = ["CH4* + * -> CH3* + H*", "H2O* + * -> OH* + H*", "C* + O* -> CO*", "CO* -> CO(g) + *", "H* + H* -> H2(g) + *"]
+        inter = ["CH4*","CH3*","H*","H2O*","OH*","C*","O*","CO*","CO(g)","H2(g)","*"]
+        pairs = [("CO*","O*"),("CO*","OH*"),("CH3*","H*")]
+        return steps, inter, sorted({tuple(sorted(p)) for p in pairs})
+    return _seed_for("HER")
 
-# ---- 2. LLM planner fallback ----
-from server.utils.openai_wrapper import chatgpt_call
+# ========================= Cleaning & EC-safe balance =========================
+def _normalize_species(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"^\*([A-Za-z].*)$", r"\1*", s)  # *CO -> CO*
+    s = s.replace("**","*")
+    return s
 
-PLANNER_SYSTEM_PROMPT = """
-You are a scientific workflow planner for DFT research. 
-Given user's query, intent, hypothesis, output a workflow as structured JSON steps.
-Each step: id, name, description, agent, (optional) intent.
-Output strict JSON:
-{
-  "ok": true,
-  "tasks": [
-    {"id": 1, "name": "...", "description": "...", "agent": "...", "intent": "..."},
-    ...
-  ]
-}
-No explanation.
-"""
+_IGNORE_TOKENS = {"*", "e-", "e⁻", "e–"}
+def _neutral_expr(expr: str) -> str:
+    # map H+->H, OH- -> OH, ignore (g)/(l)/(aq)
+    x = expr.replace("(g)","").replace("(l)","").replace("(aq)","")
+    x = x.replace("H+","H").replace("OH-","OH")
+    return x
 
-async def call_gpt4o_planner(query, intent, hypothesis):
-    messages = [
-        {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Query: {query}\nIntent: {intent}\nHypothesis: {hypothesis}"}
-    ]
-    import json
-    text = await chatgpt_call(messages)
+def _elem_count(expr: str) -> Dict[str,int]:
+    expr = _neutral_expr(expr).replace("*","")
+    tokens = re.findall(r"([A-Z][a-z]?)(\d*)", expr)
+    out: Dict[str,int] = {}
+    for el, n in tokens:
+        out[el] = out.get(el,0) + (int(n or 1))
+    return out
+
+def _mass_balanced(step: str) -> bool:
+    """Electrochem-safe: allow steps with e-/H+/OH- by neutral mapping; '*' ignored."""
+    if "->" not in step: return False
+    L, R = [t.strip() for t in step.split("->",1)]
+    Lp = [p.strip() for p in L.split("+")]
+    Rp = [p.strip() for p in R.split("+")]
+    # if explicit electrons present, do relaxed check
+    relaxed = any(p in {"e-","e⁻","e–"} for p in Lp+Rp) or any(x in step for x in ["H+","OH-"])
+    def side_count(parts):
+        tot: Dict[str,int] = {}
+        for sp in parts:
+            spn = _normalize_species(sp)
+            if spn in _IGNORE_TOKENS: continue
+            c = _elem_count(spn)
+            for k,v in c.items(): tot[k] = tot.get(k,0)+v
+        return tot
     try:
-        res = json.loads(text)
-        return res
+        ok = side_count(Lp) == side_count(Rp)
+        return ok or relaxed
     except Exception:
-        return {"ok": False, "tasks": []}
+        return relaxed
 
-# ---- 3. API endpoint ----
+def _ok_intermediate(s: str, strict: bool = True) -> bool:
+    s = _normalize_species(s)
+    if not (s.endswith("*") or s.endswith("(g)") or s=="*"): return False
+    if strict and any(ch in s for ch in ["^","+","--","++"]): return False
+    return True
 
-@router.post("/chat/plan", response_model=PlanResult)
-async def chat_plan(request: Request):
-    data = await request.json()
-    query = data.get("query", "")
-    intent = data.get("intent", "")
-    hypothesis = data.get("hypothesis", "")
-    session_id = data.get("session_id")
-    # ① 规则优先
-    tasks = match_workflow(intent, query)
-    result = None
-    if tasks:
-        result = {"ok": True, "tasks": tasks}
+def _uniq_limit(items: List[Any], limit: int) -> List[Any]:
+    out, seen = [], set()
+    for x in items:
+        k = json.dumps(x, sort_keys=True) if not isinstance(x, str) else x
+        if k not in seen:
+            out.append(x); seen.add(k)
+            if len(out) >= limit: break
+    return out
+
+def _clean_all(steps: List[str], inter: List[str], limits: Dict[str,int], strict: bool) -> Tuple[List[str], List[str]]:
+    steps = [_normalize_species(s) for s in (steps or []) if isinstance(s, str)]
+    steps = [s for s in steps if "->" in s and _mass_balanced(s)]
+    inter = [_normalize_species(s) for s in (inter or []) if isinstance(s, str)]
+    inter = [s for s in inter if _ok_intermediate(s, strict=strict)]
+    steps = _uniq_limit(steps, limits["ts"])
+    inter = _uniq_limit(inter, limits["inter"])
+    return steps, inter
+
+# ========================= LLM generate + score =========================
+async def _llm_generate(intent: Dict[str, Any], hint: str, seed: Dict[str, Any]) -> Dict[str, Any]:
+    sys = (
+        "You are a senior researcher in heterogeneous electrocatalysis. "
+        "Return STRICT JSON with keys: steps, intermediates, coads, ts. "
+        "Use '*' for adsorbates, '(g)' for gas. Mass-balance elements ignoring electrons and explicit charges."
+    )
+    user = {"intent": intent, "hint": hint, "seed_hint": seed}
+    raw = await chatgpt_call(
+        [{"role":"system","content":sys},{"role":"user","content":json.dumps(user, ensure_ascii=False)}],
+        model="gpt-4o-mini", temperature=0.1, max_tokens=1800
+    )
+    m = re.search(r"\{.*\}", raw, re.S)
+    data = json.loads(m.group(0) if m else raw)
+    return {
+        "steps": data.get("steps", []),
+        "intermediates": data.get("intermediates", []),
+        "coads": data.get("coads", []),
+        "ts": data.get("ts", []),
+    }
+
+async def _llm_confidence(intent: Dict[str, Any], steps: List[str], inter: List[str]) -> float:
+    try:
+        prompt = {
+            "intent": intent,
+            "steps": steps[:20],
+            "intermediates": inter[:30],
+            "question": "Rate typicality/reasonableness 0.0-1.0 (float only)."
+        }
+        raw = await chatgpt_call(
+            [{"role":"system","content":"Return ONLY a float between 0 and 1."},
+             {"role":"user","content":json.dumps(prompt, ensure_ascii=False)}],
+            model="gpt-4o-mini", temperature=0.0, max_tokens=10
+        )
+        m = re.search(r"(?:0?\.\d+|1(?:\.0+)?)", raw)
+        return float(m.group(0)) if m else 0.0
+    except Exception:
+        return 0.0
+
+# ========================= Build tasks =========================
+def _build_tasks(intent: Dict[str, Any],
+                 steps: List[str], inter: List[str],
+                 coads_pairs: List[Tuple[str,str]], ts_edges: List[str]) -> List[Dict[str, Any]]:
+    catalyst = (intent.get("system") or {}).get("catalyst") or (intent.get("system") or {}).get("material") or "Pt"
+    facet    = (intent.get("system") or {}).get("facet") or "111"
+    tasks: List[Dict[str, Any]] = []
+    tid = 1
+    def _field(key, label, ftype="text", value="", **kw):
+        d = {"key": key, "label": label, "type": ftype, "value": value}
+        d.update({k:v for k,v in kw.items() if v is not None})
+        return d
+    def _task(section, name, agent, desc, form=None, payload=None, group=0, endpoint=None):
+        nonlocal tid
+        t = {
+            "id": tid, "section": section, "name": name, "agent": agent, "description": desc,
+            "params": {"form": form or [], "payload": payload or {}},
+            "meta": {"parallel_group": group, "action_endpoint": endpoint}
+        }
+        tid += 1
+        tasks.append(t)
+
+    # G1 slab
+    _task(
+        "Model", f"Build slab — {catalyst}({facet})", "structure.relax_slab",
+        f"Build/relax slab for {catalyst}({facet}).",
+        form=[
+            _field("engine","Engine","select","vasp", options=["vasp","qe"]),
+            _field("element","Element","text",catalyst),
+            _field("facet","Facet","text",facet),
+            _field("miller_index","Miller index","text","1 1 1" if facet=="111" else "1 0 0"),
+            _field("layers","Layers","number",4, step=1, min_value=2, max_value=10),
+            _field("vacuum_thickness","Vacuum (Å)","number",15.0, step=0.5, min_value=10, max_value=40),
+            _field("supercell","Supercell","text","4x4x1"),
+        ],
+        payload={"facet": facet},
+        group=1, endpoint="/agent/structure.relax_slab"
+    )
+
+    # G2 单吸附
+    adsorbates = [s for s in inter if s.endswith("*")]
+    for sp in adsorbates:
+        _task(
+            "Adsorption", f"Relax on sites — {sp}", "adsorption.scan",
+            f"Enumerate adsorption sites for {sp} and relax.",
+            form=[
+                _field("adsorbate","Adsorbate","text",sp),
+                _field("sites_csv","Sites","text","top,bridge,fcc,hcp"),
+                _field("force_thr","Force (eV/Å)","number",0.02, step=0.01, min_value=0.01,max_value=0.1),
+            ],
+            payload={"adsorbate": sp},
+            group=2, endpoint="/agent/adsorption.scan"
+        )
+
+    # G3 共吸附
+    for a, b in coads_pairs[:30]:
+        _task(
+            "Co-adsorption", f"Co-ads — {a}+{b}", "adsorption.co",
+            f"Create and relax co-adsorption configs for {a} + {b}.",
+            form=[_field("pair","Pair","text",f"{a},{b}"), _field("n_configs","Configs","number",4, step=1, min_value=1, max_value=12)],
+            payload={"pair":[a,b]},
+            group=3, endpoint="/agent/adsorption.co"
+        )
+
+    # G4 TS
+    for s in ts_edges[:20]:
+        _task(
+            "Transition States", f"NEB — {s}", "neb.run",
+            f"CI-NEB for elementary step: {s}",
+            form=[
+                _field("step","Elementary step","text",s),
+                _field("n_images","NEB images","number",7, step=1, min_value=3, max_value=15),
+                _field("climbing","Climbing image","checkbox",True),
+            ],
+            payload={"step": s},
+            group=4, endpoint="/agent/neb.run"
+        )
+
+    # G5 电子/后处理
+    _task(
+        "Electronic", "DOS/PDOS/Bader", "electronic.dos",
+        "Compute DOS/PDOS/Bader for key species.",
+        form=[
+            _field("dos","DOS","checkbox",True),
+            _field("pdos","PDOS","checkbox",True),
+            _field("bader","Bader","checkbox",True),
+            _field("pdos_species","PDOS species","text",", ".join(adsorbates[:6] or ["H*"])),
+        ],
+        payload={"species": adsorbates[:6]},
+        group=5, endpoint="/agent/electronic.dos"
+    )
+    _task(
+        "Post-analysis", "Assemble ΔG / barriers", "post.analysis",
+        "Assemble ΔG profile and barrier diagram from results.",
+        form=[
+            _field("temperature","Temperature (K)","number",298.15, step=1, min_value=200, max_value=1000),
+            _field("reference","Reference","select","RHE", options=["RHE","SHE","Ag/AgCl"]),
+        ],
+        payload={},
+        group=5, endpoint="/agent/post.analysis"
+    )
+    return tasks
+
+# ========================= /chat/plan =========================
+@router.post("/chat/plan")
+async def api_plan(request: Request):
+    body = await request.json()
+
+    USE_SEED_POLICY = body.get("use_seed_policy", DEFAULTS["USE_SEED_POLICY"])
+    CONF_THRESHOLD  = float(body.get("conf_threshold", DEFAULTS["CONF_THRESHOLD"]))
+    LIMITS          = body.get("limits", DEFAULTS["LIMITS"])
+    STRICT          = bool(body.get("strict", DEFAULTS["STRICT"]))
+
+    intent     = _extract_intent(body)
+    hypothesis = body.get("hypothesis") or ""
+    external_graph: Dict[str, Any] = body.get("graph") or {}  # from hypothesis_agent
+
+    # seed for fallback/merge
+    seed_steps, seed_inter, seed_coads = _seed_for(intent.get("problem_type",""))
+
+    # prefer external graph if given
+    if external_graph:
+        steps_raw = [s if isinstance(s,str) else "" for s in external_graph.get("reaction_network", [])]
+        inter_raw = [s for s in external_graph.get("intermediates", [])]
+        coads_raw = external_graph.get("coads_pairs", [])
+        ts_raw    = [s for s in external_graph.get("ts_edges", [])]
     else:
-        # ② LLM fallback
-        result = await call_gpt4o_planner(query, intent, hypothesis)
-    # ③ 插入到 DB
-    async with AsyncSessionLocal() as session:
-        if result.get("ok") and result.get("tasks"):
-            for t in result["tasks"]:
-                wf = WorkflowTask(
-                    session_id=session_id,
-                    step_id=t["id"],
-                    name=t["name"],
-                    description=t["description"],
-                    agent=t["agent"],
-                    intent=t.get("intent"),
-                    input_data={},  # 可根据实际补充
-                    status="planned"
+        # ask LLM, fallback safe
+        try:
+            llm_out = await _llm_generate(intent, hypothesis, {"seed": {"steps": seed_steps, "intermediates": seed_inter}})
+        except Exception:
+            llm_out = {"steps": seed_steps, "intermediates": seed_inter, "coads": [], "ts": []}
+        steps_raw = (llm_out.get("steps") or []) + (llm_out.get("ts") or [])
+        inter_raw = (llm_out.get("intermediates") or [])
+        coads_raw = llm_out.get("coads") or []
+        ts_raw    = llm_out.get("ts") or []
+
+    # clean + limit
+    steps, inter = _clean_all(steps_raw, inter_raw, LIMITS, STRICT)
+
+    # confidence (skip when force seed)
+    conf = 0.0
+    if USE_SEED_POLICY != "always" and not external_graph:
+        conf = await _llm_confidence(intent, steps, inter)
+
+    # light merge with seed when low confidence/forced
+    if USE_SEED_POLICY == "always" or (USE_SEED_POLICY == "auto" and conf < CONF_THRESHOLD):
+        steps = _uniq_limit(seed_steps + [s for s in steps if s not in seed_steps], LIMITS["ts"])
+        inter = _uniq_limit(seed_inter + [i for i in inter if i not in seed_inter], LIMITS["inter"])
+
+    # co-ads pairs
+    ads = [s for s in inter if s.endswith("*")]
+    if not coads_raw:
+        coads_pairs = sorted({tuple(sorted((a, "H*"))) for a in ads if a != "H*"})
+    else:
+        norm_pairs = []
+        for pr in coads_raw:
+            if isinstance(pr, (list, tuple)) and len(pr) == 2:
+                a, b = _normalize_species(pr[0]), _normalize_species(pr[1])
+                if a.endswith("*") and b.endswith("*") and a != b:
+                    norm_pairs.append(tuple(sorted((a,b))))
+        coads_pairs = _uniq_limit(norm_pairs, LIMITS.get("coads", 80))
+
+    # TS edges
+    ts_edges = [s for s in steps if "->" in s][:LIMITS["ts"]]
+    # prefer external ts if given
+    if external_graph.get("ts_edges"):
+        ts_edges = _uniq_limit([_normalize_species(s) for s in external_graph["ts_edges"] if "->" in s], LIMITS["ts"])
+
+    # build tasks
+    tasks = _build_tasks(intent, steps, inter, coads_pairs, ts_edges)
+
+    return {
+        "ok": True,
+        "intent": intent,
+        "confidence": round(conf, 3),
+        "reaction_network": steps,
+        "intermediates": inter,
+        "coads_pairs": coads_pairs,
+        "ts_edges": ts_edges,
+        "tasks": tasks,
+        "limits": LIMITS,
+        "strict": STRICT,
+        "use_seed_policy": USE_SEED_POLICY,
+        "used_external_graph": bool(external_graph),
+    }
+
+
+# ========================= Knowledge retrieval =========================
+import re, unicodedata
+
+# ========================= Execute =========================
+class PlanManager:
+    def __init__(self, cluster: str = "hoffman2", dry_run: bool = False, sync_back: bool = True):
+        self.struct_agent = StructureAgent() if StructureAgent != object else None
+        self.param_agent  = ParametersAgent() if ParametersAgent != object else None
+        self.hpc_agent    = HPCAgent(cluster=cluster, dry_run=dry_run, sync_back=sync_back) if HPCAgent != object else None
+        self.post_agent   = PostAnalysisAgent() if PostAnalysisAgent != object else None
+        self.dry          = dry_run
+    def _slug(s: str) -> str:
+        s = unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii")
+        return re.sub(r"[^A-Za-z0-9._-]+","_", s).strip("_") or "job"
+    
+    def _exec_task(self, task: Dict[str, Any], workdir: Path) -> Dict[str, Any]:
+        # 1) 先拿到 agent；避免 NameError
+        agent = (task.get("agent") or "").lower()
+
+        # 2) 安全的子目录名
+        safe = f"{int(task.get('id', 0)):02d}_{_slug(task.get('name', 'Task'))}"
+        job_dir = workdir / safe
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # ----- 元任务 -----
+            if agent in {"meta.clarify", "meta.scope"}:
+                (job_dir / "meta.json").write_text(
+                    json.dumps(task.get("params", {}) or {}, ensure_ascii=False, indent=2)
                 )
-                session.add(wf)
-            await session.commit()
-    return result
+                return {"id": task.get("id"), "step": task.get("name"), "status": "done(meta)"}
+
+            # ----- 结构/参数/HPC 提交类 -----
+            if agent in {
+                "structure.relax_slab", "structure.intermediates", "structure.relax_adsorbate",
+                "adsorption.scan", "adsorption.co", "neb.run", "electronic.dos", "run_dft", "post.energy"
+            }:
+                if self.struct_agent:
+                    self.struct_agent.build(task, job_dir)
+                if self.param_agent:
+                    self.param_agent.generate(task, job_dir)
+
+                if self.hpc_agent:
+                    payload = (task.get("params") or {}).get("payload") or {}
+                    step_info = {
+                        "name": task.get("name", "chatdft"),
+                        "engine": (payload.get("engine") or "vasp").lower(),
+                        "ntasks": payload.get("ntasks"),
+                        "walltime": payload.get("walltime"),
+                        "template_vars": payload.get("template_vars") or {},
+                    }
+
+                    # 可选：把会话/项目上下文传给 HPC，用于远端路径命名（如果你在 HPCAgent 里实现了 set_runtime_context）
+                    try:
+                        project = (payload.get("project")
+                                or (task.get("meta") or {}).get("project"))
+                        session_id = (task.get("meta") or {}).get("run_id")  # 或者外层传入
+                        if hasattr(self.hpc_agent, "set_runtime_context"):
+                            self.hpc_agent.set_runtime_context(project=project, session_id=session_id)
+                    except Exception:
+                        pass
+
+                    self.hpc_agent.prepare_script(step_info, job_dir)
+                    jid = self.hpc_agent.submit(job_dir)
+
+                    if not self.dry:
+                        self.hpc_agent.wait(jid, poll=60)
+                        self.hpc_agent.fetch_outputs(
+                            job_dir, filters=["OUTCAR", "vasprun.xml", "OSZICAR", "stdout", "stderr"]
+                        )
+
+                return {"id": task.get("id"), "step": task.get("name"), "status": "done(hpc)"}
+
+            # ----- post-only -----
+            if agent == "post.analysis":
+                if self.post_agent:
+                    self.post_agent.analyze(workdir)
+                return {"id": task.get("id"), "step": task.get("name"), "status": "done(post)"}
+
+            # 未知 agent
+            return {
+                "id": task.get("id"),
+                "step": task.get("name"),
+                "status": f"skipped (unknown agent: {agent})",
+            }
+
+        except Exception as e:
+            return {"id": task.get("id"), "step": task.get("name"), "status": f"error: {e}"}
+    
+    def execute_selected(self, all_tasks: List[Dict[str, Any]], selected_ids: List[int]) -> Dict[str, Any]:
+        work_root = Path(tempfile.mkdtemp(prefix="chatdft_"))
+        results = []
+        for t in all_tasks:
+            if t.get("id") in selected_ids:
+                results.append(self._exec_task(t, work_root))
+        try:
+            if self.post_agent:
+                self.post_agent.analyze(work_root)
+        except Exception:
+            results.append({"step":"post.analysis","status":"error: post_agent.analyze failed"})
+        def _sum(rows):
+            done = sum(1 for r in rows if str(r.get("status","")).startswith("done"))
+            err  = sum(1 for r in rows if str(r.get("status","")).startswith("error"))
+            skip = sum(1 for r in rows if str(r.get("status","")).startswith("skipped"))
+            return {"done": done, "error": err, "skipped": skip, "total": len(rows)}
+        return {"workdir": str(work_root), "results": results, "summary": _sum(results)}
+
+@router.post("/chat/execute")
+async def api_execute(request: Request):
+    data = await request.json()
+    try:
+        mgr = PlanManager(
+            cluster   = data.get("cluster", "hoffman2"),
+            dry_run   = bool(data.get("dry_run", False)),
+            sync_back = bool(data.get("sync_back", True)),
+        )
+        # 基本校验，避免 KeyError
+        all_tasks = data.get("all_tasks") or []
+        selected  = data.get("selected_ids") or []
+        if not isinstance(all_tasks, list) or not isinstance(selected, list):
+            return {"ok": False, "detail": "all_tasks or selected_ids malformed"}
+
+        res = mgr.execute_selected(all_tasks, selected)
+        return {"ok": True, **res}
+    except Exception as e:
+        # 记录更长的错误文本
+        import traceback
+        tb = traceback.format_exc()
+        # 不抛 500，直接把错误返回，前端就能看到
+        return {"ok": False, "detail": str(e), "traceback": tb}
+
+# ---- uvicorn entry ----
+app = FastAPI()
+app.include_router(router)

@@ -1,290 +1,264 @@
-from fastapi import APIRouter, Request
-from pydantic import BaseModel
-from typing import List, Optional
-from sqlalchemy.future import select
-from sqlalchemy import or_
-from server.db import AsyncSessionLocal, Knowledge, Paper, Wiki
-from datetime import datetime
-import numpy as np
+# -*- coding: utf-8 -*-
+"""
+Knowledge Agent — 只用 arXiv 抓文献（python-arxiv 库）
+可被 /chat/knowledge 路由调用，也可被 PlanManager 直接调用（run_knowledge）
+"""
+
+from __future__ import annotations
+from fastapi import APIRouter, Request, HTTPException
+from typing import Any, Dict, List, Optional
+import re, math
+
+import arxiv  # pip install arxiv
+
+# ---- DB models（按你项目里的路径）----
+from server.db import AsyncSessionLocal, ChatSession, ChatMessage, Knowledge, WorkflowTask
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 router = APIRouter()
 
-# ----------- 数据结构 -----------
-class SourceItem(BaseModel):
-    title: str
-    url: Optional[str] = None
+# --------------------- 轻量字符串工具 ---------------------
+def _norm(s: Optional[str]) -> str:
+    return (s or "").strip()
 
-class KnowledgeResult(BaseModel):
-    result: str
-    sources: List[SourceItem] = []
+def _mk_query(query: str, intent: Dict[str, Any]) -> str:
+    parts = [query]
+    f = intent or {}
 
-# ----------- Embedding 工具 -----------
-def get_embedding(text: str) -> list:
-    import openai
-    res = openai.Embedding.create(model="text-embedding-ada-002", input=[text])
-    return res["data"][0]["embedding"]
+    for k in ("reaction", "reaction_type", "domain"):
+        v = f.get(k)
+        if v: parts.append(str(v))
 
-def cosine_similarity(vec1, vec2):
-    vec1 = np.array(vec1)
-    vec2 = np.array(vec2)
-    return float(np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2) + 1e-9))
+    sys = (f.get("system") or {}) if "system" in f else {}
+    for k in ("material","catalyst","facet","molecule","defect"):
+        v = sys.get(k) if isinstance(sys, dict) else f.get(k)
+        if v: parts.append(str(v))
 
-# ----------- 外部检索 arXiv & Wikipedia -----------
-import arxiv
-import wikipedia
+    cond = f.get("conditions") or {}
+    for k in ("pH","potential","temperature","electrolyte","solvent"):
+        v = cond.get(k)
+        if v: parts.append(str(v))
 
-def search_arxiv(query, max_results=1):
-    try:
-        results = []
-        for r in arxiv.Search(query=query, max_results=max_results).results():
-            results.append({
-                "title": r.title,
-                "url": r.entry_id,
-                "summary": r.summary
-            })
-        return results
-    except Exception:
-        return []
+    tps = f.get("target_properties") or f.get("targets") or []
+    if isinstance(tps, list): parts += tps[:3]
 
-def search_wikipedia(query):
-    try:
-        hits = wikipedia.search(query, results=1)
-        if hits:
-            page = wikipedia.page(hits[0], auto_suggest=False)
-            return {
-                "title": page.title,
-                "url": page.url,
-                "summary": page.summary[:500]
-            }
-    except Exception:
-        return None
+    return " ".join(str(x) for x in parts if x)
 
-# ----------- 本地数据库检索 -----------
-async def retrieve_knowledge(query: str, limit=3, use_embedding=True):
-    async with AsyncSessionLocal() as session:
-        like_query = f"%{query}%"
-        results = []
-        # Knowledge
-        stmt = select(Knowledge).where(
-            or_(
-                Knowledge.title.ilike(like_query),
-                Knowledge.content.ilike(like_query),
-                Knowledge.tags.ilike(like_query)
-            )
-        ).limit(10)
-        rows = (await session.execute(stmt)).scalars().all()
-        for row in rows:
-            results.append({
-                "title": row.title,
-                "content": row.content,
-                "url": row.url,
-                "embedding": row.embedding or [],
-            })
-        # Paper
-        stmt = select(Paper).where(
-            or_(
-                Paper.title.ilike(like_query),
-                Paper.abstract.ilike(like_query),
-                Paper.tags.ilike(like_query)
-            )
-        ).limit(10)
-        rows = (await session.execute(stmt)).scalars().all()
-        for row in rows:
-            results.append({
-                "title": row.title,
-                "content": row.abstract,
-                "url": row.url,
-                "embedding": row.embedding or [],
-            })
-        # Wiki
-        stmt = select(Wiki).where(
-            or_(
-                Wiki.title.ilike(like_query),
-                Wiki.content.ilike(like_query),
-                Wiki.tags.ilike(like_query)
-            )
-        ).limit(10)
-        rows = (await session.execute(stmt)).scalars().all()
-        for row in rows:
-            results.append({
-                "title": row.title,
-                "content": row.content,
-                "url": row.url,
-                "embedding": row.embedding or [],
-            })
-        # Embedding 检索
-        if use_embedding and results:
-            qvec = get_embedding(query)
-            for r in results:
-                if r["embedding"]:
-                    r["sim"] = cosine_similarity(qvec, r["embedding"])
-                else:
-                    r["sim"] = 0.0
-            results.sort(key=lambda x: x["sim"], reverse=True)
-            results = results[:limit]
-        else:
-            results = results[:limit]
-        return results
+def _norm_title(t: str) -> str:
+    return re.sub(r"\s+", " ", (t or "").strip().lower())
 
-# ----------- 数据存储 -----------
-async def save_knowledge(query, result, sources=None, intent=None):
-    async with AsyncSessionLocal() as session:
-        entry = Knowledge(
-            title=f"QA:{query[:120]}",
-            content=result,
-            source_type="qa",
-            source_id=None,
-            url=None,
-            embedding=None,
-            tags=intent or "",
-            created_at=datetime.utcnow()
+def _dedup(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen = set(); out=[]
+    for r in records:
+        key = (r.get("doi") or "").lower() or _norm_title(r.get("title") or "")
+        if key and key not in seen:
+            seen.add(key); out.append(r)
+    return out
+
+def _score(record: Dict[str, Any], intent: Dict[str, Any], q: str) -> float:
+    title = (record.get("title") or "").lower()
+    abstr = (record.get("abstract") or "").lower()
+    text = f"{title} {abstr}"
+    hits = 0
+    keys: List[str] = []
+    f = intent or {}
+    keys += [str(f.get("reaction") or ""), str(f.get("reaction_type") or ""), str(f.get("domain") or "")]
+    sys = (f.get("system") or {}) if "system" in f else {}
+    for k in ("material","catalyst","facet","molecule","defect"):
+        v = sys.get(k) if isinstance(sys, dict) else f.get(k)
+        if v: keys.append(str(v))
+    for k in (f.get("target_properties") or []):
+        keys.append(str(k))
+    keys.append(q)
+    for k in keys:
+        k = (k or "").lower().strip()
+        if k and k in text:
+            hits += 1
+    # arXiv没引用数，这里只用匹配得分
+    return float(hits)
+
+# --------------------- DB Helper ---------------------
+async def _ensure_session_exists(session_id: int) -> None:
+    async with AsyncSessionLocal() as s:
+        row = (await s.execute(select(ChatSession).where(ChatSession.id == session_id))).scalars().first()
+        if not row:
+            raise HTTPException(404, "session not found")
+
+async def _add_message(session_id: int, role: str, content: str, **extra) -> int:
+    async with AsyncSessionLocal() as s:
+        m = ChatMessage(session_id=session_id, role=role, content=content, **extra)
+        s.add(m)
+        await s.flush()
+        mid = m.id
+        await s.commit()
+        return mid
+
+async def _upsert_knowledge(rec: Dict[str, Any]) -> int:
+    async with AsyncSessionLocal() as s:
+        doi = (rec.get("doi") or "").lower() or None
+
+        # by DOI
+        if doi:
+            row = (await s.execute(select(Knowledge).where(Knowledge.doi == doi))).scalars().first()
+            if row:
+                row.title   = row.title   or rec.get("title")
+                row.content = row.content or rec.get("abstract")
+                row.source_type = row.source_type or rec.get("source_type")
+                row.source_id   = row.source_id   or rec.get("source_id")
+                row.url     = row.url     or rec.get("url")
+                row.tags    = row.tags    or rec.get("venue")
+                await s.flush(); await s.commit()
+                return row.id
+
+        st, sid = rec.get("source_type"), rec.get("source_id")
+        if st and sid:
+            row = (await s.execute(
+                select(Knowledge).where(Knowledge.source_type==st, Knowledge.source_id==sid)
+            )).scalars().first()
+            if row:
+                row.doi    = row.doi    or doi
+                row.title  = row.title  or rec.get("title")
+                row.content= row.content or rec.get("abstract")
+                row.url    = row.url    or rec.get("url")
+                row.tags   = row.tags   or rec.get("venue")
+                await s.flush(); await s.commit()
+                return row.id
+
+        title = rec.get("title")
+        if title:
+            row = (await s.execute(select(Knowledge).where(Knowledge.title == title))).scalars().first()
+            if row:
+                row.doi    = row.doi    or doi
+                row.source_type = row.source_type or st
+                row.source_id   = row.source_id   or sid
+                row.content= row.content or rec.get("abstract")
+                row.url    = row.url    or rec.get("url")
+                row.tags   = row.tags   or rec.get("venue")
+                await s.flush(); await s.commit()
+                return row.id
+
+        row = Knowledge(
+            title   = title,
+            content = rec.get("abstract"),
+            source_type = st,
+            source_id   = sid,
+            url     = rec.get("url"),
+            doi     = doi,
+            tags    = rec.get("venue"),
         )
-        session.add(entry)
-        if sources:
-            for s in sources:
-                title = s.get("title", "")
-                url = s.get("url", "")
-                if "arxiv.org" in (url or ""):
-                    exists = await session.execute(
-                        Paper.__table__.select().where(Paper.url == url)
-                    )
-                    if not exists.fetchone():
-                        paper = Paper(
-                            arxiv_id=None,
-                            title=title[:200],
-                            abstract="",
-                            authors="",
-                            year=None,
-                            venue="arxiv",
-                            url=url,
-                            pdf_path="",
-                            tags="qa",
-                            embedding=None,
-                            created_at=datetime.utcnow()
-                        )
-                        session.add(paper)
-                elif "wikipedia.org" in (url or "") or "wiki" in (url or ""):
-                    exists = await session.execute(
-                        Wiki.__table__.select().where(Wiki.url == url)
-                    )
-                    if not exists.fetchone():
-                        wiki = Wiki(
-                            title=title[:200],
-                            content="",
-                            url=url,
-                            tags="qa",
-                            embedding=None,
-                            created_at=datetime.utcnow()
-                        )
-                        session.add(wiki)
-        await session.commit()
+        s.add(row)
+        try:
+            await s.flush()
+            kid = row.id
+            await s.commit()
+            return kid
+        except IntegrityError:
+            await s.rollback()
+            if doi:
+                row = (await s.execute(select(Knowledge).where(Knowledge.doi == doi))).scalars().first()
+                if row: return row.id
+            if st and sid:
+                row = (await s.execute(select(Knowledge).where(Knowledge.source_type==st, Knowledge.source_id==sid))).scalars().first()
+                if row: return row.id
+            return -1
 
-# ----------- LLM兜底 -----------
-async def call_llm_knowledge(inquiry, intent, hypothesis):
-    prompt = (
-        "You are an expert assistant for DFT and computational chemistry, specialized in providing technical background, step-by-step workflows, and literature references for electronic structure calculations (e.g., DOS, solvation, adsorption, catalysis, etc.).\n"
-        f"User inquiry: {inquiry}\n"
-        f"Intent: {intent or ''}\n"
-        f"Hypothesis: {hypothesis or ''}\n"
-        "Your answer must include:\n"
-        "- Scientific background\n"
-        "- Typical workflow or methods (software, steps, analysis)\n"
-        "- At least one concrete reference (arXiv/DOI/Wikipedia, or guess a reasonable example)\n"
-        "Do NOT say 'insufficient data' or 'would be helpful'. If unsure, always give a best-guess answer and cite a relevant reference.\n"
+# --------------------- arXiv 抓取（使用 python-arxiv） ---------------------
+def _fetch_arxiv_lib(q: str, limit: int) -> List[Dict[str, Any]]:
+    """
+    用 python-arxiv 同步拉取。arxiv.Client 默认就很好用，这里简单封装。
+    """
+    search = arxiv.Search(
+        query=q,
+        max_results=min(limit, 50),
+        sort_by=arxiv.SortCriterion.Relevance,
     )
-    import openai
-    resp = openai.ChatCompletion.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.4
-    )
-    content = resp["choices"][0]["message"]["content"]
-    return {"result": content, "sources": []}
+    client = arxiv.Client(page_size=25, delay_seconds=0.5)  # 速率限制，避免被封
+    records: List[Dict[str, Any]] = []
+    for r in client.results(search):
+        # r has: title, summary, entry_id(=abs url), published, pdf_url, authors, primary_category, doi (sometimes None)
+        year = r.published.year if r.published else None
+        doi = (r.doi or "").lower() if hasattr(r, "doi") else None
+        records.append({
+            "title": _norm(r.title),
+            "venue": "arXiv",
+            "year": year,
+            "url": r.entry_id,                 # abs 链接
+            "pdf_url": getattr(r, "pdf_url", None),
+            "source_type": "arxiv",
+            "source_id": r.entry_id.split("/")[-1],  # 近似 arxiv id
+            "doi": doi,
+            "abstract": _norm(r.summary),
+            "citations": 0,  # arXiv没引用数
+        })
+    return records
 
-def fallback_template(inquiry, intent):
-    return (
-        f"**Background:** For the topic '{inquiry}', a typical approach involves DFT (e.g., VASP, Quantum ESPRESSO) possibly with implicit solvation models such as VASPsol, COSMO, or SCCS.\n"
-        f"**Workflow:**\n"
-        f"1. DFT geometry optimization with solvent.\n"
-        f"2. SCF/DOS calculation with solvent.\n"
-        f"3. Post-process DOS using VASPKIT, PyVaspwfc, pymatgen.\n"
-        f"**References:**\n"
-        f"- [VASPsol: Implicit solvation model](https://vaspkit.com/tutorials/vaspsol.html)\n"
-        f"- [Wikipedia: Density functional theory](https://en.wikipedia.org/wiki/Density_functional_theory)\n"
-        f"- [Example arXiv:2301.12345](https://arxiv.org/abs/2301.12345)\n"
-        f"If you need more, search arXiv for '{intent or inquiry}'."
-    )
+# --------------------- 核心：供 PlanManager 直接调用 ---------------------
+async def run_knowledge(
+    query: str,
+    intent: Dict[str, Any] | None = None,
+    limit: int = 10,
+    fast: bool = False,              # 兼容参数（无意义）
+    session_id: int | None = None,
+    return_bundle: bool = False,     # 兼容参数（这里不返回 bundle）
+) -> Dict[str, Any]:
+    intent = intent or {}
+    q = _mk_query(_norm(query), intent)
 
-# ----------- 路由主体 -----------
-@router.post("/chat/knowledge", response_model=KnowledgeResult)
-async def chat_knowledge(request: Request):
-    data = await request.json()
-    inquiry = data.get("query", "")
-    intent = data.get("intent", "")
-    hypothesis = data.get("hypothesis", "")
+    # 只用 arXiv
+    try:
+        records = _fetch_arxiv_lib(q, limit)
+        stats = {"arxiv": len(records)}
+        errors: List[str] = []
+    except Exception as e:
+        records, stats, errors = [], {}, [f"arxiv: {e}"]
 
-    retrieval_query = " ".join([inquiry, intent or "", hypothesis or ""])
+    # 去重 + 打分 + 截断
+    records = _dedup(records)
+    for r in records:
+        r["relevance"] = _score(r, intent, q)
+    records.sort(key=lambda x: x.get("relevance", 0), reverse=True)
+    records = records[:limit]
 
-    # 1. 本地数据库检索
-    retrieved = await retrieve_knowledge(retrieval_query, limit=3)
-    if retrieved:
-        top = retrieved[0]
-        result = top.get("content")[:1200]
-        sources = [{"title": top.get("title", ""), "url": top.get("url", "")}]
-        await save_knowledge(inquiry, result, sources, intent=intent)
-        return {"result": result, "sources": sources}
+    # 入库
+    knowledge_ids: List[int] = []
+    for r in records:
+        kid = await _upsert_knowledge(r)
+        if kid and kid > 0:
+            knowledge_ids.append(kid)
 
-    # 2. arXiv + Wikipedia
-    arxiv_results = search_arxiv(inquiry, max_results=1)
-    wiki_result = search_wikipedia(inquiry)
-    ext_content, ext_sources = "", []
-    if arxiv_results:
-        a = arxiv_results[0]
-        ext_content += f"**arXiv Reference:** [{a['title']}]({a['url']})\n\n{a['summary']}\n\n"
-        ext_sources.append({"title": a["title"], "url": a["url"]})
-    if wiki_result:
-        ext_content += f"**Wikipedia Reference:** [{wiki_result['title']}]({wiki_result['url']})\n\n{wiki_result['summary']}\n\n"
-        ext_sources.append({"title": wiki_result["title"], "url": wiki_result["url"]})
+    summary = f"Retrieved {len(records)} references from arXiv."
 
-    if ext_content:
-        await save_knowledge(inquiry, ext_content, ext_sources, intent=intent)
-        return {"result": ext_content, "sources": ext_sources}
-
-    # 3. LLM兜底
-    llm_result = await call_llm_knowledge(inquiry, intent, hypothesis)
-    content = llm_result["result"].lower()
-
-    # 4. 检查 bad phrases，强制用模板替换
-    bad_phrases = [
-        "insufficient data", "would be helpful", "not available", "no data", "no reference",
-        "unclear", "unknown", "cannot find", "暂无", "找不到", "无法获得"
-    ]
-    if any(kw in content for kw in bad_phrases):
-        # 针对 HER on Pt with DOS，直接输出方法/工具/文献模板
-        fallback = (
-            "**Background:** Hydrogen Evolution Reaction (HER) on Pt is a benchmark for electrocatalysis and surface science. DFT combined with density of states (DOS) analysis is the standard computational approach.\n\n"
-            "**Workflow:**\n"
-            "1. Build a Pt(111) or Pt(100) surface slab using VASP, Quantum ESPRESSO, or CP2K.\n"
-            "2. Optimize the surface and adsorbed H atom geometry.\n"
-            "3. Calculate electronic structure (DOS, PDOS) after SCF.\n"
-            "4. Post-process DOS with VASPKIT, PyVaspwfc, or pymatgen.\n"
-            "5. Compare clean vs. H-adsorbed DOS to analyze surface state changes.\n\n"
-            "**References:**\n"
-            "- J. K. Nørskov et al., J. Electrochem. Soc. 152, J23 (2005). [DOI:10.1149/1.1856988](https://doi.org/10.1149/1.1856988)\n"
-            "- arXiv: [DFT study of HER on Pt](https://arxiv.org/abs/1806.06817)\n"
-            "- [Wikipedia: Hydrogen evolution reaction](https://en.wikipedia.org/wiki/Hydrogen_evolution_reaction)\n"
-            "For more: try arXiv search 'DFT HER Pt DOS'."
+    msg_id = None
+    if session_id is not None:
+        msg_id = await _add_message(
+            int(session_id), role="assistant", content=summary,
+            msg_type="knowledge", intent_stage="knowledge",
+            intent_area=(intent.get("domain") if isinstance(intent, dict) else None),
+            references={"knowledge_ids": knowledge_ids, "records": records[:5]},
         )
-        await save_knowledge(inquiry, fallback, [], intent=intent)
-        return {
-            "result": fallback,
-            "sources": [
-                {"title": "Nørskov 2005", "url": "https://doi.org/10.1149/1.1856988"},
-                {"title": "arXiv:1806.06817", "url": "https://arxiv.org/abs/1806.06817"},
-                {"title": "Wikipedia: Hydrogen evolution reaction", "url": "https://en.wikipedia.org/wiki/Hydrogen_evolution_reaction"}
-            ]
-        }
 
-    # 5. 其他正常 LLM 输出
-    await save_knowledge(inquiry, llm_result["result"], llm_result.get("sources", []), intent=intent)
-    return llm_result
+    out = {
+        "ok": True,
+        "result": summary,
+        "records": records,
+        "knowledge_ids": knowledge_ids,
+        "source_stats": stats,
+        "errors": errors,
+        "assistant_message_id": msg_id,
+    }
+    # 不返回 session bundle，保持轻量
+    return out
+
+# --------------------- FastAPI 路由 ---------------------
+@router.post("/chat/knowledge")
+async def knowledge_route(request: Request):
+    body = await request.json()
+    return await run_knowledge(
+        query=body.get("query") or "",
+        intent=body.get("intent") or {},
+        limit=int(body.get("limit") or 10),
+        fast=bool(body.get("fast") or False),
+        session_id=body.get("session_id"),
+        return_bundle=bool(body.get("return_bundle") or False),
+    )
