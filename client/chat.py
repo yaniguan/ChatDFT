@@ -142,6 +142,119 @@ def fetch_session_state_from_backend(session_id: int) -> dict:
 
     return snap
 
+import json as _json
+
+def _fmt_step_entry(s):
+    """Normalize a step entry to a readable markdown bullet."""
+    if isinstance(s, dict):
+        name = s.get("name") or s.get("label")
+        if name:
+            why = s.get("why")
+            rp  = None
+            if "reactants" in s or "products" in s:
+                rp = f"{s.get('reactants','?')} → {s.get('products','?')}"
+            extra = f" — {why}" if why else ""
+            core = f"{name}{extra}"
+            return f"- {core}" + (f"\n  - {rp}" if rp else "")
+        if "reactants" in s or "products" in s:
+            return f"- {s.get('reactants','?')} → {s.get('products','?')}"
+        return f"- {_json.dumps(s, ensure_ascii=False)}"
+    if isinstance(s, (list, tuple)) and len(s) >= 2:
+        return f"- {s[0]} → {s[1]}"
+    return f"- {s}"
+
+def _fmt_list_md(seq):
+    seq = seq or []
+    return "\n".join(_fmt_step_entry(x) for x in seq)
+
+def _fmt_pairs_md(pairs):
+    pairs = pairs or []
+    lines = []
+    for x in pairs:
+        if isinstance(x, (list, tuple)) and len(x) >= 2:
+            lines.append(f"- {x[0]} + {x[1]} (co-ads)")
+        elif isinstance(x, dict) and "a" in x and "b" in x:
+            lines.append(f"- {x['a']} + {x['b']} (co-ads)")
+        else:
+            lines.append(f"- {x}")
+    return "\n".join(lines)
+
+# ---- ChatDFT: pretty format helpers ----
+import json as _json
+
+def _fmt_step_entry(s):
+    """Normalize a step entry to a readable markdown bullet."""
+    # dict with explicit fields
+    if isinstance(s, dict):
+        name = s.get("name") or s.get("label")
+        if name:
+            why = s.get("why")
+            rp  = None
+            if "reactants" in s or "products" in s:
+                rp = f"{s.get('reactants','?')} → {s.get('products','?')}"
+            extra = f" — {why}" if why else ""
+            core = f"{name}{extra}"
+            return f"- {core}" + (f"\n  - {rp}" if rp else "")
+        # dict with reactants/products
+        if "reactants" in s or "products" in s:
+            return f"- {s.get('reactants','?')} → {s.get('products','?')}"
+        # fallback: json dump
+        return f"- {_json.dumps(s, ensure_ascii=False)}"
+
+    # list/tuple as (reactants, products)
+    if isinstance(s, (list, tuple)) and len(s) >= 2:
+        return f"- {s[0]} → {s[1]}"
+
+    # plain string/other
+    return f"- {s}"
+
+def _fmt_list_md(seq):
+    """Turn a heterogeneous list into markdown lines."""
+    seq = seq or []
+    return "\n".join(_fmt_step_entry(x) for x in seq)
+
+def _fmt_pairs_md(pairs):
+    """For co-adsorption pairs."""
+    pairs = pairs or []
+    out = []
+    for x in pairs:
+        if isinstance(x, (list, tuple)) and len(x) >= 2:
+            out.append(f"- {x[0]} + {x[1]} (co-ads)")
+        elif isinstance(x, dict) and "a" in x and "b" in x:
+            out.append(f"- {x['a']} + {x['b']} (co-ads)")
+        else:
+            out.append(f"- {x}")
+    return "\n".join(out)
+
+def _fmt_step_compact(s):
+    """将 step 转成紧凑的一行文字：优先显示 反应式 / 名称 / why。"""
+    if isinstance(s, dict):
+        r = s.get("reactants"); p = s.get("products")
+        name = s.get("name") or s.get("label")
+        why  = s.get("why")
+        rxn  = f"{r} → {p}" if (r or p) else None
+        parts = []
+        if name: parts.append(str(name))
+        if rxn:  parts.append(rxn)
+        if why:  parts.append(why)
+        return " — ".join([x for x in parts if x])
+    if isinstance(s, (list, tuple)) and len(s) >= 2:
+        return f"{s[0]} → {s[1]}"
+    return str(s)
+
+def _step_to_row(s):
+    """用于表格：拆成多列"""
+    if isinstance(s, dict):
+        return {
+            "Name": s.get("name") or s.get("label") or "",
+            "Reaction": (f"{s.get('reactants')} → {s.get('products')}"
+                         if (s.get('reactants') or s.get('products')) else ""),
+            "Why": s.get("why") or "",
+        }
+    if isinstance(s, (list, tuple)) and len(s) >= 2:
+        return {"Name": "", "Reaction": f"{s[0]} → {s[1]}", "Why": ""}
+    return {"Name": "", "Reaction": str(s), "Why": ""}
+
 def api_intent(query: str) -> dict:
     payload = {"query": query}
     if st.session_state.active_session_id:
@@ -352,6 +465,117 @@ def _badge(s: str):
         unsafe_allow_html=True,
     )
 
+def _intent_summary_card(I: dict):
+    """精简版：只渲染表格+原始 JSON 折叠，不再显示徽章和 RN 计数条。"""
+    st.markdown("#### Intent")
+    _intent_table(I or {})
+
+def _intent_table(I: dict):
+    """精简渲染 Intent：自动过滤空值；按 domain 选择字段；附带槽位缺失与澄清问题。"""
+    import pandas as _pd
+
+    def _nz(x):
+        """non-empty: 去掉 None/""/[]/{}/仅空白字符串"""
+        if x is None: return False
+        if isinstance(x, str): return x.strip() != ""
+        if isinstance(x, (list, tuple, set, dict)): return len(x) > 0
+        return True
+
+    I = I or {}
+    dom  = (I.get("domain") or "").lower()
+    sub  = (I.get("domain_subtype") or I.get("mode") or "").lower()
+    sys  = I.get("system") or {}
+    cond = I.get("conditions") or {}
+    rn   = I.get("reaction_network") or {}
+    miss = I.get("missing_slots") or []
+    qas  = I.get("clarifying_questions") or []
+
+    rows = []  # (Field, Value)
+    def add(k, v):
+        if _nz(v):
+            rows.append((k, v if not isinstance(v, (list,dict)) else json.dumps(v, ensure_ascii=False)))
+
+    # 通用最小字段
+    add("domain", I.get("domain"))
+    add("type", sub or None)
+    add("query", I.get("normalized_query"))
+
+    if dom in ("catalysis", "materials_general"):
+        add("catalyst", sys.get("catalyst"))
+        add("facet", sys.get("facet"))
+        add("material", sys.get("material"))
+        add("molecule/reactant", sys.get("molecule"))
+        # 条件
+        if sub == "electrocatalysis":
+            add("pH", cond.get("pH"))
+            add("potential", cond.get("potential"))
+            add("electrolyte", cond.get("electrolyte"))
+            add("temperature", cond.get("temperature"))
+        elif sub in ("photocatalysis", "photoelectrocatalysis"):
+            add("illumination", cond.get("illumination") or cond.get("light"))
+            add("wavelength", cond.get("wavelength"))
+            add("pH", cond.get("pH"))
+            add("temperature", cond.get("temperature"))
+        else:  # thermal/unspecified
+            add("temperature", cond.get("temperature"))
+            add("pressure", cond.get("pressure"))
+            add("solvent", cond.get("solvent"))
+        # RN 概览（只显示非零）
+        n_steps = len(rn.get("elementary_steps") or [])
+        n_inters= len(rn.get("intermediates") or [])
+        n_ts    = len(rn.get("ts_candidates") or [])
+        n_coads = len(rn.get("coads_pairs") or [])
+        if n_steps: add("RN: steps", n_steps)
+        if n_inters: add("RN: intermediates", n_inters)
+        if n_ts: add("RN: ts", n_ts)
+        if n_coads: add("RN: coads", n_coads)
+
+    elif dom == "batteries":
+        add("chemistry", sys.get("chemistry") or sys.get("system"))
+        add("cathode",  sys.get("cathode"))
+        add("anode",    sys.get("anode"))
+        add("electrolyte", sys.get("electrolyte"))
+        add("salt", sys.get("salt"))
+        add("separator", sys.get("separator"))
+        add("binder", sys.get("binder"))
+        if _nz(sys.get("additives")):
+            add("additives", ", ".join(sys["additives"]) if isinstance(sys["additives"], list) else sys["additives"])
+        add("C-rate", cond.get("crate") or cond.get("C_rate"))
+        add("temperature", cond.get("temperature"))
+        add("cutoff (charge)", cond.get("v_max") or cond.get("charge_cutoff"))
+        add("cutoff (discharge)", cond.get("v_min") or cond.get("discharge_cutoff"))
+        add("cycles", cond.get("cycles"))
+
+    elif dom == "polymers":
+        if _nz(sys.get("monomers")):
+            add("monomer(s)", ", ".join(sys["monomers"]) if isinstance(sys["monomers"], list) else sys.get("monomer"))
+        add("initiator/catalyst", sys.get("initiator") or sys.get("catalyst"))
+        add("method", sys.get("method") or sys.get("process"))
+        add("solvent", sys.get("solvent"))
+        add("temperature", cond.get("temperature"))
+        add("target Mw", sys.get("target_Mw") or sys.get("Mw"))
+        add("Ð (PDI)", sys.get("Đ") or sys.get("PDI"))
+
+    # 渲染
+    if rows:
+        df = _pd.DataFrame(rows, columns=["Field", "Value"])
+        st.table(df)
+    else:
+        st.info("No non-empty fields.")
+
+    # 缺失与澄清
+    if _nz(miss) or _nz(qas):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.caption("Missing slots")
+            for m in (miss or []): _badge(str(m))
+        with c2:
+            st.caption("Clarifying questions")
+            for q in (qas or []):  st.markdown(f"- {q}")
+
+    with st.expander("Raw intent (JSON)", expanded=False):
+        st.json(I)
+
 def _badges_grid(items: list[str], cols: int = 6, empty_text: str = "N/A"):
     if not items:
         st.caption(empty_text); return
@@ -412,16 +636,24 @@ def _only_species(tokens: list[str]) -> list[str]:
 import re
 from typing import Any, Dict, List, Tuple
 
-def _extract_network_from_everywhere(plan_res: Any, tasks: List[dict], hypothesis: Any) -> Tuple[List[str], List[str], List[str], List[str]]:
+# ⚠️ 替换原函数定义整段
+from typing import Any, Dict, List, Tuple
+import re
+
+def _extract_network_from_everywhere(
+    plan_res: Any,
+    tasks: List[dict],
+    hypothesis: Any
+) -> Tuple[List[Any], List[str], List[str], List[str]]:
     """从 plan_res / tasks / hypothesis 文本里尽可能抽取
        elem(steps), inter(species), ts, coads；对所有输入做类型容错。
+       注意：elem 保留 dict 结构（含 name/reactants/products/why），便于前端表格渲染。
     """
     def _to_str(x: Any) -> str:
         if x is None:
             return ""
         if isinstance(x, str):
             return x
-        # 如果是 dict/列表，尽量只取我们关心的字段拼一下，避免把整坨 JSON 变成巨长字符串
         try:
             return str(x)
         except Exception:
@@ -431,8 +663,8 @@ def _extract_network_from_everywhere(plan_res: Any, tasks: List[dict], hypothesi
         s = _to_str(s).strip()
         if not s:
             return ""
-        s = s.replace("⇒", "->").replace("→", "->").replace("⇌", "->").replace("⟶", "->")
-        s = s.replace("—>", "->").replace(" –> ", "->")
+        s = (s.replace("⇒", "->").replace("→", "->").replace("⇌", "->").replace("⟶", "->")
+               .replace("—>", "->").replace(" –> ", "->"))
         while "  " in s:
             s = s.replace("  ", " ")
         parts = [p.strip() for p in s.split("->") if p.strip()]
@@ -458,18 +690,27 @@ def _extract_network_from_everywhere(plan_res: Any, tasks: List[dict], hypothesi
                 out.append(_to_str(t))
         return out
 
-    def _uniq(seq: List[Any]) -> List[str]:
-        seen, out = set(), []
+    def _uniq_mixed(seq: List[Any]) -> List[Any]:
+        """支持 dict 的去重；dict 用排序后的 JSON 作 key，其它用字符串。"""
+        seen = set()
+        out: List[Any] = []
         for s in seq:
-            s = _to_str(s).strip()
-            if not s: 
+            if isinstance(s, dict):
+                try:
+                    key = json.dumps(s, ensure_ascii=False, sort_keys=True)
+                except Exception:
+                    key = str(s)
+            else:
+                key = _to_str(s)
+            key = key.strip()
+            if not key:
                 continue
-            if s not in seen:
-                seen.add(s); out.append(s)
+            if key not in seen:
+                seen.add(key); out.append(s)
         return out
 
     # -------- 开始抽取 --------
-    elem: List[str] = []
+    elem: List[Any] = []
     inter: List[str] = []
     ts: List[str] = []
     coads: List[str] = []
@@ -484,18 +725,23 @@ def _extract_network_from_everywhere(plan_res: Any, tasks: List[dict], hypothesi
 
     # 2) 从 plan 顶层拿（兼容各种键名）
     if isinstance(plan_res, dict):
-        elem  += plan_res.get("elementary_steps") or plan_res.get("reaction_network") or plan_res.get("steps") or []
-        inter += plan_res.get("intermediates") or []
-        ts    += plan_res.get("ts_candidates") or plan_res.get("ts_edges") or plan_res.get("ts") or []
-        coads += plan_res.get("coads_pairs") or plan_res.get("coads") or []
+        elem  += (plan_res.get("elementary_steps")
+                  or plan_res.get("reaction_network")
+                  or plan_res.get("steps")
+                  or [])
+        inter += plan_res.get("intermediates")   or []
+        ts    += (plan_res.get("ts_candidates")
+                  or plan_res.get("ts_edges")
+                  or plan_res.get("ts")
+                  or [])
+        coads += plan_res.get("coads_pairs")     or plan_res.get("coads") or []
 
     # 3) 从 task 名称粗略挖（例如 "NEB — A -> B"）
     for t in (tasks or []):
         name = _to_str(t.get("name"))
-        if ("NEB" in name or "TS" in name) and any(x in name for x in ["->","→","⇒","⟶"]):
+        if ("NEB" in name or "TS" in name) and any(x in name for x in ["->", "→", "⇒", "⟶"]):
             frag = name.split("—", 1)[-1].strip() if "—" in name else name
             ts.append(_normalize_arrow(frag))
-        # 从名字里的 token 也顺便挖下 species
         for tok in re.split(r"[,\s/+-]+", name):
             if _looks_like_species(tok):
                 inter.append(_to_str(tok))
@@ -507,15 +753,41 @@ def _extract_network_from_everywhere(plan_res: Any, tasks: List[dict], hypothesi
         inter += _only_species(rough)
 
     # -------- 规范化/去重 --------
-    elem = _uniq([_normalize_arrow(x) for x in elem])
-    ts   = _uniq([_normalize_arrow(x) for x in ts])
+    # 仅对“非 dict”的 elem 做规范化；dict 原样保留
+    elem_norm: List[Any] = []
+    for x in elem:
+        if isinstance(x, dict):
+            elem_norm.append(x)
+        elif isinstance(x, (list, tuple)) and len(x) >= 2:
+            elem_norm.append({"reactants": x[0], "products": x[1]})
+        else:
+            elem_norm.append(_normalize_arrow(x))
+    elem = _uniq_mixed(elem_norm)
 
-    inter = _uniq(_only_species(inter))
-    coads = _uniq([_to_str(c) for c in coads])
+    # TS 统一规范为字符串，便于右侧 badges 展示
+    ts_norm: List[str] = []
+    for x in ts:
+        if isinstance(x, dict):
+            r = x.get("reactants") or x.get("from") or x.get("src")
+            p = x.get("products")  or x.get("to")   or x.get("dst")
+            if r or p:
+                ts_norm.append(_normalize_arrow(f"{r} -> {p}"))
+            elif x.get("name"):
+                ts_norm.append(str(x["name"]))
+            else:
+                ts_norm.append(_normalize_arrow(str(x)))
+        elif isinstance(x, (list, tuple)) and len(x) >= 2:
+            ts_norm.append(_normalize_arrow(f"{x[0]} -> {x[1]}"))
+        else:
+            ts_norm.append(_normalize_arrow(x))
+    ts = _uniq_mixed(ts_norm)  # 这里 ts 是 List[str]
 
-    # 如果没有 elem 但有 ts，用 ts 兜底
+    inter = _uniq_mixed(_only_species(inter))   # List[str]
+    coads = _uniq_mixed([_to_str(c) for c in coads])  # List[str]
+
+    # 如果没有 elem 但有 ts，用 ts 兜底为字符串步骤
     if not elem and ts:
-        elem = ts[:]
+        elem = ts[:]  # 前端也能渲染（当作 Reaction 列文本）
 
     # 中间体排序：先吸附物，再气相
     ads = [s for s in inter if s.endswith("*")]
@@ -581,8 +853,8 @@ def section_chatdft_with_tabs():
     else:
         st.warning("No active session. 建议在 **Projects** 选择/创建会话（不影响使用，仅影响记录与回溯）。")
 
-    tab_chat, tab_workflow, tab_papers, tab_tools, tab_records = st.tabs(
-        ["💬 Chat & Plan", "🧪 Workflow", "📑 Papers / RAG", "🛠 Tools", "📜 Records"]
+    tab_chat, tab_workflow, tab_papers= st.tabs(
+        ["💬 Chat & Plan", "🧪 Workflow", "📑 Papers / RAG"]
     )
 
     # --- Chat & Plan ---
@@ -616,8 +888,7 @@ def section_chatdft_with_tabs():
                 else: st.info("No tasks produced.")
 
         st.markdown("---")
-        st.markdown("#### Intent (structured)")
-        st.json(st.session_state.intent or {})
+        _intent_summary_card(st.session_state.intent or {})
         st.markdown("#### Hypothesis")
         st.markdown(st.session_state.hypothesis or "_(empty)_")
 
@@ -650,7 +921,7 @@ def section_chatdft_with_tabs():
         st.markdown("---"); st.markdown("**Co-ads pairs**")
         _badges_grid(coads, cols=3, empty_text="No Co-ads pairs.")
         if coads:
-            coads_txt = "\n".join(coads)
+            coads_txt = _fmt_pairs_md(coads)
             _download_bytes("⬇️ Download coads.txt", coads_txt.encode("utf-8"), "coads_pairs.txt")
             _copy_text_area("Copy co-ads pairs", coads_txt)
 
@@ -659,11 +930,20 @@ def section_chatdft_with_tabs():
         left, right = st.columns([1.3, 1])
         with left:
             steps = st.session_state.rxn_net or []
-            df_steps = pd.DataFrame({"#": list(range(1, len(steps)+1)), "Step": steps}) if steps \
-                else pd.DataFrame(columns=["#","Step"])
             st.markdown("**Elementary steps**")
+
+            if steps:
+                rows = [_step_to_row(s) for s in steps]
+                df_steps = pd.DataFrame(rows)
+                df_steps.insert(0, "#", list(range(1, len(rows)+1)))
+            else:
+                df_steps = pd.DataFrame(columns=["#","Name","Reaction","Why"])
+
             st.dataframe(df_steps, use_container_width=True, hide_index=True)
-            txt = "\n".join(steps)
+
+            # 下载/复制：用紧凑格式，一行一个
+            lines = [_fmt_step_compact(s) for s in (steps or [])]
+            txt = "\n".join(lines)
             _download_bytes("⬇️ Download steps.txt", txt.encode("utf-8"), "elementary_steps.txt")
             _copy_text_area("Copy steps (plain text)", txt)
         with right: _workflow_right_panel()
@@ -708,90 +988,6 @@ def section_chatdft_with_tabs():
                 _copy_text_area("Copy top results (plain)", "\n".join(lines))
                 st.caption(res.get("result") or "")
 
-    # --- Tools ---
-    with tab_tools:
-        st.subheader("Select Tasks & Execute")
-        tasks = st.session_state.plan_tasks or []
-        if not tasks:
-            st.info("Generate a workflow plan first in the *Chat & Plan* tab.")
-        else:
-            st.markdown("**Batch selection (optional)**")
-            selected = list(st.session_state.selected_task_ids)
-            for t in tasks:
-                checked = st.checkbox(
-                    f"[{t.get('id')}] {t.get('name')}  —  {t.get('description','')}",
-                    key=f"chk-{t.get('id')}",
-                    value=(t.get('id') in selected)
-                )
-                if checked and t.get("id") not in selected: selected.append(t.get("id"))
-                if (not checked) and t.get("id") in selected: selected.remove(t.get("id"))
-            st.session_state.selected_task_ids = selected
-            if st.button("▶ Run Selected Steps", type="primary"):
-                if not selected:
-                    st.warning("Please select at least one step.")
-                else:
-                    with st.spinner("Submitting jobs…"):
-                        res = api_execute(selected)
-                    if res.get("ok"): st.success("Execution finished. See Records tab.")
-                    else: st.error(res.get("detail","Execution failed"))
-
-            st.markdown("---")
-            st.markdown("### Run by parallel group")
-            groups = _split_parallel_groups(tasks)
-            for gname, glist in groups.items():
-                with st.expander(f"Group: {gname}  ({len(glist)} tasks)", expanded=(gname.lower() in {"model","adsorption"})):
-                    for t in glist:
-                        box = st.container()
-                        with box:
-                            st.markdown(
-                                f"""<div style='background:#f7fbff;border-radius:8px;padding:12px 14px;margin:10px 0;'>
-                                <b>[{t.get('id')}] {t.get('name','Task')}</b>
-                                <span style='color:#888'>&nbsp;(agent: {t.get('agent','-')})</span><br>
-                                <span style='color:#222'>{t.get('description','')}</span>
-                                </div>""",
-                                unsafe_allow_html=True,
-                            )
-                            fields = (t.get("params") or {}).get("form") or []
-                            if fields:
-                                with st.form(f"frm-{t.get('id')}"):
-                                    for f in fields:
-                                        fkey = f"{t['id']}:{f.get('key','k')}"
-                                        ftype = f.get("type", "text")
-                                        label = f.get("label", fkey)
-                                        help_ = f.get("help", "")
-                                        default = f.get("value", "")
-                                        if ftype == "number":
-                                            st.number_input(label, value=float(default) if str(default)!="" else 0.0,
-                                                            step=float(f.get("step",1.0)),
-                                                            min_value=float(f.get("min_value",-1e9)),
-                                                            max_value=float(f.get("max_value",1e9)),
-                                                            key=fkey, help=help_)
-                                        elif ftype == "select":
-                                            options = f.get("options", [])
-                                            idx = options.index(default) if default in options and options else 0
-                                            st.selectbox(label, options, index=idx, key=fkey, help=help_)
-                                        elif ftype == "checkbox":
-                                            st.checkbox(label, value=bool(default), key=fkey, help=help_)
-                                        elif ftype == "textarea":
-                                            st.text_area(label, value=str(default), key=fkey, help=help_)
-                                        else:
-                                            st.text_input(label, value=str(default), key=fkey, help=help_)
-                                    submit = st.form_submit_button("Run")
-                            else:
-                                submit = st.button("Run", key=f"run-{t.get('id')}")
-                            if submit:
-                                with st.spinner("Running…"):
-                                    res = api_execute([t.get("id")])
-                                st.success("Done.") if res.get("ok") else st.error(res.get("detail","No agent response."))
-
-    # --- Records ---
-    with tab_records:
-        st.subheader("Execution Records")
-        if not st.session_state.workflow_results:
-            st.info("No workflow executed yet.")
-        else:
-            for i, wf in enumerate(st.session_state.workflow_results, 1):
-                _render_records_block(wf or {})
 
 def section_projects():
     st.title("📂 Projects (Sessions)")

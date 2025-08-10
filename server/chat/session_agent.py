@@ -4,8 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, HTTPException
 from typing import Any, Dict
 from sqlalchemy import select, update, delete
-from server.db import AsyncSessionLocal, ChatSession  # 确保 db.py 里有 ChatSession 模型
-from server.db import AsyncSessionLocal, ChatSession, ChatMessage
+from server.db_last import AsyncSessionLocal, ChatSession  # 确保 db.py 里有 ChatSession 模型
+from server.db_last import AsyncSessionLocal, ChatSession, ChatMessage
 from sqlalchemy import select, desc
 
 router = APIRouter(prefix="/chat/session")
@@ -100,11 +100,67 @@ async def delete_session(req: Request):
     return {"ok": True}
 
 # 可选：用于前端 hydrate
+# server/chat/session_agent.py  (替换原 /state)
+from sqlalchemy import select, desc
+from server.db_last import AsyncSessionLocal, ChatMessage
+
+def _pick_latest(rows, mtype):
+    for m in rows:
+        if m.msg_type == mtype:
+            return m
+    return None
+
 @router.post("/state")
 async def state(req: Request):
     body = await req.json()
     sid = body.get("id")
     if not sid:
         raise HTTPException(400, "id required")
-    # 这里先返回空壳，前端会 fallback；后面你可以接到 records/hypothesis 的缓存
-    return {"ok": True, "id": sid}
+
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == sid)
+            .order_by(desc(ChatMessage.created_at))
+            .limit(300)
+        )).scalars().all()
+
+    # 取各类最新一条
+    intent_m   = _pick_latest(rows, "intent")
+    hypo_md_m  = _pick_latest(rows, "hypothesis") or _pick_latest(rows, "hypothesis_md")
+    plan_m     = _pick_latest(rows, "plan")
+    rxn_m      = _pick_latest(rows, "rxn_network")
+    wf_m       = _pick_latest(rows, "workflow_summary") or _pick_latest(rows, "records")
+
+    def _parse(m):
+        if not m: return None
+        c = m.content or ""
+        # DB content 可能是 JSON 字符串或纯文本
+        try:
+            import json
+            return json.loads(c)
+        except Exception:
+            return c
+
+    intent        = _parse(intent_m) or {}
+    hypothesis_md = _parse(hypo_md_m) or ""
+    plan_raw      = _parse(plan_m) or {}
+    rxn           = _parse(rxn_m) or {}
+    workflow_res  = _parse(wf_m) or {}
+
+    # 兼容前端字段
+    plan_tasks = (plan_raw.get("tasks") if isinstance(plan_raw, dict) else None) or []
+    snap = {
+        "ok": True,
+        "id": sid,
+        "intent": intent,
+        "hypothesis": hypothesis_md,
+        "plan_raw": plan_raw if isinstance(plan_raw, dict) else {},
+        "plan_tasks": plan_tasks,
+        "rxn_net": rxn.get("elementary_steps") if isinstance(rxn, dict) else [],
+        "intermediates": rxn.get("intermediates") if isinstance(rxn, dict) else [],
+        "ts_candidates": rxn.get("ts_candidates") if isinstance(rxn, dict) else [],
+        "coads_pairs": rxn.get("coads_pairs") if isinstance(rxn, dict) else [],
+        "workflow_results": workflow_res.get("runs") if isinstance(workflow_res, dict) else [],
+    }
+    return snap

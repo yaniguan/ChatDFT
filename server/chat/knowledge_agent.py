@@ -12,7 +12,7 @@ import re, math
 import arxiv  # pip install arxiv
 
 # ---- DB models（按你项目里的路径）----
-from server.db import AsyncSessionLocal, ChatSession, ChatMessage, Knowledge, WorkflowTask
+from server.db_last import AsyncSessionLocal, ChatSession, ChatMessage, Knowledge, WorkflowTask
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 

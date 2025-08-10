@@ -24,7 +24,17 @@ import os, json
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Request
 from .contracts import HypothesisBundle, RunEvent
-
+# 通用保存
+async def _save_artifact(session_id: int | None, msg_type: str, content):
+    if not session_id:
+        return
+    from server.db_last import AsyncSessionLocal, ChatMessage
+    import json as _json
+    txt = content if isinstance(content, str) else _json.dumps(content, ensure_ascii=False)
+    async with AsyncSessionLocal() as s:
+        m = ChatMessage(session_id=session_id, role="assistant", msg_type=msg_type, content=txt)
+        s.add(m)
+        await s.commit()
 router = APIRouter()
 
 # ============================ small utils ============================
@@ -295,7 +305,7 @@ def _template_markdown(intent: Dict[str, Any]) -> str:
 @router.post("/chat/hypothesis")
 async def hypothesis_create(request: Request):
     data: Dict[str, Any] = (await request.json()) or {}
-
+    session_id = data.get("session_id")
     # extract intent/knowledge/history (keep API compatible)
     intent: Dict[str, Any] = data.get("intent") or data.get("fields") or {}
     knowledge: Dict[str, Any] = data.get("knowledge") or {}
@@ -328,6 +338,18 @@ async def hypothesis_create(request: Request):
         ts=data.get("ts", []),
         confidence=float(data.get("confidence", 0.0) or 0.0),
     )
+    # —— 新增：保存 hypothesis（markdown）
+    await _save_artifact(session_id, "hypothesis", md)
+
+    # —— 新增：保存 rxn_network（结构化）
+    rxn_payload = {
+        "elementary_steps": graph_fixed.get("reaction_network") or bundle.steps,
+        "intermediates": graph_fixed.get("intermediates") or bundle.intermediates,
+        "coads_pairs": graph_fixed.get("coads_pairs") or bundle.coads,
+        "ts_candidates": graph_fixed.get("ts_edges") or bundle.ts,
+    }
+    await _save_artifact(session_id, "rxn_network", rxn_payload)
+
     return {"ok": True, "hypothesis": bundle.model_dump()}
 
 @router.post("/chat/hypothesis/ingest_event")

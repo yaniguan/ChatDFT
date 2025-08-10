@@ -1,0 +1,22 @@
+{
+  "default": {
+    "scheduler": "PBS (qsub)",
+    "pbs_ppn": 4,
+    "pbs_wall": "01:00:00",
+    "slurm_partition": "standard",
+    "slurm_ntasks": 4,
+    "slurm_wall": "01:00:00",
+    "ase_opt": "from ase.constraints import Hookean\nfrom ase.build import surface\nfrom ase import Atoms\nfrom ase.build import molecule, add_adsorbate\nfrom ase.optimize import BFGS\nfrom ase.calculators.vasp import Vasp\nimport os\nimport subprocess\nfrom ase.calculators.vasp import Vasp2\nfrom ase.constraints import FixAtoms\nfrom ase.visualize import view\nfrom ase.lattice.hexagonal import *\nimport ase.io\nimport pickle\n\n\n# Make a test slab\ntry:\n    slab = ase.io.read('POSCAR')\nexcept:\n    try:\n        slab = ase.io.read('POSCAR-adsorbate')\n    except:\n        slab = ase.io.read('CONTCAR')\n\n\ncalc_2 = Vasp(xc='pbe',\n         encut=400,\n         kpts=[5,5,1],\n         ediff = 1.00e-06,\n         ediffg = -0.01,\n         algo='fast',\n         ispin=1, #non spin polarized calculation\n         ismear=2, #using the second order MP smearing\n         sigma=0.1,\n         nelm = 60,\n         nsw = 1000,\n         ibrion = 2,\n         isif = 2,\n         lwave = False,\n         lcharg = False,\n         npar = 4,\n         lreal='A', #projection done in real space\n         kgamma=True,\n         ivdw = 4,\n         istart=1, #if you want to restart put other values\n         icharg=0)\nslab.set_calculator(calc_2)\nslab.get_potential_energy()\n",
+    "ase_sh": "#!/bin/bash -f\n#$ -cwd\n#$ -o $JOB_ID.log\n#$ -e $JOB_ID.err\n#$ -pe dc* 32\n#$ -l h_data=4G,h_vmem=16G,h_rt=24:00:00\n\nsource /u/local/Modules/default/init/modules.sh\nmodule add intel/17.0.7\nexport PYTHONPATH=/u/home/y/yaniguan/miniconda3/envs/ase/:$PYTHONPATH\nexport PATH=/u/home/y/yaniguan/miniconda3/envs/ase/bin:$PATH\n\nexport VASP_PP_PATH=$HOME/vasp/mypps\n\nexport OMP_NUM_THREAD=1\nexport I_MPI_COMPATIBILITY=4\n\nexport VASP_COMMAND='mpirun -np ${NSLOTS} ~/vasp_std_vtst_sol'\npython ase-opt.py\necho \u201crun complete on `hostname`: `date` `pwd`\u201d >> ~/job.log"
+  },
+  "geo opt": {
+    "scheduler": "PBS (qsub)",
+    "pbs_ppn": 4,
+    "pbs_wall": "01:00:00",
+    "slurm_partition": "standard",
+    "slurm_ntasks": 4,
+    "slurm_wall": "01:00:00",
+    "ase_opt": "from ase.constraints import Hookean\nfrom ase.build import surface\nfrom ase import Atoms\nfrom ase.build import molecule, add_adsorbate\nfrom ase.optimize import BFGS\nfrom ase.calculators.vasp import Vasp\nimport os\nimport subprocess\nfrom ase.calculators.vasp import Vasp2\nfrom ase.constraints import FixAtoms\nfrom ase.visualize import view\nfrom ase.lattice.hexagonal import *\nimport ase.io\nimport pickle\n\n\n# Make a test slab\ntry:\n    slab = ase.io.read('POSCAR')\nexcept:\n    try:\n        slab = ase.io.read('POSCAR-adsorbate')\n    except:\n        slab = ase.io.read('CONTCAR')\n\n\ncalc_2 = Vasp(xc='pbe',\n         encut=400,\n         kpts=[5,5,1],\n         ediff = 1.00e-06,\n         ediffg = -0.01,\n         algo='fast',\n         ispin=1, #non spin polarized calculation\n         ismear=2, #using the second order MP smearing\n         sigma=0.1,\n         nelm = 60,\n         nsw = 1000,\n         ibrion = 2,\n         isif = 2,\n         lwave = False,\n         lcharg = False,\n         npar = 4,\n         lreal='A', #projection done in real space\n         kgamma=True,\n         ivdw = 4,\n         istart=1, #if you want to restart put other values\n         icharg=0)\nslab.set_calculator(calc_2)\nslab.get_potential_energy()\n",
+    "ase_sh": "#!/bin/bash -f\n#$ -cwd\n#$ -o $JOB_ID.log\n#$ -e $JOB_ID.err\n#$ -pe dc* 32\n#$ -l h_data=4G,h_vmem=16G,h_rt=24:00:00\n\nsource /u/local/Modules/default/init/modules.sh\nmodule add intel/17.0.7\nexport PYTHONPATH=/u/home/y/yaniguan/miniconda3/envs/ase/:$PYTHONPATH\nexport PATH=/u/home/y/yaniguan/miniconda3/envs/ase/bin:$PATH\n\nexport VASP_PP_PATH=$HOME/vasp/mypps\n\nexport OMP_NUM_THREAD=1\nexport I_MPI_COMPATIBILITY=4\n\nexport VASP_COMMAND='mpirun -np ${NSLOTS} ~/vasp_std_vtst_sol'\npython ase_opt.py\necho \u201crun complete on `hostname`: `date` `pwd`\u201d >> ~/job.log"
+  }
+}

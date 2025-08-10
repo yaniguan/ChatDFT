@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from datetime import datetime
 
 try:
-    from server.db import AsyncSessionLocal, RunEvent as RunEventORM, LLMCall as LLMCallORM
+    from server.db_last import AsyncSessionLocal, RunEvent as RunEventORM, LLMCall as LLMCallORM
 except Exception:
     AsyncSessionLocal = None
     RunEventORM = LLMCallORM = None

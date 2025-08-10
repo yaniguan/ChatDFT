@@ -10,7 +10,7 @@ import json
 import math
 
 from sqlalchemy import select, or_, and_, desc
-from server.db import (
+from server.db_last import (
     AsyncSessionLocal,
     ChatSession,
     ChatMessage,

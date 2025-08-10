@@ -1,7 +1,7 @@
 # init_db.py
 import asyncio
 import sys, os
-from server.db import engine, Base  # 路径按你实际的文件夹来改
+from server.db_last import engine, Base  # 路径按你实际的文件夹来改
 
 async def create_all():
     async with engine.begin() as conn:

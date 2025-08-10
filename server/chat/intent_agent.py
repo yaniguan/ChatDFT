@@ -1,215 +1,346 @@
 # server/chat/intent_agent.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import os, re, json, ast
-from typing import Any, Dict, List, Optional
+import json
+import logging
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
-# ---------------- LLM wrapper ----------------
-# 你提供的文件：server/utils/llm_wrapper.py 里定义了 async chatgpt_call(...)
-_HAS_LLM = False
-_chat = None
-
-async def _call_llm(messages: List[Dict[str, str]], temperature=0.2, max_tokens=1000) -> Optional[str]:
-    """懒加载 OpenAI 异步客户端；失败返回 None。"""
-    global _HAS_LLM, _chat
-    if not _HAS_LLM:
-        if not os.getenv("OPENAI_API_KEY"):
-            return None
-        try:
-            from server.utils.openai_wrapper import chatgpt_call
-            _chat = chatgpt_call
-            _HAS_LLM = True
-        except Exception:
-            return None
+# =========================
+# DB save helper (async)
+# =========================
+async def _save_artifact(session_id: Optional[int], msg_type: str, content: Any):
+    """Persist an artifact into ChatMessage; safe to call (no-op if no session)."""
+    if not session_id:
+        return
     try:
-        return await _chat(messages, temperature=temperature, max_tokens=max_tokens)
+        from server.db_last import AsyncSessionLocal, ChatMessage  # 如路径不同，请改这里
     except Exception:
-        return None
+        log.warning("intent_agent: DB models not available, skip saving")
+        return
 
-# ---------------- utils ----------------
-def _strip_fences(s: str) -> str:
-    s = s.strip()
-    if s.startswith("```"):
-        s = s.strip("`")
-        s = re.sub(r"^json", "", s.strip(), flags=re.I)
-    return s.strip()
-
-def _safe_json(s: Optional[str]) -> Optional[Dict[str, Any]]:
-    if not s: return None
-    s = _strip_fences(s)
     try:
-        return json.loads(s)
+        txt = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        async with AsyncSessionLocal() as s:
+            m = ChatMessage(session_id=session_id, role="assistant", msg_type=msg_type, content=txt)
+            s.add(m)
+            await s.commit()
     except Exception:
-        try:
-            s2 = re.sub(r",\s*([}\]])", r"\1", s.replace("'", '"'))
-            return json.loads(s2)
-        except Exception:
-            try:
-                obj = ast.literal_eval(s)
-                return obj if isinstance(obj, dict) else None
-            except Exception:
-                return None
+        log.exception("intent_agent: save_artifact failed")
 
-def _norm(s: Optional[str]) -> str:
-    return (s or "").strip()
+# =========================
+# small utils
+# =========================
+def _as_list(x) -> List[Any]:
+    if x is None:
+        return []
+    if isinstance(x, list):
+        return x
+    if isinstance(x, tuple):
+        return list(x)
+    return [x]
 
-# ---------------- rule baseline ----------------
-_RX_PH   = re.compile(r"(?i)\bpH\s*=?\s*([0-9]+(?:\.[0-9]+)?)")
-_RX_POT  = re.compile(r"(?i)([-+]?\d+(?:\.\d+)?)\s*V\s*(?:vs\.?\s*)?(RHE|SHE|Ag/AgCl)")
-_RX_EL   = re.compile(r"\b([A-Z][a-z]?)\b")
-_RX_FAC  = re.compile(r"\b([A-Z][a-z]?)\s*\((\d{3})\)")
+def _clean_step(s: Any) -> Dict[str, Any]:
+    """Normalize a 'step' entry to dict."""
+    if isinstance(s, dict):
+        r = s.get("reactants") or s.get("lhs") or s.get("from") or s.get("src")
+        p = s.get("products")  or s.get("rhs") or s.get("to")   or s.get("dst")
+        out = dict(s)
+        if r is not None: out["reactants"] = r
+        if p is not None: out["products"]  = p
+        return out
+    if isinstance(s, (list, tuple)) and len(s) >= 2:
+        return {"reactants": s[0], "products": s[1]}
+    return {"step": s}
 
-_ELTS = {"H","He","Li","Be","B","C","N","O","F","Ne","Na","Mg","Al","Si","P","S","Cl","Ar",
-         "K","Ca","Sc","Ti","V","Cr","Mn","Fe","Co","Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr",
-         "Rb","Sr","Y","Zr","Nb","Mo","Tc","Ru","Rh","Pd","Ag","Cd","In","Sn","Sb","Te","I","Xe",
-         "Cs","Ba","La","Ce","Pr","Nd","Sm","Eu","Gd","Tb","Dy","Ho","Er","Tm","Yb","Lu","Hf",
-         "Ta","W","Re","Os","Ir","Pt","Au","Hg","Tl","Pb","Bi"}
-
-def _guess_domain(q: str) -> str:
-    t = q.lower()
-    if any(k in t for k in ["battery","cathode","anode","electrolyte","sei","lithium","solid-state"]):
-        return "batteries"
-    if any(k in t for k in ["polymer","monomer","smiles","inchi","thermoplastic","thermoset"]):
-        return "polymers"
-    if any(k in t for k in ["phonon","elastic","band","dos","neb","adsorption","surface","catalyst","co2rr","her","oer","orr","nrr"]):
-        return "catalysis"
-    if any(k in t for k in ["machine learning","surrogate","gnn","active learning","dataset","benchmark"]):
-        return "materials_ml"
-    if any(k in t for k in ["shoe","sock","dog","movie","recipe"]):
-        return "out_of_domain"
-    return "materials_general"
-
-def _extract_conditions(q: str) -> Dict[str, Any]:
-    cond: Dict[str, Any] = {}
-    m = _RX_PH.search(q);  cond["pH"] = m.group(1) if m else None
-    m = _RX_POT.search(q); cond["potential"] = f"{m.group(1)} V vs {m.group(2)}" if m else None
-    return {k:v for k,v in cond.items() if v}
-
-def _rule_intent(query: str) -> Dict[str, Any]:
-    dom = _guess_domain(query)
-    # 粗提催化剂/晶面
-    catalyst, facet = None, None
-    m = _RX_FAC.search(query)
-    if m: catalyst, facet = m.group(1), f"{m.group(1)}({m.group(2)})"
-    else:
-        for el in set(_RX_EL.findall(query)):
-            if el in _ELTS: catalyst = el; break
-        if catalyst: facet = f"{catalyst}(111)"
-
-    return {
-        "domain": dom,
-        "problem_type": "-",            # 让 LLM 规范化
-        "system": {"material": None, "catalyst": catalyst, "facet": facet, "defect": None, "molecule": None},
-        "conditions": _extract_conditions(query),
-        "target_properties": [],
-        "metrics": [],
-        "datasets": [],
-        "normalized_query": query.strip(),
-        "dft_tasks": [],
-        "non_dft_paths": [],
-        "red_flags": [],
-    }
-
-# ---------------- prompting ----------------
-SCHEMA = (
-    '{'
-    '"domain":"catalysis|batteries|polymers|materials_ml|materials_general|out_of_domain",'
-    '"problem_type": "short noun phrase",'
-    '"system":{"material":str|null,"catalyst":str|null,"facet":str|null,"defect":str|null,"molecule":str|null},'
-    '"conditions":{"pH":str|null,"potential":str|null,"temperature":str|null,"pressure":str|null,"electrolyte":str|null,"solvent":str|null},'
-    '"target_properties":[str],'
-    '"metrics":[str],'
-    '"datasets":[str],'
-    '"normalized_query":str,'
-    '"dft_tasks":[{"name":str,"why":str,"inputs":[str]}],'
-    '"non_dft_paths":[{"method":str,"why":str,"next_step":str}],'
-    '"red_flags":[str]'
-    '}'
-)
-
-def _compose_messages(query: str) -> List[Dict[str,str]]:
-    sys = (
-        "You are an expert research planner for computational materials. "
-        "Normalize the inquiry and propose DFT-suitable tasks AND complementary non-DFT paths. "
-        "Return STRICT JSON ONLY. Schema:\n" + SCHEMA +
-        "\nRules:\n"
-        "- If out-of-domain, set domain='out_of_domain' and suggest reinterpretation in non_dft_paths.\n"
-        "- Keep keys exact; unknown -> null/[]; no markdown."
-    )
-    return [{"role":"system","content":sys},{"role":"user","content":query}]
-
-def _merge(rule_f: Dict[str,Any], llm_f: Dict[str,Any]) -> Dict[str,Any]:
-    out = dict(rule_f)
-    if not isinstance(llm_f, dict): return out
-    for k in ["domain","problem_type","system","conditions","target_properties","metrics","datasets",
-              "normalized_query","dft_tasks","non_dft_paths","red_flags"]:
-        v = llm_f.get(k)
-        if v not in (None, "", []): out[k] = v
+def _norm_pairs(pairs: List[Any]) -> List[Tuple[Any, Any]]:
+    out = []
+    for x in _as_list(pairs):
+        if isinstance(x, (list, tuple)) and len(x) >= 2:
+            out.append((x[0], x[1]))
+        elif isinstance(x, dict) and "a" in x and "b" in x:
+            out.append((x["a"], x["b"]))
+        else:
+            out.append((x, None))
     return out
 
-def _confidence(f: Dict[str,Any]) -> float:
-    dm = 1.0 if f.get("domain") in {"catalysis","batteries","polymers","materials_ml","materials_general"} else 0.2
-    sys = f.get("system") or {}
-    spec = 0.0 + (0.6 if (sys.get("material") or sys.get("catalyst")) else 0.0) + (0.4 if isinstance(sys.get("facet"), str) else 0.0)
-    cond = f.get("conditions") or {}
-    comp = sum(1 for k in ["pH","potential","temperature","pressure","electrolyte","solvent"] if cond.get(k)) / 6.0
-    dfts = f.get("dft_tasks") or []
-    ready = 1.0 if all(isinstance(t,dict) and t.get("name") and t.get("inputs") for t in dfts) else 0.5
-    score = 0.25*dm + 0.25*spec + 0.25*comp + 0.25*ready
-    return round(max(0.0, min(1.0, score)), 2)
+def _domain_guess(q: str, base: str | None) -> str:
+    t = (q or "").lower()
+    if any(k in t for k in ["electro", "rhe", "she", "ph="]):
+        return "catalysis"
+    if any(k in t for k in ["battery", "sei", "cathode", "anode", "electrolyte"]):
+        return "batteries"
+    if any(k in t for k in ["polymer", "monomer"]):
+        return "polymers"
+    return base or "materials_general"
 
-def _summary(f: Dict[str,Any]) -> str:
-    sys = f.get("system") or {}
-    cond = f.get("conditions") or {}
-    def _kv(d): return ", ".join([f"{k}={v}" for k,v in d.items() if v]) or "-"
-    dfts = "\n".join([f"- **{t.get('name','')}** — {t.get('why','')}" for t in (f.get("dft_tasks") or [])]) or "-"
-    ndft = "\n".join([f"- **{p.get('method','')}** — {p.get('why','')}" for p in (f.get("non_dft_paths") or [])]) or "-"
-    return (
+def _make_tags(intent: Dict[str, Any]) -> List[str]:
+    tags = set()
+    dom = intent.get("domain")
+    if dom: tags.add(dom)
+    sys = intent.get("system") or {}
+    for k in ["material","catalyst","facet","molecule","defect"]:
+        v = sys.get(k)
+        if isinstance(v, str) and v.strip():
+            tags.add(v.strip())
+    cond = intent.get("conditions") or {}
+    for k in ["pH","potential","temperature","pressure","electrolyte","solvent"]:
+        v = cond.get(k)
+        if v not in (None, "", [], {}):
+            tags.add(f"{k}:{v}")
+    rn = intent.get("reaction_network") or {}
+    if rn.get("elementary_steps"): tags.add(f"steps:{len(rn['elementary_steps'])}")
+    if rn.get("intermediates"):    tags.add(f"inters:{len(rn['intermediates'])}")
+    return sorted(tags)
+
+def _confidence(steps: List[Any], intermediates: List[Any], ts: List[Any]) -> float:
+    s = 0.0
+    s += 0.45 if steps else 0.0
+    s += 0.30 if intermediates else 0.0
+    s += 0.15 if ts else 0.0
+    s = min(1.0, max(0.0, s + 0.10))
+    return round(s, 2)
+
+import re
+
+_RX_FACET = re.compile(r"\b([A-Za-z]{1,2})(?:\s*|\-)?\(?\s*(\d{1,3})\s*(\d{1,3})\s*(\d{1,3})\s*\)?\b")
+# 例: Cu(111), Cu111, Cu-111
+
+import re
+
+_BATT_CATHODES = r"(NMC|NCA|LFP|LCO|LMO|LNMO|LNO)"
+_BATT_ANODES   = r"(Si|Graphite|LTO|SiOx|Hard\s*Carbon)"
+_POLY_METHODS  = r"(ROP|RAFT|ATRP|FRP|ROMP|Ziegler[- ]Natta)"
+
+def _parse_query_to_fields(q: str) -> dict:
+    """
+    轻量解析：催化/电催化/光(电)催化、电池、聚合物。返回 {domain, domain_subtype, system:{...}, conditions:{...}, molecule}
+    """
+    out = {"domain": None, "domain_subtype": None, "system": {}, "conditions": {}, "molecule": None}
+    if not q: return out
+    t = q.strip()
+
+    low = t.lower()
+
+    # ===== 催化 =====
+    if re.search(r"\b(co2rr|orr|oer|her|co2)\b", low) or "catalys" in low:
+        out["domain"] = "catalysis"
+        if "electro" in low or re.search(r"\b(rhe|she|vs)\b", low):
+            out["domain_subtype"] = "electrocatalysis"
+        elif "photoelectro" in low:
+            out["domain_subtype"] = "photoelectrocatalysis"
+        elif "photo" in low:
+            out["domain_subtype"] = "photocatalysis"
+        else:
+            out["domain_subtype"] = "thermocatalysis"
+
+        # 元素 & 晶面
+        m_cat = re.search(r"\b(Cu|Ag|Au|Ni|Co|Fe|Pt|Pd|Sn|Bi|Ru|Rh|Ir)\b", t, re.I)
+        if m_cat:
+            cat = m_cat.group(1).capitalize()
+            out["system"]["catalyst"] = cat
+            m_fac = re.search(rf"{cat}[\s\-]*\(?\s*(111|100|110)\s*\)?", t, re.I)
+            if m_fac:
+                out["system"]["facet"] = f"{cat}({m_fac.group(1)})"
+
+        if "co2" in low: out["molecule"] = "CO2"
+
+        # 条件
+        m_ph = re.search(r"\bpH\s*=\s*([0-9]+(?:\.[0-9]+)?)", t, re.I)
+        if m_ph: 
+            try: out["conditions"]["pH"] = float(m_ph.group(1))
+            except: pass
+        m_v = re.search(r"([\-+]?\d+(?:\.\d+)?)\s*V\s*(?:vs\.?\s*(RHE|SHE))?", t, re.I)
+        if m_v:
+            out["conditions"]["potential"] = f"{m_v.group(1)} V" + (f" vs {m_v.group(2).upper()}" if m_v.group(2) else "")
+
+    # ===== 电池 =====
+    if "battery" in low or re.search(r"\b(Li-ion|Li metal|sodium-ion|solid-state)\b", t, re.I):
+        out["domain"] = "batteries"
+        # 正极/负极关键词
+        m_c = re.search(_BATT_CATHODES, t, re.I)
+        if m_c: out["system"]["cathode"] = m_c.group(1).upper()
+        m_a = re.search(_BATT_ANODES, t, re.I)
+        if m_a: out["system"]["anode"] = m_a.group(1)
+        # 电解液/盐
+        m_salt = re.search(r"\b(LiPF6|LiFSI|LiTFSI|NaPF6)\b", t, re.I)
+        if m_salt: out["system"]["salt"] = m_salt.group(1)
+        if "electrolyte" in low:
+            out["system"]["electrolyte"] = "liquid"
+        if "solid" in low and "electrolyte" in low:
+            out["system"]["electrolyte"] = "solid"
+
+        # 条件
+        m_cr = re.search(r"(\d+(?:\.\d+)?)\s*C\s*[-]?\s*rate", t, re.I)
+        if m_cr: out["conditions"]["C_rate"] = m_cr.group(1)
+        m_t  = re.search(r"(\-?\d+)\s*[°º]C", t)
+        if m_t: out["conditions"]["temperature"] = f"{m_t.group(1)} °C"
+
+    # ===== 聚合物 =====
+    if "polymer" in low or re.search(_POLY_METHODS, t, re.I):
+        out["domain"] = "polymers"
+        m_method = re.search(_POLY_METHODS, t, re.I)
+        if m_method: out["system"]["method"] = m_method.group(1).upper()
+        # 单体（简单抓几个典型）
+        mons = re.findall(r"\b(ethylene|propylene|styrene|methyl\s*methacrylate|lactide|caprolactone)\b", t, re.I)
+        if mons:
+            out["system"]["monomers"] = [m.strip() for m in mons]
+        m_T = re.search(r"(\-?\d+)\s*[°º]C", t)
+        if m_T: out["conditions"]["temperature"] = f"{m_T.group(1)} °C"
+
+    return out
+# =========================
+# /chat/intent  (唯一导出的路由)
+# =========================
+@router.post("/chat/intent")
+async def api_intent(request: Request):
+    """
+    Normalize INTENT from heterogeneous inputs.
+    Accepts (all optional):
+      - query: str
+      - intent: dict (overrides)
+      - hypothesis: dict OR markdown string
+      - graph/reaction_network: {elementary_steps, intermediates, coads_pairs, ts_candidates}
+      - conditions/system: dicts
+    Returns: { ok, intent, fields, confidence, summary }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid JSON body"}, status_code=400)
+
+    session_id = body.get("session_id")
+    query      = (body.get("query") or "").strip()
+    parsed = _parse_query_to_fields(query)
+    base_intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+
+    # hypothesis: allow dict OR markdown string
+    raw_hyp = body.get("hypothesis")
+    if isinstance(raw_hyp, dict):
+        hyp = raw_hyp
+    elif isinstance(raw_hyp, str):
+        try:
+            tmp = json.loads(raw_hyp)
+            hyp = tmp if isinstance(tmp, dict) else {}
+        except Exception:
+            hyp = {}
+    else:
+        hyp = {}
+
+    # graph payload
+    graph = body.get("graph") or body.get("reaction_network") or {}
+    if not isinstance(graph, dict):
+        graph = {}
+
+    # optional conditions/system
+    conditions = body.get("conditions") if isinstance(body.get("conditions"), dict) else {}
+    system     = body.get("system")     if isinstance(body.get("system"), dict)     else {}
+
+    # collect reaction pieces (never .get() on non-dict)
+    raw_steps = body.get("steps") or graph.get("elementary_steps") or (hyp.get("steps") if isinstance(hyp, dict) else []) or []
+    raw_inter = body.get("intermediates") or graph.get("intermediates") or (hyp.get("intermediates") if isinstance(hyp, dict) else []) or []
+    raw_coads = body.get("coads_pairs") or body.get("coads") or graph.get("coads_pairs") or (hyp.get("coads") if isinstance(hyp, dict) else []) or []
+    raw_ts    = body.get("ts") or body.get("ts_candidates") or graph.get("ts_candidates") or (hyp.get("ts") if isinstance(hyp, dict) else []) or []
+
+    steps        = [_clean_step(s) for s in _as_list(raw_steps)]
+    intermediates= _as_list(raw_inter)
+    coads_pairs  = _norm_pairs(raw_coads)
+    ts_out       = _as_list(raw_ts)
+
+    reaction_network = {
+        "elementary_steps": steps,
+        "intermediates": intermediates,
+        "coads_pairs": coads_pairs,
+        "ts_candidates": ts_out,
+    }
+
+    # build intent
+    domain = _domain_guess(query, base_intent.get("domain") or parsed.get("domain"))
+    subtype = base_intent.get("domain_subtype") or parsed.get("domain_subtype")
+
+    sys_parsed  = parsed.get("system") or {}
+    cond_parsed = parsed.get("conditions") or {}
+
+    intent = {
+        "intent_version": "1.1.0",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "domain": domain,
+        "domain_subtype": subtype,   # <—— 新增：子类型（electrocatalysis / thermocatalysis / batteries / polymers ...）
+        "problem_type": base_intent.get("problem_type") or "reaction study",
+        "system": {
+            "material": (base_intent.get("system") or {}).get("material"),
+            "catalyst": (base_intent.get("system") or {}).get("catalyst") or sys_parsed.get("catalyst"),
+            "facet":    (base_intent.get("system") or {}).get("facet")    or sys_parsed.get("facet"),
+            "defect":   (base_intent.get("system") or {}).get("defect"),
+            "molecule": (base_intent.get("system") or {}).get("molecule") or parsed.get("molecule"),
+            # 电池/聚合物拓展字段可直接放这里：
+            "cathode":  (base_intent.get("system") or {}).get("cathode")  or sys_parsed.get("cathode"),
+            "anode":    (base_intent.get("system") or {}).get("anode")    or sys_parsed.get("anode"),
+            "salt":     (base_intent.get("system") or {}).get("salt")     or sys_parsed.get("salt"),
+            "electrolyte": (base_intent.get("system") or {}).get("electrolyte") or sys_parsed.get("electrolyte"),
+            "monomers": (base_intent.get("system") or {}).get("monomers") or sys_parsed.get("monomers"),
+            "method":   (base_intent.get("system") or {}).get("method")   or sys_parsed.get("method"),
+        },
+        "conditions": {
+            "pH":          (base_intent.get("conditions") or {}).get("pH",          cond_parsed.get("pH")),
+            "potential":   (base_intent.get("conditions") or {}).get("potential",   cond_parsed.get("potential")),
+            "temperature": (base_intent.get("conditions") or {}).get("temperature", cond_parsed.get("temperature")),
+            "pressure":    (base_intent.get("conditions") or {}).get("pressure",    cond_parsed.get("pressure")),
+            "electrolyte": (base_intent.get("conditions") or {}).get("electrolyte", cond_parsed.get("electrolyte")),
+            "solvent":     (base_intent.get("conditions") or {}).get("solvent",     cond_parsed.get("solvent")),
+            "C_rate":      (base_intent.get("conditions") or {}).get("C_rate",      cond_parsed.get("C_rate")),
+            "v_min":       (base_intent.get("conditions") or {}).get("v_min",       cond_parsed.get("v_min")),
+            "v_max":       (base_intent.get("conditions") or {}).get("v_max",       cond_parsed.get("v_max")),
+            "cycles":      (base_intent.get("conditions") or {}).get("cycles",      cond_parsed.get("cycles")),
+            "illumination":(base_intent.get("conditions") or {}).get("illumination",cond_parsed.get("illumination")),
+            "wavelength":  (base_intent.get("conditions") or {}).get("wavelength",  cond_parsed.get("wavelength")),
+        },
+        "target_properties": base_intent.get("target_properties") or [],
+        "metrics":           base_intent.get("metrics") or [],
+        "datasets":          base_intent.get("datasets") or [],
+        "normalized_query":  query,
+        "reaction_network":  reaction_network,
+    }
+    # base_intent 覆盖
+    for k, v in base_intent.items():
+        if v in (None, "", [], {}):
+            continue
+        if k == "system" and isinstance(v, dict):
+            intent["system"].update(v)
+        elif k == "conditions" and isinstance(v, dict):
+            intent["conditions"].update(v)
+        else:
+            intent[k] = v
+
+    # new: tags
+    intent["tags"] = _make_tags(intent)
+
+    # confidence & summary
+    conf = _confidence(steps, intermediates, ts_out)
+    def _kv(d): return ", ".join(f"{k}={v}" for k, v in d.items() if v not in (None, "", [], {})) or "-"
+    summary = (
         f"**Intent Summary**\n"
-        f"- Domain: {f.get('domain','-')}\n"
-        f"- Problem type: {f.get('problem_type','-')}\n"
-        f"- System: material={sys.get('material')}, catalyst={sys.get('catalyst')}, facet={sys.get('facet')}, defect={sys.get('defect')}, molecule={sys.get('molecule')}\n"
-        f"- Conditions: {_kv(cond)}\n"
-        f"- Target properties: {', '.join(f.get('target_properties',[])) or '-'}\n"
-        f"- DFT tasks:\n{dfts}\n"
-        f"- Non-DFT suggestions:\n{ndft}\n"
+        f"- Domain: {intent.get('domain','-')}\n"
+        f"- Problem: {intent.get('problem_type','-')}\n"
+        f"- System: material={intent['system'].get('material')}, catalyst={intent['system'].get('catalyst')}, "
+        f"facet={intent['system'].get('facet')}, defect={intent['system'].get('defect')}, molecule={intent['system'].get('molecule')}\n"
+        f"- Conditions: {_kv(intent['conditions'])}\n"
+        f"- RN: steps={len(steps)}, intermediates={len(intermediates)}, ts={len(ts_out)}, coads={len(coads_pairs)}\n"
+        f"- Tags: {', '.join(intent.get('tags') or []) or '-'}\n"
     )
 
-# ---------------- FastAPI route ----------------
-@router.post("/chat/intent")
-async def intent_route(request: Request):
-    body = await request.json()
-    query = _norm(body.get("query"))
-    if not query:
-        # 永远返回非空 intent
-        fallback = _rule_intent("")
-        return {"ok": False, "intent": fallback, "summary": "Empty query."}
+    # persist
+    try:
+        if session_id:
+            await _save_artifact(session_id, "intent", intent)
+            await _save_artifact(session_id, "rxn_network", reaction_network)  # 便于 /state 聚合
+    except Exception:
+        log.exception("api_intent: persist failed")
 
-    rule_fields = _rule_intent(query)
-
-    # LLM 解析（可用则 2 轮）
-    merged = rule_fields
-    if os.getenv("OPENAI_API_KEY"):
-        rounds: List[Dict[str,Any]] = []
-        for _ in range(2):
-            txt = await _call_llm(_compose_messages(query), temperature=0.2, max_tokens=1100)
-            j = _safe_json(txt)
-            if j: rounds.append(j)
-        if rounds:
-            # 用最后一轮（通常最完整），也可投票
-            merged = _merge(rule_fields, rounds[-1])
-
-    conf = _confidence(merged)
-    summary = _summary(merged)
-
-    # 统一、稳健的返回
-    return {
-        "ok": True,
-        "intent": merged,        # 前端直接读这个键即可
-        "fields": merged,        # 兼容你之前用 fields 的地方
-        "confidence": conf,
-        "summary": summary,
-    }
+    return {"ok": True, "intent": intent, "fields": intent, "confidence": conf, "summary": summary}

@@ -4,12 +4,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-import uuid
-
-
-def uid():
-    return str(uuid.uuid4())
-
 from typing import AsyncGenerator
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, ForeignKey, JSON, Float,
@@ -34,7 +28,6 @@ engine = create_async_engine(DATABASE_URL, echo=ECHO, future=True, pool_pre_ping
 AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 # -----------------------------------------------------------------------------
 # Models
 # -----------------------------------------------------------------------------
@@ -42,7 +35,6 @@ class ChatSession(Base):
     __tablename__ = "chat_session"
 
     id          = Column(Integer, primary_key=True, autoincrement=True)
-    uid         = Column(String, unique=True, default=uid)
     name        = Column(String, nullable=False)
     user_id     = Column(Integer)
     project     = Column(String)
@@ -60,6 +52,7 @@ class ChatSession(Base):
         cascade="all, delete-orphan",     # 如只做软删除，可注释掉
         passive_deletes=True
     )
+
 class ChatMessage(Base):
     __tablename__ = "chat_message"
 
@@ -332,43 +325,4 @@ class ExecutionStep(Base):
     output_data = Column(JSON)       # 该步的产出（job_id、文件、数值）
     status = Column(String)          # done / error / skipped
     created_at = Column(DateTime, default=datetime.utcnow)
-
-
-# === New Tables: Job / FileAsset / ResultRow ===
-class Job(Base):
-    __tablename__ = "job"
-
-    id           = Column(Integer, primary_key=True, autoincrement=True)
-    job_uid      = Column(String, unique=True, default=uid)
-    session_uid  = Column(String, ForeignKey("chat_session.uid"), index=True)
-    title        = Column(String)
-    server_name  = Column(String)        # 目标服务器
-    scheduler    = Column(String)        # pbs/slurm
-    batch_uid    = Column(String, index=True)  # 批次号
-    params       = Column(JSON)          # 任意参数（ppn/partition等）
-    remote_dir   = Column(String)
-    local_dir    = Column(String)
-    slurm_or_pbs_id = Column(String)
-    status       = Column(String, default="created")
-    meta         = Column(JSON)
-    created_at   = Column(DateTime, default=datetime.utcnow)
-    updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-class FileAsset(Base):
-    __tablename__ = "file_asset"
-
-    id          = Column(Integer, primary_key=True, autoincrement=True)
-    job_uid     = Column(String, ForeignKey("job.job_uid"), index=True)
-    kind        = Column(String)   # POSCAR/OUT/CSV/etc
-    path_remote = Column(String)
-    path_local  = Column(String)
-    size        = Column(Integer)
-    created_at  = Column(DateTime, default=datetime.utcnow)
-class ResultRow(Base):
-    __tablename__ = "result_row"
-
-    id        = Column(Integer, primary_key=True, autoincrement=True)
-    job_uid   = Column(String, ForeignKey("job.job_uid"), index=True)
-    step      = Column(String)
-    energy    = Column(String)
-    info      = Column(JSON)
-    created_at= Column(DateTime, default=datetime.utcnow)
+    
