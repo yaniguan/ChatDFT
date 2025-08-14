@@ -1,7 +1,7 @@
 # server/chat/plan_agent.py
 # -*- coding: utf-8 -*-
 """
-Plan Agent — LLM + RAG + hypothesis 优先 + 轻量种子兜底
+Plan Agent — LLM + RAG + hypothesis 优先 + 轻量种子兜底 (+ Mechanism Registry)
 
 Endpoints
 ---------
@@ -9,11 +9,11 @@ POST /chat/plan
   - 输入: {session_id?, intent, hypothesis(str|dict)?, knowledge?, history?, query?}
   - 流程:
       1) RAG 历史/知识上下文
-      2) 优先采用 hypothesis 的结构化反应网络
+      2) 优先采用 hypothesis 的结构化反应网络 / external graph
       3) 若缺失则 LLM 生成（注入 RAG/knowledge/history 作为 hint）
-      4) 质量清洗 + 限流 + 低置信度时与种子轻度合并
-      5) 产出 tasks + rxn_network（steps/inter/coads/ts）
-  - 返回: {ok, steps, intermediates, coads, ts, tasks, confidence, ...}
+      4) 合并 mechanism registry 的 seed（如命中），质量清洗 + 限流
+      5) 产出 tasks + rxn_network（steps/inter/coads/ts）+ workflow（便于 HPC 页面提交）
+  - 返回: {ok, steps, intermediates, coads, ts, tasks, workflow, confidence, ...}
 
 POST /chat/execute
   - 选择性执行部分 tasks（示例执行层，安全容错）
@@ -28,6 +28,7 @@ import json
 import os
 import re
 import unicodedata
+from datetime import datetime
 
 from fastapi import APIRouter, FastAPI, Request
 
@@ -43,6 +44,13 @@ try:
 except Exception:
     async def rag_context(query: str, session_id: int | None = None, top_k: int = 8) -> str:
         return ""
+
+# ---------- Mechanism Registry (可选) ----------
+# NEW: 引入机制注册表（若不存在则为空不影响运行）
+try:
+    from server.mechanisms.registry import REGISTRY
+except Exception:
+    REGISTRY = {}
 
 router = APIRouter()
 
@@ -137,7 +145,114 @@ def _extract_intent(body: Dict[str, Any]) -> Dict[str, Any]:
     intent["problem_type"] = intent.get("problem_type") or intent.get("reaction") or "HER"
     return intent
 
-# ========================= Seeds（简单反应集） =========================
+# ========================= Mechanism utils (NEW) =========================
+# 轻量 alias 规则（与 intent/hypothesis 保持一致）
+_MECH_ALIASES = [
+    (r"\bco2rr\b|\bco2\b.*\breduc", ["CO2RR_CO_path","CO2RR_HCOO_path","CO2RR_to_ethanol_CO_coupling"]),
+    (r"\bnrr\b|\bn2\b.*\breduc",    ["NRR_distal","NRR_alternating","NRR_dissociative"]),
+    (r"\borr\b|\boxygen\s+reduction", ["ORR_4e"]),
+    (r"\boer\b|\boxygen\s+evolution", ["OER_lattice_oxo_skeleton"]),
+    (r"\bher\b|\bhydrogen\s+evolution", ["HER_VHT"]),
+    (r"\bno3rr\b|\bnitrate\b.*\breduc", ["NO3RR_to_NH3_skeleton"]),
+    (r"\bmsr\b|\bmethane\s+steam\s+reform", ["MSR_basic"]),
+    (r"\bhaber\b|\bnh3\b.*\bsynth", ["Haber_Bosch_Fe"]),
+    (r"\bco\s+oxidation\b", ["CO_oxidation_LH","CO_oxidation_MvK"]),
+    (r"\bisomeriz", ["Hydroisomerization_zeolite"]),
+    (r"\balkylation\b", ["Alkylation_acid"]),
+    (r"\bdehydration\b|\bto\s+olefin\b", ["Alcohol_dehydration"]),
+    (r"\bwilkinson\b|\brhcl\(pph3\)3\b|\balkene\s+hydrogenation", ["Wilkinson_hydrogenation"]),
+    (r"\bhydroformylation\b|\brh\(pph3\)3cl\b|\bhco\(co\)4\b", ["Hydroformylation_Rh"]),
+    (r"\bheck\b", ["Heck_Pd"]),
+    (r"\bsuzuki\b", ["Suzuki_Pd"]),
+    (r"\bsonogashira\b", ["Sonogashira_Pd_Cu"]),
+    (r"\bepoxidation\b|\bsharpless\b|\bjacobsen\b", ["Epoxidation_Sharpless"]),
+    (r"\bnoyori\b|\bknowles\b|\basymmetric\b.*\bhydrogenation", ["Asymmetric_Hydrogenation_Noyori"]),
+    (r"\bphotocatalysis\b|\bphoto\s+water\s+split", ["Photocatalytic_water_splitting"]),
+    (r"\bphotothermal\b.*co2", ["Photothermal_CO2RR_skeleton"]),
+    (r"\bphotothermal\b.*methane|\bphotothermal\b.*ch4", ["Photothermal_methane_conversion"]),
+]
+
+def _to_list(x):
+    if x is None: return []
+    if isinstance(x,(list,tuple)): return list(x)
+    return [x]
+
+def _mech_guess(intent: Dict[str, Any], query: str) -> List[str]:
+    text = " ".join([
+        query or "",
+        str(intent.get("task") or ""),
+        str(intent.get("reaction") or intent.get("problem_type") or ""),
+        " ".join(_to_list((intent.get("deliverables") or {}).get("target_products")))
+    ]).lower()
+    keys: List[str] = []
+    # tags 直接命中
+    for t in _to_list(intent.get("tags")):
+        if isinstance(t, str) and t in REGISTRY and t not in keys:
+            keys.append(t)
+    # 产物线索
+    if re.search(r"\bmethanol\b|\bch3oh\b", text):
+        for k in ["CO2RR_CO_path","CO2RR_HCOO_path"]:
+            if k in REGISTRY and k not in keys: keys.append(k)
+    if re.search(r"\bethanol\b|\bch3ch2oh\b", text):
+        if "CO2RR_to_ethanol_CO_coupling" in REGISTRY and "CO2RR_to_ethanol_CO_coupling" not in keys:
+            keys.append("CO2RR_to_ethanol_CO_coupling")
+    # alias
+    for pat, cand in _MECH_ALIASES:
+        if re.search(pat, text):
+            for k in cand:
+                if k in REGISTRY and k not in keys:
+                    keys.append(k)
+    return keys[:4]
+
+def _apply_variant(entry: Dict[str, Any], substrate: Optional[str], facet: Optional[str]) -> Dict[str, Any]:
+    vs = entry.get("variants") or {}
+    if facet and facet in vs: return vs[facet] or {}
+    if substrate and substrate in vs: return vs[substrate] or {}
+    return {}
+
+def _mech_seed(intent: Dict[str, Any], mech_keys: List[str]) -> Dict[str, Any]:
+    """从 REGISTRY 合并生成 seed: {steps, intermediates, coads, ts}"""
+    inters, steps, coads = [], [], []
+    substrate = (intent.get("system") or {}).get("catalyst") or intent.get("substrate")
+    facet     = (intent.get("system") or {}).get("facet") or intent.get("facet")
+    for k in mech_keys:
+        base = REGISTRY.get(k) or {}
+        var  = _apply_variant(base, substrate, facet)
+        inters += _to_list(base.get("intermediates")) + _to_list(var.get("intermediates"))
+        for st in _to_list(base.get("steps")) + _to_list(var.get("steps")):
+            if isinstance(st, dict):
+                lhs = " + ".join(_to_list(st.get("r") or st.get("reactants") or []))
+                rhs = " + ".join(_to_list(st.get("p") or st.get("products")  or []))
+                if lhs or rhs:
+                    steps.append(f"{lhs} -> {rhs}".strip())
+            elif isinstance(st, str):
+                steps.append(st)
+        for pair in _to_list(base.get("coads")) + _to_list(var.get("coads")):
+            if isinstance(pair,(list,tuple)) and len(pair)>=2:
+                coads.append((str(pair[0]), str(pair[1])))
+    # 从 steps 左侧推断共吸附
+    for st in steps:
+        if "->" in st:
+            L = st.split("->",1)[0]
+            ads = [z.strip() for z in re.split(r"[+]", L) if z.strip().endswith("*")]
+            if len(ads)>=2:
+                coads.append((ads[0], ads[1]))
+    # 去重
+    def _uniq(seq):
+        seen=set(); out=[]
+        for x in seq:
+            j = json.dumps(x, sort_keys=True) if isinstance(x,(dict,list,tuple)) else str(x)
+            if j not in seen: seen.add(j); out.append(x)
+        return out
+    seed = {
+        "steps": _uniq(steps),
+        "intermediates": _uniq(inters),
+        "coads": _uniq(coads),
+        "ts": []
+    }
+    return seed
+
+# ========================= Seeds（原来的简单反应集，作为最终兜底） =========================
 def _seed_for(reaction: str) -> Tuple[List[str], List[str], List[Tuple[str, str]]]:
     r = (reaction or "").upper()
     if "CO2RR" in r:
@@ -284,7 +399,8 @@ async def _llm_confidence(intent: Dict[str, Any], steps: List[str], inter: List[
 # ========================= Build tasks =========================
 def _build_tasks(intent: Dict[str, Any],
                  steps: List[str], inter: List[str],
-                 coads_pairs: List[Tuple[str,str]], ts_edges: List[str]) -> List[Dict[str, Any]]:
+                 coads_pairs: List[Tuple[str,str]], ts_edges: List[str],
+                 session_id: Optional[int] = None) -> List[Dict[str, Any]]:
     catalyst = (intent.get("system") or {}).get("catalyst") or (intent.get("system") or {}).get("material") or "Pt"
     facet    = (intent.get("system") or {}).get("facet") or "111"
     tasks: List[Dict[str, Any]] = []
@@ -300,7 +416,10 @@ def _build_tasks(intent: Dict[str, Any],
         t = {
             "id": tid, "section": section, "name": name, "agent": agent, "description": desc,
             "params": {"form": form or [], "payload": payload or {}},
-            "meta": {"parallel_group": group, "action_endpoint": endpoint}
+            # NEW: meta 内含 action_endpoint + project/run_id，便于 HPC 页面直接提交
+            "meta": {"parallel_group": group, "action_endpoint": endpoint,
+                     "project": f"session-{session_id}" if session_id else None,
+                     "run_id": session_id}
         }
         tid += 1
         tasks.append(t)
@@ -422,49 +541,79 @@ async def api_plan(request: Request):
     # 2) external graph 优先：显式传入 > hypothesis 中的结构化 > 无（后面 LLM 生成）
     external_graph: Dict[str, Any] = body.get("graph") or _graph_from_hyp(hyp_dict) or {}
 
-    # 3) 种子（兜底）
+    # 3) Mechanism seed（优先于旧 seed；若命中）
+    mech_keys = _mech_guess(intent_in, query) if REGISTRY else []
+    mech_seed = _mech_seed(intent_in, mech_keys) if mech_keys else {}
+
+    # 4) 传统兜底 seed
     seed_steps, seed_inter, seed_coads = _seed_for(intent_in.get("problem_type",""))
 
-    # 4) 拿到候选图（优先 external，若没有则让 LLM 生成；把 knowledge/history/RAG 合并进 hint）
+    # 5) 拿到候选图（优先 external，若没有则让 LLM 生成；把 RAG/knowledge/history + mech_seed 合并进 hint）
     if external_graph:
         steps_raw = [s if isinstance(s, str) else "" for s in external_graph.get("reaction_network", [])]
         inter_raw = [s for s in external_graph.get("intermediates", [])]
         coads_raw = external_graph.get("coads_pairs", [])
         ts_raw    = [s for s in external_graph.get("ts_edges", [])]
+        # 补强：如果 external 很空而 mech_seed 存在，用 seed 合并增强
+        if mech_seed and (len(steps_raw) < 2 or len(inter_raw) < 3):
+            steps_raw = list(dict.fromkeys((mech_seed.get("steps") or []) + steps_raw))
+            inter_raw = list(dict.fromkeys((mech_seed.get("intermediates") or []) + inter_raw))
+            coads_raw = list(dict.fromkeys((mech_seed.get("coads") or []) + _to_list(coads_raw)))
     else:
         hint_parts = []
         if knowledge: hint_parts.append(f"[knowledge]{json.dumps(knowledge, ensure_ascii=False)[:1200]}")
         if history:   hint_parts.append(f"[history]{json.dumps(history, ensure_ascii=False)[:1200]}")
         if rag_ctx:   hint_parts.append(f"[rag]{rag_ctx[:1200]}")
+        if mech_seed: hint_parts.append(f"[mechanism]{json.dumps(mech_seed, ensure_ascii=False)[:1200]}")
         hint = "\n".join(hint_parts)
 
         try:
-            llm_out = await _llm_generate(intent_in, hint, {"seed": {"steps": seed_steps, "intermediates": seed_inter}})
+            # NEW: 将 mech_seed 作为 seed_hint 传入 LLM
+            llm_out = await _llm_generate(intent_in, hint, {"seed": mech_seed or {"steps": seed_steps, "intermediates": seed_inter}})
         except Exception:
-            llm_out = {"steps": seed_steps, "intermediates": seed_inter, "coads": [], "ts": []}
+            base_seed = mech_seed if mech_seed else {"steps": seed_steps, "intermediates": seed_inter, "coads": seed_coads, "ts": []}
+            llm_out = {"steps": base_seed.get("steps", []), "intermediates": base_seed.get("intermediates", []),
+                       "coads": base_seed.get("coads", []), "ts": []}
 
         steps_raw = (llm_out.get("steps") or []) + (llm_out.get("ts") or [])
         inter_raw = (llm_out.get("intermediates") or [])
         coads_raw = llm_out.get("coads") or []
         ts_raw    = llm_out.get("ts") or []
 
-    # 5) 清洗 + 限流
+        # 若 LLM 结果很弱，再并入传统 seed
+        if (len(steps_raw) < 2 or len(inter_raw) < 3):
+            steps_raw = list(dict.fromkeys((mech_seed.get("steps") if mech_seed else seed_steps) + steps_raw))
+            inter_raw = list(dict.fromkeys((mech_seed.get("intermediates") if mech_seed else seed_inter) + inter_raw))
+            if not coads_raw:
+                coads_raw = (mech_seed.get("coads") if mech_seed else seed_coads)
+
+    # 6) 清洗 + 限流
     steps, inter = _clean_all(steps_raw, inter_raw, LIMITS, STRICT)
 
-    # 6) 置信度（外部图不打分；非 always 模式才打）
+    # 7) 置信度（外部图不打分；非 always 模式才打）
     conf = 0.0
     if USE_SEED_POLICY != "always" and not external_graph:
         conf = await _llm_confidence(intent_in, steps, inter)
 
-    # 7) 低置信度/强制：轻度并入 seed
+    # 8) 低置信度/强制：轻度并入传统 seed（保持你原策略）
     if USE_SEED_POLICY == "always" or (USE_SEED_POLICY == "auto" and conf < CONF_THRESHOLD):
         steps = _uniq_limit(seed_steps + [s for s in steps if s not in seed_steps], LIMITS["ts"])
         inter = _uniq_limit(seed_inter + [i for i in inter if i not in seed_inter], LIMITS["inter"])
 
-    # 8) 共吸附
+    # 9) 共吸附
     ads = [s for s in inter if s.endswith("*")]
     if not coads_raw:
-        coads_pairs = sorted({tuple(sorted((a, "H*"))) for a in ads if a != "H*"})
+        # 如果 mechanism seed 有建议，用它；否则默认与 H* 共吸附
+        seed_pairs = mech_seed.get("coads") if mech_seed else []
+        if seed_pairs:
+            norm_pairs = []
+            for pr in seed_pairs:
+                a, b = (pr if isinstance(pr, (list,tuple)) else (None,None))
+                if isinstance(a,str) and isinstance(b,str) and a.endswith("*") and b.endswith("*"):
+                    norm_pairs.append(tuple(sorted(( _normalize_species(a), _normalize_species(b) ))))
+            coads_pairs = _uniq_limit(norm_pairs, LIMITS.get("coads", 80))
+        else:
+            coads_pairs = sorted({tuple(sorted((a, "H*"))) for a in ads if a != "H*"})
     else:
         norm_pairs = []
         for pr in coads_raw:
@@ -474,13 +623,31 @@ async def api_plan(request: Request):
                     norm_pairs.append(tuple(sorted((a,b))))
         coads_pairs = _uniq_limit(norm_pairs, LIMITS.get("coads", 80))
 
-    # 9) TS 边
+    # 10) TS 边
     ts_edges = [s for s in steps if "->" in s][:LIMITS["ts"]]
     if external_graph.get("ts_edges"):
         ts_edges = _uniq_limit([_normalize_species(s) for s in external_graph["ts_edges"] if "->" in s], LIMITS["ts"])
 
-    # 10) 构建 tasks（返回给前端）
-    tasks = _build_tasks(intent_in, steps, inter, coads_pairs, ts_edges)
+    # 11) 构建 tasks（带上 session_id 以便 HPC 页面提交）
+    tasks = _build_tasks(intent_in, steps, inter, coads_pairs, ts_edges, session_id=session_id)
+
+    # 12) 组装 workflow（便于前端 HPC 页面）
+    workflow = {
+        "id": f"wf-{session_id}-{int(datetime.utcnow().timestamp())}" if session_id else f"wf-{int(datetime.utcnow().timestamp())}",
+        "title": f"DFT workflow — {(intent_in.get('problem_type') or 'Task')}",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "project": f"session-{session_id}" if session_id else None,
+        "run_id": session_id,
+        "mechanisms": mech_keys,
+        "summary": {
+            "n_steps": len(steps),
+            "n_intermediates": len(inter),
+            "n_coads": len(coads_pairs),
+            "n_ts": len(ts_edges)
+        },
+        # 前端可直接遍历 tasks，读取每个 task.meta.action_endpoint 并提交
+        "tasks": tasks
+    }
 
     result = {
         "ok": True,
@@ -489,6 +656,7 @@ async def api_plan(request: Request):
         "coads": coads_pairs,
         "ts": ts_edges,
         "tasks": tasks,
+        "workflow": workflow,  # NEW: 提供给 HPC 页面直接使用
         "confidence": conf,
         "limits": LIMITS,
         "use_seed_policy": USE_SEED_POLICY,
@@ -496,7 +664,7 @@ async def api_plan(request: Request):
         "rag_context": rag_ctx,
     }
 
-    # 11) 持久化（容错）
+    # 13) 持久化（容错）
     try:
         await _save_artifact(session_id, "plan", result)
         await _save_artifact(session_id, "rxn_network", {
@@ -504,6 +672,7 @@ async def api_plan(request: Request):
             "intermediates": inter,
             "coads_pairs": coads_pairs,
             "ts_candidates": ts_edges,
+            "mechanisms": mech_keys
         })
     except Exception:
         pass

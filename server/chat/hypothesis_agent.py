@@ -20,10 +20,17 @@ Returns
 """
 from __future__ import annotations
 
-import os, json
+import os, json, re
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Request
 from .contracts import HypothesisBundle, RunEvent
+
+# === NEW: mechanism registry (optional import; stays noop if missing) ===
+try:
+    from server.mechanisms.registry import REGISTRY
+except Exception:
+    REGISTRY = {}
+
 # 通用保存
 async def _save_artifact(session_id: int | None, msg_type: str, content):
     if not session_id:
@@ -47,11 +54,11 @@ def _join(items: List[Optional[str]]) -> str:
 
 def _conditions_line(cond: Dict[str, Any]) -> str:
     return _join([
-        f"pH={cond['pH']}"                if cond.get("pH") else None,
-        f"U={cond['potential']}"          if cond.get("potential") else None,
+        f"pH={cond['pH']}"                   if cond.get("pH") else None,
+        f"U={cond['potential']}"             if cond.get("potential") else None,
         f"electrolyte={cond['electrolyte']}" if cond.get("electrolyte") else None,
-        f"solvent={cond['solvent']}"      if cond.get("solvent") else None,
-        f"T={cond['temperature']}K"       if cond.get("temperature") else None,
+        f"solvent={cond['solvent']}"         if cond.get("solvent") else None,
+        f"T={cond['temperature']}K"          if cond.get("temperature") else None,
     ])
 
 def _safe_json(s: str) -> Dict[str, Any]:
@@ -94,8 +101,10 @@ def _validate_graph(h: Dict[str, Any], intent: Dict[str, Any]) -> Tuple[Dict[str
     warnings: List[str] = []
 
     sys = intent.get("system") or {}
-    metal = (sys.get("material") or intent.get("catalyst") or "Pt").strip()
-    facet = (sys.get("facet") or intent.get("facet") or "111").strip()
+    metal = (sys.get("material") or intent.get("catalyst") or "Pt")
+    facet = (sys.get("facet") or intent.get("facet") or "111")
+    metal = str(metal).strip()
+    facet = str(facet).strip()
 
     rn_in = h.get("reaction_network") or []
     inter_in = h.get("intermediates") or []
@@ -105,22 +114,21 @@ def _validate_graph(h: Dict[str, Any], intent: Dict[str, Any]) -> Tuple[Dict[str
     # normalize steps
     rn = []
     for item in rn_in:
-        if isinstance(item, dict) and item.get("lhs") and item.get("rhs"):
-            d = {"lhs":[_canonical_species(z) for z in item["lhs"]],
-                 "rhs":[_canonical_species(z) for z in item["rhs"]]}
+        if isinstance(item, dict) and item.get("lhs") is not None and item.get("rhs") is not None:
+            d = {"lhs":[_canonical_species(z) for z in (item["lhs"] or [])],
+                 "rhs":[_canonical_species(z) for z in (item["rhs"] or [])]}
         else:
             d = _norm_step(item if isinstance(item, str) else str(item))
-        # surface sanity: if any adsorbate present on either side, ensure at least one '*' on both sides
+        # surface sanity: ensure at least one '*' on both sides if any adsorbate present
         has_surface = any(("*" in z) for z in d["lhs"] + d["rhs"])
         if has_surface and not any((z=="*" or z.endswith("*")) for z in d["lhs"]):
             d["lhs"].append("*")
         if has_surface and not any((z=="*" or z.endswith("*")) for z in d["rhs"]):
             d["rhs"].append("*")
-        # drop empties
         if d["lhs"] or d["rhs"]:
             rn.append(d)
 
-    # intermediates: enforce star/gas markers
+    # intermediates
     inter = []
     for x in inter_in:
         x = _canonical_species(x)
@@ -131,7 +139,7 @@ def _validate_graph(h: Dict[str, Any], intent: Dict[str, Any]) -> Tuple[Dict[str
             inter.append(x + "*")
     inter = _unique_seq(inter)
 
-    # co-ads pairs (adsorbates only)
+    # co-ads pairs
     coads = []
     for pair in coads_in:
         if not isinstance(pair, (list, tuple)) or len(pair) != 2: continue
@@ -142,7 +150,7 @@ def _validate_graph(h: Dict[str, Any], intent: Dict[str, Any]) -> Tuple[Dict[str
         coads.append(tuple(sorted([a,b])))
     coads = sorted(_unique_seq(coads))
 
-    # ts edges: keep strings with arrows, normalize spacing
+    # ts edges
     ts_edges = []
     for s in ts_in:
         if not isinstance(s, str) or "->" not in s: continue
@@ -192,7 +200,6 @@ async def _llm_markdown(fields: Dict[str, Any]) -> Optional[str]:
         "- <suggestion> (0-2 bullets)"
     )
     cond = _conditions_line((fields.get("intent") or {}).get("conditions") or {})
-    # give the LLM a small nudge about system
     sys2 = f"{sys}\n\nNote: Summarize conditions as: {cond if cond!='-' else 'N/A'}."
     user = "FIELDS:\n" + json.dumps(fields, ensure_ascii=False, indent=2)
     try:
@@ -205,14 +212,14 @@ async def _llm_markdown(fields: Dict[str, Any]) -> Optional[str]:
     except Exception:
         return None
 
-async def _llm_graph(intent: Dict[str, Any], hint: str="") -> Optional[Dict[str, Any]]:
-    """Ask LLM for strict JSON graph."""
+async def _llm_graph(intent: Dict[str, Any], hint: str="", seed: Optional[Dict[str, Any]]=None) -> Optional[Dict[str, Any]]:
+    """Ask LLM for strict JSON graph, with optional seed suggestions."""
     if not _llm_available(): return None
     from server.utils.openai_wrapper import chatgpt_call  # type: ignore
     sys = (
-        "You are an expert in heterogeneous electrocatalysis. "
+        "You are an expert in heterogeneous and homogeneous catalysis. "
         "Produce STRICT JSON describing a reaction network for the given intent. "
-        "Use '*' for adsorbates and '(g)' for gas. Keep species realistic for the catalyst. "
+        "Use '*' for adsorbates and '(g)' for gas when applicable. "
         "Schema:\n"
         "{\n"
         '  "reaction_network": ["A* + B -> C* + D(g)", ...],\n'
@@ -222,7 +229,9 @@ async def _llm_graph(intent: Dict[str, Any], hint: str="") -> Optional[Dict[str,
         "}\n"
         "Return ONLY JSON."
     )
-    payload = {"intent": intent, "hint": hint}
+    payload = {"intent": intent, "hint": hint or ""}
+    if seed:
+        payload["seed"] = seed  # 作为“建议起点”，LLM可在此基础上细化或修正
     try:
         raw = await chatgpt_call(
             [{"role":"system","content": sys},
@@ -236,12 +245,129 @@ async def _llm_graph(intent: Dict[str, Any], hint: str="") -> Optional[Dict[str,
     except Exception:
         return None
 
-# ============================ Fallback seeds ============================
+# ============================ Mechanism expansion (NEW) ============================
+
+# 机制别名规则（与 intent_agent 保持一致风格，轻量）
+_MECH_ALIASES = [
+    (r"\bco2rr\b|\bco2\b.*\breduc", ["CO2RR_CO_path","CO2RR_HCOO_path","CO2RR_to_ethanol_CO_coupling"]),
+    (r"\bnrr\b|\bn2\b.*\breduc",    ["NRR_distal","NRR_alternating","NRR_dissociative"]),
+    (r"\borr\b|\boxygen\s+reduction", ["ORR_4e"]),
+    (r"\boer\b|\boxygen\s+evolution", ["OER_lattice_oxo_skeleton"]),
+    (r"\bher\b|\bhydrogen\s+evolution", ["HER_VHT"]),
+    (r"\bno3rr\b|\bnitrate\b.*\breduc", ["NO3RR_to_NH3_skeleton"]),
+    (r"\bmsr\b|\bmethane\s+steam\s+reform", ["MSR_basic"]),
+    (r"\bhaber\b|\bnh3\b.*\bsynth", ["Haber_Bosch_Fe"]),
+    (r"\bco\s+oxidation\b", ["CO_oxidation_LH","CO_oxidation_MvK"]),
+    (r"\bisomeriz", ["Hydroisomerization_zeolite"]),
+    (r"\balkylation\b", ["Alkylation_acid"]),
+    (r"\bdehydration\b|\bto\s+olefin\b", ["Alcohol_dehydration"]),
+    (r"\bwilkinson\b|\brhcl\(pph3\)3\b|\balkene\s+hydrogenation", ["Wilkinson_hydrogenation"]),
+    (r"\bhydroformylation\b|\brh\(pph3\)3cl\b|\bhco\(co\)4\b", ["Hydroformylation_Rh"]),
+    (r"\bheck\b", ["Heck_Pd"]),
+    (r"\bsuzuki\b", ["Suzuki_Pd"]),
+    (r"\bsonogashira\b", ["Sonogashira_Pd_Cu"]),
+    (r"\bepoxidation\b|\bsharpless\b|\bjacobsen\b", ["Epoxidation_Sharpless"]),
+    (r"\bnoyori\b|\bknowles\b|\basymmetric\b.*\bhydrogenation", ["Asymmetric_Hydrogenation_Noyori"]),
+    (r"\bphotocatalysis\b|\bphoto\s+water\s+split", ["Photocatalytic_water_splitting"]),
+    (r"\bphotothermal\b.*co2", ["Photothermal_CO2RR_skeleton"]),
+    (r"\bphotothermal\b.*methane|\bphotothermal\b.*ch4", ["Photothermal_methane_conversion"]),
+]
+
+def _to_list(x):
+    if x is None: return []
+    if isinstance(x,(list,tuple)): return list(x)
+    return [x]
+
+def _mech_guess_from_intent(intent: Dict[str, Any]) -> List[str]:
+    keys: List[str] = []
+    # 1) tags 直指
+    for t in _to_list(intent.get("tags")):
+        if isinstance(t, str) and t in REGISTRY and t not in keys:
+            keys.append(t)
+    # 2) 任务/反应名关键词
+    text = " ".join([
+        str(intent.get("task") or ""),
+        str(intent.get("reaction") or ""),
+        str((intent.get("deliverables") or {}).get("target_products") or "")
+    ]).lower()
+    if re.search(r"\bmethanol\b|\bch3oh\b", text):
+        for k in ["CO2RR_CO_path","CO2RR_HCOO_path"]:
+            if k in REGISTRY and k not in keys: keys.append(k)
+    if re.search(r"\bethanol\b|\bch3ch2oh\b", text):
+        if "CO2RR_to_ethanol_CO_coupling" in REGISTRY and "CO2RR_to_ethanol_CO_coupling" not in keys:
+            keys.append("CO2RR_to_ethanol_CO_coupling")
+    for pat, cand in _MECH_ALIASES:
+        if re.search(pat, text):
+            for k in cand:
+                if k in REGISTRY and k not in keys:
+                    keys.append(k)
+    return keys[:4]
+
+def _apply_variant(entry: Dict[str, Any], substrate: Optional[str], facet: Optional[str]) -> Dict[str, Any]:
+    vs = entry.get("variants") or {}
+    if facet and facet in vs: return vs[facet] or {}
+    if substrate and substrate in vs: return vs[substrate] or {}
+    return {}
+
+def _expand_mech(keys: List[str], substrate: Optional[str], facet: Optional[str]) -> Dict[str, Any]:
+    """合并多个机制为 seed graph：返回与 _llm_graph 相同 schema 的 JSON。"""
+    inters, steps, coads, ts = [], [], [], []
+    for k in keys:
+        base = REGISTRY.get(k) or {}
+        var = _apply_variant(base, substrate, facet)
+        inters += _to_list(base.get("intermediates")) + _to_list(var.get("intermediates"))
+        # steps（统一成字符串 'A + B -> C + D'，便于与 LLM 输出合并）
+        for st in _to_list(base.get("steps")) + _to_list(var.get("steps")):
+            if isinstance(st, dict):
+                lhs = " + ".join(_to_list(st.get("r") or st.get("reactants") or []))
+                rhs = " + ".join(_to_list(st.get("p") or st.get("products")  or []))
+                if lhs or rhs:
+                    steps.append(f"{lhs} -> {rhs}".strip())
+            elif isinstance(st, str):
+                steps.append(st)
+        for pair in _to_list(base.get("coads")) + _to_list(var.get("coads")):
+            if isinstance(pair,(list,tuple)) and len(pair)>=2:
+                a,b = str(pair[0]), str(pair[1])
+                coads.append([a,b])
+    # 从 steps 推断 coads
+    for st in steps:
+        if "->" in st:
+            L = st.split("->",1)[0]
+            ads = [z.strip() for z in re.split(r"[+]", L) if z.strip().endswith("*")]
+            if len(ads)>=2: coads.append([ads[0], ads[1]])
+    # 去重
+    def _uniq(seq):
+        seen=set(); out=[]
+        for x in seq:
+            j = json.dumps(x, sort_keys=True) if isinstance(x, (dict,list)) else str(x)
+            if j not in seen:
+                seen.add(j); out.append(x)
+        return out
+    seed = {
+        "reaction_network": _uniq(steps),
+        "intermediates": _uniq(inters),
+        "coads_pairs": _uniq(coads),
+        "ts_edges": ts
+    }
+    return seed
+
+def _merge_graph_like(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    """合并两个 graph JSON（同 schema），列表合并去重。"""
+    out = {}
+    for k in ("reaction_network","intermediates","coads_pairs","ts_edges"):
+        la = _to_list(a.get(k)); lb = _to_list(b.get(k))
+        # 规范 steps 为字符串；coads 为二维；其余维持
+        if k == "reaction_network":
+            la = [x if isinstance(x,str) else f"{' + '.join(x.get('lhs',[]))} -> {' + '.join(x.get('rhs',[]))}" for x in la]
+            lb = [x if isinstance(x,str) else f"{' + '.join(x.get('lhs',[]))} -> {' + '.join(x.get('rhs',[]))}" for x in lb]
+        out[k] = _unique_seq(la + lb)
+    return out
+
+# ============================ Fallback seeds (legacy) ============================
 
 def _seed_graph(intent: Dict[str, Any]) -> Dict[str, Any]:
-    txt = (intent.get("reaction") or intent.get("problem_type") or "").lower()
-    cat = (intent.get("catalyst") or (intent.get("system") or {}).get("catalyst") or "").lower()
-    # HER seeds (Volmer/Heyrovsky/Tafel)
+    txt = (intent.get("reaction") or intent.get("problem_type") or intent.get("task") or "").lower()
+    # HER seed
     if "her" in txt or "hydrogen evolution" in txt:
         rn = [
             "H+ + e- + * -> H*",
@@ -253,7 +379,7 @@ def _seed_graph(intent: Dict[str, Any]) -> Dict[str, Any]:
         ts = ["H* + H* -> H2(g) + 2*","H* + H+ -> H2(g) + *"]
         return {"reaction_network": rn, "intermediates": inter, "coads_pairs": coads, "ts_edges": ts}
     # CO2RR minimal seed
-    if "co2rr" in txt or "co2 reduction" in txt or "co2->" in txt:
+    if "co2rr" in txt or "co2 reduction" in txt or "co2->" in txt or "co2 to" in txt:
         rn = [
             "CO2(g) + * -> CO2*",
             "CO2* + H+ + e- -> COOH*",
@@ -271,7 +397,7 @@ def _seed_graph(intent: Dict[str, Any]) -> Dict[str, Any]:
 
 def _template_markdown(intent: Dict[str, Any]) -> str:
     dom   = _s(intent.get("domain"))
-    rxn   = _s(intent.get("reaction") or intent.get("problem_type"))
+    rxn   = _s(intent.get("reaction") or intent.get("problem_type") or intent.get("task"))
     cat   = _s((intent.get("system") or {}).get("catalyst") or intent.get("catalyst"))
     facet = _s((intent.get("system") or {}).get("facet") or intent.get("facet"))
     cat_line = f"{cat}({facet})" if (cat != "-" and facet != "-") else cat
@@ -314,18 +440,40 @@ async def hypothesis_create(request: Request):
 
     fields = {"intent": intent, "knowledge": knowledge, "history": history}
 
-    # 1) try LLM graph (strict JSON)
-    llm_graph_raw = await _llm_graph(intent, hint)
-    if llm_graph_raw:
-        graph_fixed, warns = _validate_graph({"provenance":{"source":"llm", **({"model":"gpt-4o-mini"} if os.getenv("OPENAI_API_KEY") else {})}, **llm_graph_raw}, intent)
-        graph_fixed["provenance"]["warnings"] = warns
-    else:
-        # fallback: small seeds
-        seeded = _seed_graph(intent)
-        graph_fixed, warns = _validate_graph({"provenance":{"source":"fallback"}, **seeded}, intent)
-        graph_fixed["provenance"]["warnings"] = ["llm_graph_failed"] + warns
+    # === NEW step 0: mechanism-based seed from registry ===
+    mech_keys = _mech_guess_from_intent(intent) if REGISTRY else []
+    mech_seed = _expand_mech(
+        mech_keys,
+        substrate=intent.get("substrate") or (intent.get("system") or {}).get("catalyst"),
+        facet=intent.get("facet") or (intent.get("system") or {}).get("facet"),
+    ) if mech_keys else {}
 
-    # 2) markdown hypothesis
+    # 1) try LLM graph (strict JSON) with seed
+    llm_graph_raw = await _llm_graph(intent, hint, seed=mech_seed if mech_seed else None)
+
+    # 1.5) choose base graph before validation: merge LLM with seed if both exist
+    raw_graph_for_validation: Dict[str, Any]
+    provenance = {"provenance":{"source":"llm", **({"model":"gpt-4o-mini"} if os.getenv("OPENAI_API_KEY") else {})}}
+    if llm_graph_raw and mech_seed:
+        merged = _merge_graph_like(mech_seed, llm_graph_raw)
+        raw_graph_for_validation = {**provenance, **merged}
+    elif llm_graph_raw:
+        raw_graph_for_validation = {**provenance, **llm_graph_raw}
+    elif mech_seed:
+        raw_graph_for_validation = {"provenance":{"source":"mechanism_seed"}, **mech_seed}
+    else:
+        # fallback: legacy seeds
+        seeded = _seed_graph(intent)
+        raw_graph_for_validation = {"provenance":{"source":"fallback"}, **seeded}
+
+    # validate/repair
+    graph_fixed, warns = _validate_graph(raw_graph_for_validation, intent)
+    graph_fixed["provenance"]["warnings"] = _unique_seq(list(graph_fixed["provenance"].get("warnings", [])) + (warns or []))
+    if mech_keys:
+        # 把使用到的机制键记录在 provenance
+        graph_fixed["provenance"]["mechanisms"] = mech_keys
+
+    # 2) markdown hypothesis（与原逻辑一致）
     md = await _llm_markdown({"intent": intent, "knowledge": knowledge, "history": history})
     if not md:
         md = _template_markdown(intent)
@@ -338,23 +486,25 @@ async def hypothesis_create(request: Request):
         ts=data.get("ts", []),
         confidence=float(data.get("confidence", 0.0) or 0.0),
     )
-    # —— 新增：保存 hypothesis（markdown）
+
+    # —— 保持原 DB 交互：保存 hypothesis（markdown）
     await _save_artifact(session_id, "hypothesis", md)
 
-    # —— 新增：保存 rxn_network（结构化）
+    # —— 保持原 DB 交互：保存 rxn_network（结构化）
     rxn_payload = {
         "elementary_steps": graph_fixed.get("reaction_network") or bundle.steps,
         "intermediates": graph_fixed.get("intermediates") or bundle.intermediates,
         "coads_pairs": graph_fixed.get("coads_pairs") or bundle.coads,
         "ts_candidates": graph_fixed.get("ts_edges") or bundle.ts,
+        "system": graph_fixed.get("system"),
+        "provenance": graph_fixed.get("provenance"),
     }
     await _save_artifact(session_id, "rxn_network", rxn_payload)
 
-    return {"ok": True, "hypothesis": bundle.model_dump()}
+    return {"ok": True, "hypothesis": bundle.model_dump(), "graph": graph_fixed, "fields": fields}
 
 @router.post("/chat/hypothesis/ingest_event")
 async def hypothesis_ingest_event(request: Request):
     evt = RunEvent(**(await request.json()))
-    # TODO：你可以把 evt 持久化（表：hypothesis_evidence），dfdsaf
-    # 并选择性触发一次 LLM 修正（在线refine）或只累计统计。
+    # TODO：可将 evt 持久化到 hypothesis_evidence 表，后续联动 refine
     return {"ok": True}

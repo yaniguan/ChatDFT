@@ -65,7 +65,7 @@ for k, v in DEFAULTS.items():
 # =====================================
 # Server API wrappers (sessions & core)
 # =====================================
-# ===== add near your other API wrappers =====
+
 def fetch_session_state_from_backend(session_id: int) -> dict:
     """
     Try to fetch a structured snapshot for a session.
@@ -75,7 +75,6 @@ def fetch_session_state_from_backend(session_id: int) -> dict:
     # try structured state first
     try:
         res = post("/chat/session/state", {"id": session_id}) or {}
-        # if this endpoint exists and returns keys, accept it
         if any(k in res for k in ("intent", "plan_tasks", "hypothesis", "plan_raw")):
             return res
     except Exception:
@@ -106,7 +105,6 @@ def fetch_session_state_from_backend(session_id: int) -> dict:
     for m in reversed(items):
         mtype = (m.get("msg_type") or "").lower()
         content = m.get("content") or ""
-        # content may be JSON; be tolerant
         parsed = None
         if isinstance(content, dict):
             parsed = content
@@ -125,7 +123,6 @@ def fetch_session_state_from_backend(session_id: int) -> dict:
                 snap["plan_raw"] = parsed
                 snap["plan_tasks"] = parsed.get("tasks") or snap["plan_tasks"]
         elif mtype in {"workflow_summary", "records"} and parsed:
-            # optional
             snap["workflow_results"] = parsed.get("runs") or snap["workflow_results"]
         elif mtype in {"rxn_network"} and parsed:
             snap["rxn_net"]       = parsed.get("elementary_steps") or snap["rxn_net"]
@@ -144,6 +141,352 @@ def fetch_session_state_from_backend(session_id: int) -> dict:
 
 import json as _json
 
+def _force_dict(x):
+    if isinstance(x, dict):
+        return x
+    if isinstance(x, str):
+        try:
+            return json.loads(x) or {}
+        except Exception:
+            return {}
+    return {}
+
+# =========================
+# Pretty helpers & parsing
+# =========================
+def _slug(s) -> str:
+    s = str(s or "").strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    return s or "unnamed"
+
+def _badge(s: str):
+    st.markdown(
+        f"<span style='display:inline-block; padding:6px 12px; margin:6px 8px 0 0; "
+        f"background:#eef3ff; border:1px solid #dbe5ff; border-radius:999px; "
+        f"font-size:13px; white-space:nowrap;'>{s}</span>",
+        unsafe_allow_html=True,
+    )
+
+def _get_mechanisms_from_state() -> list[str]:
+    """从 plan_raw.workflow 或 rxn_network 取机制标签；回退 intent.tags。"""
+    pr = st.session_state.get("plan_raw") or {}
+    wf = pr.get("workflow") or {}
+    mechs = wf.get("mechanisms") or []
+    if not mechs:
+        mechs = (st.session_state.get("intent") or {}).get("tags") or []
+    # 去重清洗
+    out, seen = [], set()
+    for m in mechs:
+        s = str(m).strip()
+        if s and s not in seen:
+            seen.add(s); out.append(s)
+    return out
+
+def _extract_conditions_from_intent(I: dict) -> dict:
+    """归一化条件：pH / potential / temperature / electrolyte / solvent 等。"""
+    I = I or {}
+    cond = I.get("conditions") or {}
+    ph   = cond.get("pH") or cond.get("ph")
+    U    = cond.get("potential_V_vs_RHE") or cond.get("potential") or cond.get("U")
+    T    = cond.get("temperature")
+    elec = cond.get("electrolyte")
+    solv = cond.get("solvent")
+    press= cond.get("pressure")
+    light= cond.get("illumination") or cond.get("light")
+    return {"pH": ph, "U": U, "T": T, "electrolyte": elec, "solvent": solv, "pressure": press, "illumination": light}
+
+def _kv_badge(label: str, value) -> None:
+    if value is None or value == "" or value == []:
+        return
+    _badge(f"{label}: {value}")
+
+def _nonempty(x) -> bool:
+    if x is None: return False
+    if isinstance(x, str): return x.strip() != ""
+    if isinstance(x, (list,tuple,dict,set)): return len(x) > 0
+    return True
+def _intent_table(intent: dict) -> str:
+    """把 intent dict 转成 Markdown 表格"""
+    if not intent:
+        return "_(No intent data)_"
+
+    lines = ["| Key | Value |", "| --- | --- |"]
+    for k, v in intent.items():
+        if isinstance(v, dict):
+            v = json.dumps(v, ensure_ascii=False)
+        elif isinstance(v, list):
+            v = ", ".join(str(x) for x in v)
+        lines.append(f"| {k} | {v} |")
+    return "\n".join(lines)
+def _intent_summary_card(I: dict):
+    """丰富版 Intent 摘要：系统/条件徽章/机制/置信度/RN 统计 + 详细表格。"""
+    I = _force_dict(I or {})
+    st.markdown("#### Intent")
+
+    sys  = I.get("system") or {}
+    cat  = sys.get("catalyst") or sys.get("material") or I.get("substrate") or "-"
+    facet= sys.get("facet") or I.get("facet") or "-"
+    fam  = (I.get("area") or I.get("problem_type") or I.get("stage") or "catalysis").upper()
+    task = I.get("task") or I.get("normalized_query") or "(no task text)"
+    conf = (st.session_state.get("intent_raw") or {}).get("confidence")
+
+    rn   = I.get("reaction_network") or {}
+    n_steps = len(rn.get("steps") or rn.get("elementary_steps") or [])
+    n_inters= len(rn.get("intermediates") or [])
+    n_ts    = len(rn.get("ts") or rn.get("ts_candidates") or [])
+    n_coads = len(rn.get("coads_pairs") or rn.get("coads") or [])
+
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        st.markdown(f"**{fam}** · **{cat}({facet})**")
+        st.caption(task)
+        cond = _extract_conditions_from_intent(I)
+        with st.container():
+            _kv_badge("pH", cond.get("pH"))
+            _kv_badge("U (vs RHE)", cond.get("U"))
+            _kv_badge("T (K)", cond.get("T"))
+            _kv_badge("electrolyte", cond.get("electrolyte"))
+            _kv_badge("solvent", cond.get("solvent"))
+            _kv_badge("illum.", cond.get("illumination"))
+            _kv_badge("P", cond.get("pressure"))
+        dels = (I.get("deliverables") or {})
+        tps  = dels.get("target_products") or []
+        if _nonempty(tps):
+            st.caption("Targets")
+            _badges_grid([str(x) for x in tps], cols=6)
+    with c2:
+        mechs = _get_mechanisms_from_state()
+        st.caption("Mechanisms (matched)")
+        if mechs:
+            _badges_grid(mechs, cols=3)
+        else:
+            st.write("_None_")
+        st.caption("RN summary")
+        st.markdown(
+            f"- steps: **{n_steps}**  \n"
+            f"- intermediates: **{n_inters}**  \n"
+            f"- TS candidates: **{n_ts}**  \n"
+            f"- co-ads: **{n_coads}**"
+        )
+        if conf is not None:
+            st.caption(f"Confidence: **{float(conf):.2f}**")
+
+    _intent_table(I)
+
+def _parse_hypothesis_md(md_text: str) -> dict:
+    """
+    解析 hypothesis_agent 的 Markdown 模板，鲁棒匹配：
+    支持: "Conditions:" / "**Conditions:**" / "**Conditions**:" 等。
+    子弹点自动抓取 0~N 条。
+    """
+    if not isinstance(md_text, str) or not md_text.strip():
+        return {"conditions": "", "hypothesis": "", "why": [], "next": [], "exp": []}
+
+    txt = md_text.strip()
+
+    # 统一换行
+    txt = txt.replace("\r\n", "\n").replace("\r", "\n")
+
+    # 段落切片：找到各段标题位置
+    def _find_block(label: str) -> Tuple[int, int]:
+        # 允许 **Label:** / Label: / **Label**:
+        pat = rf"(?mi)^\s*(\*\*)?{re.escape(label)}(\*\*)?\s*:\s*"
+        m = re.search(pat, txt)
+        if not m:
+            return (-1, -1)
+        start = m.end()
+        # 下一个标题（任何四个标题之一）开始处就是本段结束
+        ANY = r"(Conditions|Hypothesis|Why it may be true|What to compute next|Optional experimental validation)"
+        pat_next = rf"(?mi)^\s*(\*\*)?{ANY}(\*\*)?\s*:\s*"
+        m2 = re.search(pat_next, txt[start:])
+        if m2:
+            end = start + m2.start()
+        else:
+            end = len(txt)
+        return (start, end)
+
+    def _block_text(label: str) -> str:
+        s, e = _find_block(label)
+        if s < 0:
+            return ""
+        return txt[s:e].strip()
+
+    def _first_line(s: str) -> str:
+        if not s:
+            return ""
+        # 取本段落第一行的纯文本（去掉前导 -/* 与粗体）
+        line = s.split("\n", 1)[0]
+        line = re.sub(r"^\s*[-*]\s*", "", line).strip()
+        line = re.sub(r"^\*\*(.*?)\*\*$", r"\1", line)
+        return line
+
+    def _bullets(s: str) -> list:
+        if not s:
+            return []
+        items = []
+        for line in s.split("\n"):
+            m = re.match(r"^\s*[-*]\s+(.*)$", line)
+            if m:
+                items.append(m.group(1).strip())
+        return items
+
+    blk_cond = _block_text("Conditions")
+    blk_hypo = _block_text("Hypothesis")
+    blk_why  = _block_text("Why it may be true")
+    blk_next = _block_text("What to compute next")
+    blk_exp  = _block_text("Optional experimental validation")
+
+    return {
+        "conditions": _first_line(blk_cond),
+        "hypothesis": _first_line(blk_hypo),
+        "why":  _bullets(blk_why),
+        "next": _bullets(blk_next),
+        "exp":  _bullets(blk_exp),
+    }
+
+def _render_tasks_selector():
+    """在 Workflow 页签渲染可勾选的计划任务 + 执行按钮。"""
+    tasks = st.session_state.get("plan_tasks") or []
+
+    # 如果任务集合变化，重置选中
+    ids_now = [t.get("id") for t in tasks if isinstance(t, dict)]
+    ids_prev = st.session_state.get("selected_task_ids") or []
+    if sorted(ids_now) != sorted([i for i in ids_prev if i in ids_now]):
+        st.session_state.selected_task_ids = []
+
+    st.markdown("### Planned Tasks")
+    if not tasks:
+        st.info("No tasks yet. Click **Generate Plan** in the Chat & Plan tab.")
+        return
+
+    c1, c2, c3, c4 = st.columns([1,1,1,3])
+    with c1:
+        if st.button("Select all", use_container_width=True):
+            st.session_state.selected_task_ids = ids_now[:]
+    with c2:
+        if st.button("Clear", use_container_width=True):
+            st.session_state.selected_task_ids = []
+    with c3:
+        if st.button("Invert", use_container_width=True):
+            picked = set(st.session_state.selected_task_ids or [])
+            st.session_state.selected_task_ids = [i for i in ids_now if i not in picked]
+
+    sel = set(st.session_state.selected_task_ids or [])
+
+    for t in tasks:
+        tid = t.get("id")
+        name = t.get("name", "Task")
+        desc = t.get("description", "")
+        section = t.get("section", "")
+        colA, colB, colC = st.columns([0.12, 0.48, 0.40], gap="small")
+        with colA:
+            on = st.checkbox(str(tid), value=(tid in sel), key=f"task_pick_{tid}")
+            if on: sel.add(tid)
+            else:  sel.discard(tid)
+        with colB:
+            st.markdown(f"**[{tid}] {name}**  \n<small>{section}</small>", unsafe_allow_html=True)
+        with colC:
+            st.caption(desc)
+
+    st.session_state.selected_task_ids = list(sel)
+
+    st.markdown("---")
+    cL, cR = st.columns([2,2])
+    with cL:
+        st.caption(f"Selected: **{len(sel)}** / {len(tasks)}")
+    with cR:
+        if st.button("▶️ Execute selected on HPC", type="primary", use_container_width=True, disabled=(len(sel)==0)):
+            with st.spinner("Submitting selected tasks to HPC…"):
+                res = api_execute(st.session_state.selected_task_ids)
+            st.success("Submitted. See results below.") if res.get("ok") else st.error(res.get("detail") or "Execute failed.")
+
+def _add_meta_from_hypothesis(next_bullets: list[str]):
+    """把 Next bullets 插入为首条 meta.clarify 元任务（仅前端）。"""
+    if not next_bullets:
+        st.warning("No items found in 'What to compute next'.")
+        return
+    tasks = st.session_state.get("plan_tasks") or []
+    # 生成一个元任务（放在最前）
+    meta_task = {
+        "id": 0,  # 放最前；仅前端展示，不提交 HPC
+        "section": "Meta",
+        "name": "Plan notes — from Hypothesis",
+        "agent": "meta.clarify",
+        "description": "Imported from Hypothesis · What to compute next",
+        "params": {
+            "form": [],
+            "payload": {
+                "notes": next_bullets,
+                "source": "hypothesis",
+                "parallel_group": 0
+            }
+        },
+        "meta": {"parallel_group": 0, "action_endpoint": None}
+    }
+    # 如果已有相同源的 meta，替换；否则插入到首位
+    replaced = False
+    for i, t in enumerate(tasks):
+        if (t.get("agent") == "meta.clarify") and "notes" in ((t.get("params") or {}).get("payload") or {}):
+            tasks[i] = meta_task
+            replaced = True
+            break
+    if not replaced:
+        tasks = [meta_task] + tasks
+    st.session_state.plan_tasks = tasks
+    # 同步到 plan_raw（可选）
+    plan_raw = st.session_state.get("plan_raw") or {}
+    plan_raw.setdefault("tasks", st.session_state.plan_tasks)
+    st.session_state.plan_raw = plan_raw
+    st.success(f"Added {len(next_bullets)} note(s) to plan as meta.clarify.")
+
+def _render_hypothesis_block(md_text: str):
+    st.markdown("#### Hypothesis")
+    if not md_text:
+        st.info("Empty hypothesis.")
+        return
+    parsed = _parse_hypothesis_md(md_text)
+
+    a, b = st.columns([1,1])
+    with a:
+        st.markdown("**Conditions**")
+        st.write(parsed.get("conditions") or "_N/A_")
+    with b:
+        st.markdown("**Hypothesis**")
+        st.write(parsed.get("hypothesis") or "_N/A_")
+
+    c1, c2, c3 = st.columns([1,1,1])
+    with c1:
+        st.markdown("**Why it may be true**")
+        items = parsed.get("why") or []
+        if items:
+            for it in items: st.markdown(f"- {it}")
+        else:
+            st.write("_N/A_")
+    with c2:
+        st.markdown("**What to compute next**")
+        items_next = parsed.get("next") or []
+        if items_next:
+            for it in items_next: st.markdown(f"- {it}")
+        else:
+            st.write("_N/A_")
+        # 👉 新按钮：把 next 导入为计划注释/元任务
+        if items_next and st.button("➕ Add 'What to compute next' to plan (meta.clarify)", use_container_width=True):
+            _add_meta_from_hypothesis(items_next)
+    with c3:
+        st.markdown("**Optional experimental validation**")
+        items = parsed.get("exp") or []
+        if items:
+            for it in items: st.markdown(f"- {it}")
+        else:
+            st.write("_N/A_")
+
+    with st.expander("Raw hypothesis (Markdown)", expanded=False):
+        st.markdown(md_text)
+
+# =========================
+# Formatting helpers for RN/steps
+# =========================
 def _fmt_step_entry(s):
     """Normalize a step entry to a readable markdown bullet."""
     if isinstance(s, dict):
@@ -179,53 +522,6 @@ def _fmt_pairs_md(pairs):
             lines.append(f"- {x}")
     return "\n".join(lines)
 
-# ---- ChatDFT: pretty format helpers ----
-import json as _json
-
-def _fmt_step_entry(s):
-    """Normalize a step entry to a readable markdown bullet."""
-    # dict with explicit fields
-    if isinstance(s, dict):
-        name = s.get("name") or s.get("label")
-        if name:
-            why = s.get("why")
-            rp  = None
-            if "reactants" in s or "products" in s:
-                rp = f"{s.get('reactants','?')} → {s.get('products','?')}"
-            extra = f" — {why}" if why else ""
-            core = f"{name}{extra}"
-            return f"- {core}" + (f"\n  - {rp}" if rp else "")
-        # dict with reactants/products
-        if "reactants" in s or "products" in s:
-            return f"- {s.get('reactants','?')} → {s.get('products','?')}"
-        # fallback: json dump
-        return f"- {_json.dumps(s, ensure_ascii=False)}"
-
-    # list/tuple as (reactants, products)
-    if isinstance(s, (list, tuple)) and len(s) >= 2:
-        return f"- {s[0]} → {s[1]}"
-
-    # plain string/other
-    return f"- {s}"
-
-def _fmt_list_md(seq):
-    """Turn a heterogeneous list into markdown lines."""
-    seq = seq or []
-    return "\n".join(_fmt_step_entry(x) for x in seq)
-
-def _fmt_pairs_md(pairs):
-    """For co-adsorption pairs."""
-    pairs = pairs or []
-    out = []
-    for x in pairs:
-        if isinstance(x, (list, tuple)) and len(x) >= 2:
-            out.append(f"- {x[0]} + {x[1]} (co-ads)")
-        elif isinstance(x, dict) and "a" in x and "b" in x:
-            out.append(f"- {x['a']} + {x['b']} (co-ads)")
-        else:
-            out.append(f"- {x}")
-    return "\n".join(out)
-
 def _fmt_step_compact(s):
     """将 step 转成紧凑的一行文字：优先显示 反应式 / 名称 / why。"""
     if isinstance(s, dict):
@@ -255,26 +551,47 @@ def _step_to_row(s):
         return {"Name": "", "Reaction": f"{s[0]} → {s[1]}", "Why": ""}
     return {"Name": "", "Reaction": str(s), "Why": ""}
 
+# =========================
+# APIs to backend
+# =========================
 def api_intent(query: str) -> dict:
-    payload = {"query": query}
-    if st.session_state.active_session_id:
-        payload["session_id"] = st.session_state.active_session_id
+    # 1) 确保有 session_id；没有就创建一个，避免 400
+    sid = st.session_state.get("active_session_id")
+    if not sid:
+        new_name = (st.session_state.get("active_session_name") or "").strip() or "Untitled"
+        sid = create_session(name=new_name)
+        if not sid:
+            st.error("Failed to create session for intent.")
+            return {}
+        st.session_state.active_session_id = sid
+        st.session_state.active_session_name = new_name
+
+    # 2) 组织 payload
+    guided = {"stage": "catalysis", "area": "electro", "task": query.strip()[:140]}
+    payload = {"session_id": sid, "text": (query or "").strip(), "guided": guided}
+
+    # 3) 请求
     res = post("/chat/intent", payload) or {}
+
+    # 4) 写入前端状态
     st.session_state.intent_raw = res
     intent = res.get("intent") or res.get("fields") or {}
-    if not isinstance(intent, dict):
-        intent = {}
-    st.session_state.intent = intent
+    st.session_state.intent = _force_dict(intent)
+
+    # 5) 反馈
+    if not res.get("ok"):
+        err = res.get("error") or "Intent API error"
+        st.error(f"{err}. Received: {res.get('received')}")
+    else:
+        st.success(f"Intent generated. confidence={res.get('confidence',0):.2f}")
     return intent
 
 def api_hypothesis() -> str:
     """
-    Robust hypothesis fetcher.
-    Accepts server responses like:
-      - "plain string"
-      - {"result_md": "..."} / {"hypothesis": "..."} / {"md": "..."}
-      - { ..., "steps": [...], "intermediates": [...], "ts": [...], "coads": [...] }
-    Writes both the markdown text and extracted network pieces into session_state.
+    更鲁棒的 hypothesis 拉取：
+    - 兼容 {"result_md": "..."} / {"md": "..."} / {"hypothesis":{"md":"..."}}
+    - 如果没有 md，兜底把整个对象 json 展示，避免空
+    - 同时回填 steps/inter/ts/coads（按优先级取）
     """
     payload = {
         "intent": st.session_state.intent,
@@ -286,32 +603,63 @@ def api_hypothesis() -> str:
 
     res = post("/chat/hypothesis", payload) or {}
 
-    # ---- normalize md text ----
-    md_obj = (
-        res.get("result_md")
-        or res.get("hypothesis")
-        or res.get("md")
-        or res.get("result")
-        or res
-    )
-    if isinstance(md_obj, dict):
-        # 优先取嵌套的 "md"，否则就把 dict 转成可读 JSON 作为展示
-        md_text = md_obj.get("md") if "md" in md_obj else json.dumps(md_obj, ensure_ascii=False, indent=2)
-    elif isinstance(md_obj, str):
-        md_text = md_obj
+    # 1) 多套路拿 md 文本
+    md_text = ""
+    if isinstance(res, str):
+        md_text = res
+    elif isinstance(res, dict):
+        cand = (
+            res.get("result_md")
+            or res.get("md")
+            or (res.get("hypothesis") or {}).get("result_md")
+            or (res.get("hypothesis") or {}).get("md")
+            or res.get("hypothesis")  # 有时就是个纯字符串
+        )
+        if isinstance(cand, str):
+            md_text = cand
+        elif isinstance(cand, dict) and "md" in cand and isinstance(cand["md"], str):
+            md_text = cand["md"]
+        elif isinstance(cand, dict) and "result_md" in cand and isinstance(cand["result_md"], str):
+            md_text = cand["result_md"]
+        else:
+            # 兜底：把 res 打印为 JSON，避免 UI 是空
+            try:
+                md_text = json.dumps(res, ensure_ascii=False, indent=2)
+            except Exception:
+                md_text = str(res)
     else:
-        md_text = str(md_obj or "")
+        md_text = str(res or "")
 
-    st.session_state.hypothesis = md_text
+    st.session_state.hypothesis = md_text or ""
 
-    # ---- pull structured fields if provided ----
-    steps = res.get("steps") or res.get("elementary_steps") or []
-    inter  = res.get("intermediates") or []
-    ts     = res.get("ts") or res.get("ts_candidates") or []
-    coads  = res.get("coads") or res.get("coads_pairs") or []
+    # 2) 同时抽结构（后端可能已经给了）
+    steps = (
+        res.get("steps")
+        or res.get("elementary_steps")
+        or (res.get("hypothesis") or {}).get("steps")
+        or []
+    )
+    inter = (
+        res.get("intermediates")
+        or (res.get("hypothesis") or {}).get("intermediates")
+        or []
+    )
+    ts = (
+        res.get("ts")
+        or res.get("ts_candidates")
+        or (res.get("hypothesis") or {}).get("ts")
+        or (res.get("hypothesis") or {}).get("ts_candidates")
+        or []
+    )
+    coads = (
+        res.get("coads")
+        or res.get("coads_pairs")
+        or (res.get("hypothesis") or {}).get("coads")
+        or (res.get("hypothesis") or {}).get("coads_pairs")
+        or []
+    )
 
-    # ---- fallback extraction (from md_text + current plan/tasks) ----
-    # 用现有的抽取器把缺失项补齐
+    # 3) 如果还缺，就用已有 extractor 兜底
     if not (steps and inter):
         elem2, inter2, ts2, coads2 = _extract_network_from_everywhere(
             plan_res=st.session_state.get("plan_raw") or {},
@@ -323,14 +671,15 @@ def api_hypothesis() -> str:
         ts    = ts or ts2
         coads = coads or coads2
 
-    # ---- commit to session_state ----
     st.session_state.rxn_net       = steps or []
     st.session_state.intermediates = inter or []
     st.session_state.ts_candidates = ts or []
     st.session_state.coads_pairs   = coads or []
-
     return md_text
+
 def api_plan() -> list:
+    """Call /chat/plan and strictly use backend-provided fields.
+       This keeps Workflow tab 1:1 consistent with the plan (e.g., 45 steps)."""
     payload = {
         "intent": st.session_state.intent,
         "hypothesis": st.session_state.hypothesis,
@@ -338,17 +687,35 @@ def api_plan() -> list:
     }
     if st.session_state.active_session_id:
         payload["session_id"] = st.session_state.active_session_id
+
     res = post("/chat/plan", payload) or {}
+
+    # save the raw plan
     st.session_state["plan_raw"] = res
+
+    # tasks for flat view
     tasks = res.get("tasks") or []
     st.session_state.plan_tasks = tasks
-    elem, inter, ts, coads = _extract_network_from_everywhere(
-        plan_res=res, tasks=tasks, hypothesis=st.session_state.hypothesis or ""
-    )
-    st.session_state.rxn_net        = elem
-    st.session_state.intermediates  = inter
-    st.session_state.ts_candidates  = ts
-    st.session_state.coads_pairs    = coads
+
+    # STRICT SYNC (no post-merging / re-extraction)
+    steps = res.get("steps") or res.get("elementary_steps") or []
+    inter = res.get("intermediates") or []
+    ts    = res.get("ts") or res.get("ts_candidates") or []
+    coads = res.get("coads") or res.get("coads_pairs") or []
+
+    # fallback only if backend truly didn't give anything
+    if not steps and not inter and not ts and not coads:
+        # last resort: keep old behavior (rarely used)
+        elem2, inter2, ts2, coads2 = _extract_network_from_everywhere(
+            plan_res=res, tasks=tasks, hypothesis=st.session_state.hypothesis or ""
+        )
+        steps, inter, ts, coads = elem2, inter2, ts2, coads2
+
+    st.session_state.rxn_net        = steps or []
+    st.session_state.intermediates  = inter or []
+    st.session_state.ts_candidates  = ts or []
+    st.session_state.coads_pairs    = coads or []
+
     return tasks
 
 def api_execute(selected_ids: list):
@@ -360,7 +727,6 @@ def api_execute(selected_ids: list):
         "cluster": settings.get("cluster", "hoffman2"),
         "dry_run": bool(settings.get("dry_run", False)),
         "sync_back": bool(settings.get("sync_back", True)),
-        # 也可把路径类设置传给后端（若后端支持）
         "paths": {
             "workdir": settings.get("workdir"),
             "scratch": settings.get("scratch"),
@@ -381,15 +747,13 @@ def api_knowledge(q: str, use_intent: bool, limit: int, fast: bool):
         body["session_id"] = st.session_state.active_session_id
     return post("/chat/knowledge", body) or {}
 
-# ---- Session management APIs（后端若无该接口，也不会崩） ----
+# ---- Session management APIs ----
 def get_sessions() -> list[dict]:
     res = post("/chat/session/list", {}) or {}
     return res.get("sessions") or []
 
 def create_session(name: str, project: str = "", tags: str = "", description: str = "") -> int | None:
-    res = post("/chat/session/create", {
-        "name": name, "project": project, "tags": tags, "description": description
-    }) or {}
+    res = post("/chat/session/create", {"name": name, "project": project, "tags": tags, "description": description}) or {}
     return res.get("session_id")
 
 def update_session(jaw=None, **fields) -> bool:
@@ -405,39 +769,28 @@ def delete_session(jaw=None) -> bool:
 # =========================
 # Small UI helpers
 # =========================
-
-# —— 放在 Small UI helpers 下面任意位置 —— #
 def _json_safe(obj):
-    """将任何对象转换成可被 st.json 接收的结构。
-       - dict/list 递归清理
-       - Streamlit 的 DeltaGenerator 等不可序列化对象 -> repr()
-    """
+    """将任何对象转换成可被 st.json 接收的结构。"""
     try:
         json.dumps(obj)
         return obj
     except Exception:
         pass
-
-    # DeltaGenerator 或任意不可序列化对象
-    # 尽量保留关键信息，避免把 help 文档喷出来
     import streamlit.delta_generator as sdg
     if isinstance(obj, sdg.DeltaGenerator):
         return f"<UI:{obj.__class__.__name__}>"
-
     if isinstance(obj, dict):
         return {str(k): _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_json_safe(v) for v in obj]
     if isinstance(obj, (set,)):
         return [_json_safe(v) for v in obj]
-    # 最后兜底
     try:
         return str(obj)
     except Exception:
         return "<unserializable>"
 
 def _render_records_block(wf: dict):
-    """干净渲染单个 workflow 的记录，避免把 DeltaGenerator 当数据显示"""
     st.markdown(f"### Run — Workdir: `{wf.get('workdir','')}`")
     rows = wf.get("results") or []
     if rows:
@@ -445,136 +798,9 @@ def _render_records_block(wf: dict):
             step = str(r.get("step", "(unnamed)"))
             status = str(r.get("status", ""))
             st.markdown(f"- **{step}** → {status}")
-
-    # 只要 summary 可用，就做 json-safe 处理后展示
     if wf.get("summary") is not None:
         with st.expander("Post-analysis summary", expanded=False):
             st.json(_json_safe(wf["summary"]))
-
-def _slug(s) -> str:
-    s = str(s or "").strip().lower()
-    s = re.sub(r"[^a-z0-9]+", "-", s)
-    s = re.sub(r"-{2,}", "-", s).strip("-")
-    return s or "unnamed"
-
-def _badge(s: str):
-    st.markdown(
-        f"<span style='display:inline-block; padding:6px 12px; margin:6px 8px 0 0; "
-        f"background:#eef3ff; border:1px solid #dbe5ff; border-radius:999px; "
-        f"font-size:13px; white-space:nowrap;'>{s}</span>",
-        unsafe_allow_html=True,
-    )
-
-def _intent_summary_card(I: dict):
-    """精简版：只渲染表格+原始 JSON 折叠，不再显示徽章和 RN 计数条。"""
-    st.markdown("#### Intent")
-    _intent_table(I or {})
-
-def _intent_table(I: dict):
-    """精简渲染 Intent：自动过滤空值；按 domain 选择字段；附带槽位缺失与澄清问题。"""
-    import pandas as _pd
-
-    def _nz(x):
-        """non-empty: 去掉 None/""/[]/{}/仅空白字符串"""
-        if x is None: return False
-        if isinstance(x, str): return x.strip() != ""
-        if isinstance(x, (list, tuple, set, dict)): return len(x) > 0
-        return True
-
-    I = I or {}
-    dom  = (I.get("domain") or "").lower()
-    sub  = (I.get("domain_subtype") or I.get("mode") or "").lower()
-    sys  = I.get("system") or {}
-    cond = I.get("conditions") or {}
-    rn   = I.get("reaction_network") or {}
-    miss = I.get("missing_slots") or []
-    qas  = I.get("clarifying_questions") or []
-
-    rows = []  # (Field, Value)
-    def add(k, v):
-        if _nz(v):
-            rows.append((k, v if not isinstance(v, (list,dict)) else json.dumps(v, ensure_ascii=False)))
-
-    # 通用最小字段
-    add("domain", I.get("domain"))
-    add("type", sub or None)
-    add("query", I.get("normalized_query"))
-
-    if dom in ("catalysis", "materials_general"):
-        add("catalyst", sys.get("catalyst"))
-        add("facet", sys.get("facet"))
-        add("material", sys.get("material"))
-        add("molecule/reactant", sys.get("molecule"))
-        # 条件
-        if sub == "electrocatalysis":
-            add("pH", cond.get("pH"))
-            add("potential", cond.get("potential"))
-            add("electrolyte", cond.get("electrolyte"))
-            add("temperature", cond.get("temperature"))
-        elif sub in ("photocatalysis", "photoelectrocatalysis"):
-            add("illumination", cond.get("illumination") or cond.get("light"))
-            add("wavelength", cond.get("wavelength"))
-            add("pH", cond.get("pH"))
-            add("temperature", cond.get("temperature"))
-        else:  # thermal/unspecified
-            add("temperature", cond.get("temperature"))
-            add("pressure", cond.get("pressure"))
-            add("solvent", cond.get("solvent"))
-        # RN 概览（只显示非零）
-        n_steps = len(rn.get("elementary_steps") or [])
-        n_inters= len(rn.get("intermediates") or [])
-        n_ts    = len(rn.get("ts_candidates") or [])
-        n_coads = len(rn.get("coads_pairs") or [])
-        if n_steps: add("RN: steps", n_steps)
-        if n_inters: add("RN: intermediates", n_inters)
-        if n_ts: add("RN: ts", n_ts)
-        if n_coads: add("RN: coads", n_coads)
-
-    elif dom == "batteries":
-        add("chemistry", sys.get("chemistry") or sys.get("system"))
-        add("cathode",  sys.get("cathode"))
-        add("anode",    sys.get("anode"))
-        add("electrolyte", sys.get("electrolyte"))
-        add("salt", sys.get("salt"))
-        add("separator", sys.get("separator"))
-        add("binder", sys.get("binder"))
-        if _nz(sys.get("additives")):
-            add("additives", ", ".join(sys["additives"]) if isinstance(sys["additives"], list) else sys["additives"])
-        add("C-rate", cond.get("crate") or cond.get("C_rate"))
-        add("temperature", cond.get("temperature"))
-        add("cutoff (charge)", cond.get("v_max") or cond.get("charge_cutoff"))
-        add("cutoff (discharge)", cond.get("v_min") or cond.get("discharge_cutoff"))
-        add("cycles", cond.get("cycles"))
-
-    elif dom == "polymers":
-        if _nz(sys.get("monomers")):
-            add("monomer(s)", ", ".join(sys["monomers"]) if isinstance(sys["monomers"], list) else sys.get("monomer"))
-        add("initiator/catalyst", sys.get("initiator") or sys.get("catalyst"))
-        add("method", sys.get("method") or sys.get("process"))
-        add("solvent", sys.get("solvent"))
-        add("temperature", cond.get("temperature"))
-        add("target Mw", sys.get("target_Mw") or sys.get("Mw"))
-        add("Ð (PDI)", sys.get("Đ") or sys.get("PDI"))
-
-    # 渲染
-    if rows:
-        df = _pd.DataFrame(rows, columns=["Field", "Value"])
-        st.table(df)
-    else:
-        st.info("No non-empty fields.")
-
-    # 缺失与澄清
-    if _nz(miss) or _nz(qas):
-        c1, c2 = st.columns(2)
-        with c1:
-            st.caption("Missing slots")
-            for m in (miss or []): _badge(str(m))
-        with c2:
-            st.caption("Clarifying questions")
-            for q in (qas or []):  st.markdown(f"- {q}")
-
-    with st.expander("Raw intent (JSON)", expanded=False):
-        st.json(I)
 
 def _badges_grid(items: list[str], cols: int = 6, empty_text: str = "N/A"):
     if not items:
@@ -633,168 +859,201 @@ def _looks_like_species(tok: str) -> bool:
 def _only_species(tokens: list[str]) -> list[str]:
     return [t for t in tokens if _looks_like_species(t)]
 
-import re
+# =========================
+# Extract RN from sources
+# =========================
 from typing import Any, Dict, List, Tuple
-
-# ⚠️ 替换原函数定义整段
+# --- replace the whole function in client/home.py ---
 from typing import Any, Dict, List, Tuple
-import re
+import re, json
 
 def _extract_network_from_everywhere(
     plan_res: Any,
     tasks: List[dict],
     hypothesis: Any
 ) -> Tuple[List[Any], List[str], List[str], List[str]]:
-    """从 plan_res / tasks / hypothesis 文本里尽可能抽取
-       elem(steps), inter(species), ts, coads；对所有输入做类型容错。
-       注意：elem 保留 dict 结构（含 name/reactants/products/why），便于前端表格渲染。
     """
+    Make Workflow view 1:1 with the generated plan list.
+    - Each task becomes one row in 'elem' (Elementary steps).
+    - For NEB/TS tasks: parse reaction A -> B into Reaction/Reactants/Products.
+    - For non-reaction tasks (DOS/PDOS, Assemble ΔG...), keep Name-only rows.
+    Also aggregates intermediates, ts, coads from plan/tasks/hypothesis.
+    """
+
+    # ---------- small utils ----------
+    
     def _to_str(x: Any) -> str:
-        if x is None:
-            return ""
-        if isinstance(x, str):
-            return x
-        try:
-            return str(x)
-        except Exception:
-            return ""
+        if x is None: return ""
+        if isinstance(x, str): return x
+        try: return str(x)
+        except Exception: return ""
 
     def _normalize_arrow(s: str) -> str:
         s = _to_str(s).strip()
-        if not s:
-            return ""
-        s = (s.replace("⇒", "->").replace("→", "->").replace("⇌", "->").replace("⟶", "->")
-               .replace("—>", "->").replace(" –> ", "->"))
-        while "  " in s:
-            s = s.replace("  ", " ")
+        if not s: return ""
+        s = (s.replace("⇒","->").replace("→","->").replace("⇌","->").replace("⟶","->")
+               .replace("—>","->").replace(" –> ","->"))
+        while "  " in s: s = s.replace("  "," ")
         parts = [p.strip() for p in s.split("->") if p.strip()]
-        if len(parts) == 2:
-            return f"{parts[0]} → {parts[1]}"
-        return s
+        return f"{parts[0]} → {parts[1]}" if len(parts)==2 else s
 
     _RX_ADS = re.compile(r"^(?:[A-Z][a-z]?\d*)+(?:[A-Z][a-z]?\d*)*\*$")
     _RX_GAS = re.compile(r"^(?:[A-Z][a-z]?\d*)+(?:[A-Z][a-z]?\d*)*\((?:g|aq)\)$")
 
     def _looks_like_species(tok: Any) -> bool:
         tok = _to_str(tok).strip()
-        if not tok or " " in tok or len(tok) > 20:
-            return False
-        if tok.count("*") > 1 or tok.count("(") > 1 or tok.count(")") > 1:
-            return False
+        if not tok or " " in tok or len(tok) > 20: return False
+        if tok.count("*") > 1 or tok.count("(") > 1 or tok.count(")") > 1: return False
         return bool(_RX_ADS.match(tok) or _RX_GAS.match(tok))
 
     def _only_species(tokens: List[Any]) -> List[str]:
         out = []
         for t in tokens:
-            if _looks_like_species(t):
-                out.append(_to_str(t))
+            if _looks_like_species(t): out.append(_to_str(t))
         return out
 
-    def _uniq_mixed(seq: List[Any]) -> List[Any]:
-        """支持 dict 的去重；dict 用排序后的 JSON 作 key，其它用字符串。"""
-        seen = set()
-        out: List[Any] = []
-        for s in seq:
-            if isinstance(s, dict):
-                try:
-                    key = json.dumps(s, ensure_ascii=False, sort_keys=True)
-                except Exception:
-                    key = str(s)
-            else:
-                key = _to_str(s)
-            key = key.strip()
-            if not key:
-                continue
-            if key not in seen:
-                seen.add(key); out.append(s)
+    def _uniq(seq: List[Any]) -> List[Any]:
+        seen, out = set(), []
+        for x in seq:
+            k = json.dumps(x, ensure_ascii=False, sort_keys=True) if isinstance(x, dict) else _to_str(x)
+            if k not in seen:
+                seen.add(k); out.append(x)
         return out
 
-    # -------- 开始抽取 --------
-    elem: List[Any] = []
-    inter: List[str] = []
-    ts: List[str] = []
-    coads: List[str] = []
+    # ---------- collect from plan (as hints) ----------
+    plan = plan_res if isinstance(plan_res, dict) else {}
+    plan_elem  = (plan.get("elementary_steps")
+                  or plan.get("reaction_network")
+                  or plan.get("steps")
+                  or [])
+    plan_inter = plan.get("intermediates") or []
+    plan_ts    = (plan.get("ts_candidates") or plan.get("ts_edges") or plan.get("ts") or [])
+    plan_coads = plan.get("coads_pairs") or plan.get("coads") or []
 
-    # 1) 从 tasks 的 payload 中拿
-    for t in (tasks or []):
+    # ---------- build elem strictly from tasks (1:1 rows) ----------
+    elem_rows: List[Dict[str, Any]] = []
+    ts_list: List[str] = []
+    inter_list: List[str] = []
+    coads_list: List[str] = []
+
+    ARROWS = ("->","→","⇒","⟶")
+
+    def _parse_reaction_from_task(t: dict) -> str:
+        """Prefer explicit payload/form 'step'; fallback to parsing from 'name'."""
+        # 1) payload.step
         payload = (t.get("params") or {}).get("payload") or {}
-        elem  += payload.get("elementary_steps") or []
-        inter += payload.get("intermediates")   or []
-        ts    += payload.get("ts_candidates")   or []
-        coads += payload.get("coads_pairs")     or []
+        step_txt = _to_str(payload.get("step"))
+        if any(a in step_txt for a in ARROWS):
+            return _normalize_arrow(step_txt)
 
-    # 2) 从 plan 顶层拿（兼容各种键名）
-    if isinstance(plan_res, dict):
-        elem  += (plan_res.get("elementary_steps")
-                  or plan_res.get("reaction_network")
-                  or plan_res.get("steps")
-                  or [])
-        inter += plan_res.get("intermediates")   or []
-        ts    += (plan_res.get("ts_candidates")
-                  or plan_res.get("ts_edges")
-                  or plan_res.get("ts")
-                  or [])
-        coads += plan_res.get("coads_pairs")     or plan_res.get("coads") or []
+        # 2) form field named 'step'
+        for f in (t.get("params") or {}).get("form") or []:
+            if str(f.get("key")).lower() == "step":
+                v = _to_str(f.get("value"))
+                if any(a in v for a in ARROWS):
+                    return _normalize_arrow(v)
 
-    # 3) 从 task 名称粗略挖（例如 "NEB — A -> B"）
-    for t in (tasks or []):
+        # 3) parse from task name like: "NEB — A -> B  · CI-NEB ..."
         name = _to_str(t.get("name"))
-        if ("NEB" in name or "TS" in name) and any(x in name for x in ["->", "→", "⇒", "⟶"]):
-            frag = name.split("—", 1)[-1].strip() if "—" in name else name
-            ts.append(_normalize_arrow(frag))
-        for tok in re.split(r"[,\s/+-]+", name):
-            if _looks_like_species(tok):
-                inter.append(_to_str(tok))
+        s = name
+        if "—" in s: s = s.split("—", 1)[1]
+        elif "–" in s: s = s.split("–", 1)[1]
+        elif " - " in s: s = s.split(" - ", 1)[1]
+        # cut common tails
+        for tail in ("·", "•", " CI-NEB", " NEB", "(CI-NEB)"):
+            if tail in s:
+                s = s.split(tail, 1)[0]
+        s = s.strip()
+        if any(a in s for a in ARROWS):
+            return _normalize_arrow(s)
+        return ""
 
-    # 4) 从 hypothesis 文本兜底挖（保证是字符串）
+    # map every task to a row; keep order & count identical to tasks
+    for t in (tasks or []):
+        row: Dict[str, Any] = {"Name": _to_str(t.get("name") or "Task")}
+        rxn = _parse_reaction_from_task(t)
+        if rxn:
+            row.update({
+                "reaction": rxn,
+                "reactants": rxn.split(" → ")[0] if " → " in rxn else "",
+                "products":  rxn.split(" → ")[1] if " → " in rxn else "",
+            })
+            ts_list.append(rxn)
+
+            # mine species from reaction
+            toks = re.split(r"[+\s→]+", rxn.replace("(", " ").replace(")", " "))
+            inter_list += _only_species(toks)
+
+        # also pick species from task name (e.g., H*, CO2(g))
+        name_tokens = re.split(r"[,\s/+\-·•]+", _to_str(t.get("name")))
+        inter_list += _only_species(name_tokens)
+
+        # collect any explicit payload lists
+        payload = (t.get("params") or {}).get("payload") or {}
+        inter_list += payload.get("intermediates") or []
+        ts_list    += payload.get("ts_candidates") or []
+        coads_list += payload.get("coads_pairs") or []
+
+        # final row: convert to elem-row shape the table expects
+        elem_rows.append({
+            "name": row.get("Name"),
+            "reaction": row.get("reaction",""),
+            "reactants": row.get("reactants",""),
+            "products": row.get("products",""),
+        })
+
+    # ---------- merge with plan/hypothesis extras (non-dominant) ----------
+    # extras go after task-rows; we don't dedup elem_rows to keep count identical to tasks
+    extras: List[Dict[str, Any]] = []
+    for x in plan_elem:
+        if isinstance(x, dict):
+            extras.append({
+                "name": x.get("name") or x.get("label") or "",
+                "reaction": _normalize_arrow(
+                    f"{x.get('reactants')} -> {x.get('products')}"
+                    if (x.get('reactants') or x.get('products')) else _to_str(x)
+                ),
+                "reactants": _to_str(x.get("reactants") or ""),
+                "products":  _to_str(x.get("products") or ""),
+            })
+        elif isinstance(x, (list, tuple)) and len(x) >= 2:
+            rxn = _normalize_arrow(f"{x[0]} -> {x[1]}")
+            extras.append({"name":"", "reaction":rxn,
+                           "reactants":rxn.split(" → ")[0], "products":rxn.split(" → ")[1]})
+        else:
+            rxn = _normalize_arrow(_to_str(x))
+            extras.append({"name":"", "reaction":rxn,
+                           "reactants":rxn.split(" → ")[0] if " → " in rxn else "",
+                           "products":rxn.split(" → ")[1] if " → " in rxn else ""})
+
+    # final elem = tasks-first + plan extras (do not dedup tasks part)
+    elem = elem_rows + extras
+
+    # ---------- intermediates / ts / coads tidy ----------
+    # add plan-level and hypothesis-derived species
+    inter_list += plan_inter
+    ts_list    += plan_ts
+    coads_list += plan_coads
+
+    # from hypothesis free text (very light)
     hypo_text = _to_str(hypothesis)
     if hypo_text:
         rough = re.findall(r"\b([A-Za-z0-9()*]+)\b", hypo_text)
-        inter += _only_species(rough)
+        inter_list += _only_species(rough)
 
-    # -------- 规范化/去重 --------
-    # 仅对“非 dict”的 elem 做规范化；dict 原样保留
-    elem_norm: List[Any] = []
-    for x in elem:
-        if isinstance(x, dict):
-            elem_norm.append(x)
-        elif isinstance(x, (list, tuple)) and len(x) >= 2:
-            elem_norm.append({"reactants": x[0], "products": x[1]})
-        else:
-            elem_norm.append(_normalize_arrow(x))
-    elem = _uniq_mixed(elem_norm)
+    # uniq but keep order
+    intermediates = _uniq(inter_list)
+    ts_clean = _uniq([_normalize_arrow(x) for x in ts_list if _to_str(x)])
+    coads_clean = _uniq([_to_str(c) for c in coads_list if _to_str(c)])
 
-    # TS 统一规范为字符串，便于右侧 badges 展示
-    ts_norm: List[str] = []
-    for x in ts:
-        if isinstance(x, dict):
-            r = x.get("reactants") or x.get("from") or x.get("src")
-            p = x.get("products")  or x.get("to")   or x.get("dst")
-            if r or p:
-                ts_norm.append(_normalize_arrow(f"{r} -> {p}"))
-            elif x.get("name"):
-                ts_norm.append(str(x["name"]))
-            else:
-                ts_norm.append(_normalize_arrow(str(x)))
-        elif isinstance(x, (list, tuple)) and len(x) >= 2:
-            ts_norm.append(_normalize_arrow(f"{x[0]} -> {x[1]}"))
-        else:
-            ts_norm.append(_normalize_arrow(x))
-    ts = _uniq_mixed(ts_norm)  # 这里 ts 是 List[str]
+    # sort intermediates: adsorbates first, then gas/aq, then others
+    ads = [s for s in intermediates if s.endswith("*")]
+    gas = [s for s in intermediates if s.endswith("(g)") or s.endswith("(aq)")]
+    rest = [s for s in intermediates if s not in ads and s not in gas]
+    intermediates_sorted = ads + gas + rest
 
-    inter = _uniq_mixed(_only_species(inter))   # List[str]
-    coads = _uniq_mixed([_to_str(c) for c in coads])  # List[str]
-
-    # 如果没有 elem 但有 ts，用 ts 兜底为字符串步骤
-    if not elem and ts:
-        elem = ts[:]  # 前端也能渲染（当作 Reaction 列文本）
-
-    # 中间体排序：先吸附物，再气相
-    ads = [s for s in inter if s.endswith("*")]
-    gas = [s for s in inter if s.endswith("(g)") or s.endswith("(aq)")]
-    inter_sorted = ads + gas + [s for s in inter if s not in ads and s not in gas]
-
-    return elem, inter_sorted, ts, coads
+    # NOTE: do not collapse elem (to preserve exact count == tasks count)
+    return elem, intermediates_sorted, ts_clean, coads_clean
 # =========================
 # Per-session snapshot I/O
 # =========================
@@ -812,7 +1071,7 @@ def _save_snapshot(session_id: int | None):
 def _load_snapshot(session_id: int | None):
     if not session_id: return False
     snap = st.session_state._SESSION_CACHE.get(int(session_id))
-    if not snap:  # new/空会话：清空关键区
+    if not snap:
         for k in _SNAPSHOT_KEYS:
             st.session_state[k] = DEFAULTS.get(k, [] if k.endswith("s") else {})
         st.session_state["hypothesis"] = ""
@@ -846,31 +1105,40 @@ def section_overview():
 
 def section_chatdft_with_tabs():
     st.title("🧠 ChatDFT")
-    # 顶部显示当前会话
     sid = st.session_state.active_session_id
     if sid:
         st.caption(f"Active session: [{sid}] {st.session_state.active_session_name or '(unnamed)'}")
     else:
         st.warning("No active session. 建议在 **Projects** 选择/创建会话（不影响使用，仅影响记录与回溯）。")
 
-    tab_chat, tab_workflow, tab_papers= st.tabs(
-        ["💬 Chat & Plan", "🧪 Workflow", "📑 Papers / RAG"]
-    )
+    tab_chat, tab_workflow, tab_papers= st.tabs(["💬 Chat & Plan", "🧪 Workflow", "📑 Papers / RAG"])
 
     # --- Chat & Plan ---
     with tab_chat:
         st.subheader("User Inquiry → Intent → Hypothesis → Plan")
-        if st.button("↻ Re-extract from current plan"):
-            res  = st.session_state.get("plan_raw") or {}
-            tasks= st.session_state.get("plan_tasks") or []
-            elem, inter, ts, coads = _extract_network_from_everywhere(
-                plan_res=res, tasks=tasks, hypothesis=st.session_state.hypothesis or ""
-            )
-            st.session_state.rxn_net        = elem
+        # 用当前 plan_raw 的字段，强一致同步到 Workflow 视图
+        if st.button("↻ Sync workflow view with latest plan"):
+            res   = st.session_state.get("plan_raw") or {}
+            tasks = st.session_state.get("plan_tasks") or []
+
+            # 直接取后端产物，保持 1:1 一致
+            steps = res.get("steps") or res.get("elementary_steps") or []
+            inter = res.get("intermediates") or []
+            ts    = res.get("ts") or res.get("ts_candidates") or []
+            coads = res.get("coads") or res.get("coads_pairs") or []
+
+            # 如果后端真的没给（极少数情况），再兜底抽取
+            if not steps and not inter and not ts and not coads:
+                elem2, inter2, ts2, coads2 = _extract_network_from_everywhere(
+                    plan_res=res, tasks=tasks, hypothesis=st.session_state.hypothesis or ""
+                )
+                steps, inter, ts, coads = elem2, inter2, ts2, coads2
+
+            st.session_state.rxn_net        = steps
             st.session_state.intermediates  = inter
             st.session_state.ts_candidates  = ts
             st.session_state.coads_pairs    = coads
-            st.success("Re-extracted.")
+            st.success("Workflow synced with backend plan (strict).")
 
         query = st.text_area("Your question / task:", placeholder="e.g., CO2RR on Cu(111), pH=12, -0.5 V vs RHE …")
         c1, c2, c3 = st.columns(3)
@@ -888,15 +1156,8 @@ def section_chatdft_with_tabs():
                 else: st.info("No tasks produced.")
 
         st.markdown("---")
-        _intent_summary_card(st.session_state.intent or {})
-        st.markdown("#### Hypothesis")
-        st.markdown(st.session_state.hypothesis or "_(empty)_")
-
-        if st.session_state.plan_tasks:
-            st.markdown("---")
-            st.markdown("#### Planned Tasks (flat view)")
-            for t in st.session_state.plan_tasks:
-                st.markdown(f"- **[{t.get('id','?')}] {t.get('name','Task')}** · {t.get('description','')}")
+        _intent_summary_card(_force_dict(st.session_state.intent) or {})
+        _render_hypothesis_block(st.session_state.hypothesis or "")
 
     # --- Workflow ---
     def _workflow_right_panel():
@@ -941,12 +1202,14 @@ def section_chatdft_with_tabs():
 
             st.dataframe(df_steps, use_container_width=True, hide_index=True)
 
-            # 下载/复制：用紧凑格式，一行一个
+            # 下载/复制
             lines = [_fmt_step_compact(s) for s in (steps or [])]
             txt = "\n".join(lines)
             _download_bytes("⬇️ Download steps.txt", txt.encode("utf-8"), "elementary_steps.txt")
             _copy_text_area("Copy steps (plain text)", txt)
-        with right: _workflow_right_panel()
+        with right:
+            _workflow_right_panel()
+        _render_tasks_selector()
 
     # --- Papers / RAG ---
     with tab_papers:
@@ -988,18 +1251,14 @@ def section_chatdft_with_tabs():
                 _copy_text_area("Copy top results (plain)", "\n".join(lines))
                 st.caption(res.get("result") or "")
 
-
 def section_projects():
     st.title("📂 Projects (Sessions)")
-    # 上一次激活的会话先做一次快照
     _save_snapshot(st.session_state.active_session_id)
 
-    # 列出现有会话
     sessions = get_sessions()
     if not sessions:
         st.info("No sessions yet. Create one below.")
     else:
-        # 列表视图
         data = []
         for s in sessions:
             data.append({
@@ -1015,38 +1274,28 @@ def section_projects():
 
     st.markdown("---")
     colL, colR = st.columns([2,2])
-    # 选择已有会话并激活（自动加载快照）
     with colL:
         sid_options = [(f"[{s.get('id')}] {s.get('name')}", s.get("id")) for s in sessions] if sessions else []
         chosen = st.selectbox("Select a session to activate", sid_options, index=0 if sid_options else None,
                               format_func=lambda t: t[0] if isinstance(t, tuple) else str(t))
         if sid_options and st.button("✅ Set Active"):
             _, sid = chosen
-            # save current
             _save_snapshot(st.session_state.active_session_id)
-
-            # switch active
             st.session_state.active_session_id = sid
             st.session_state.active_session_name = next((s.get("name") for s in sessions if s.get("id")==sid), "")
-
-            # try load from cache; if not present, hydrate from backend
             loaded = _load_snapshot(sid)
             if not loaded:
                 snap = fetch_session_state_from_backend(sid)
-                # install into session_state and cache
                 for k, v in snap.items():
                     st.session_state[k] = v
                 _save_snapshot(sid)
-
             st.success(f"Activated session [{sid}] and loaded state.")
-            # go straight to ChatDFT
             st.session_state["nav"] = "ChatDFT"
             st.rerun()
 
     with colR:
         st.markdown("**Quick actions**")
         if sessions:
-            # default to active session if available
             default_sid = st.session_state.active_session_id or (sessions[0].get("id"))
             sid2 = st.selectbox(
                 "Pick a session to modify",
@@ -1068,7 +1317,6 @@ def section_projects():
 
             if cB.button("🗑 Delete this session"):
                 ok = delete_session(jaw=sid2)
-                # if you deleted the active session, clear active
                 if ok and st.session_state.active_session_id == sid2:
                     st.session_state.active_session_id = None
                     st.session_state.active_session_name = ""
@@ -1095,9 +1343,6 @@ def section_settings():
 # =========================
 # Sidebar Navigator
 # =========================
-# =========================
-# Sidebar (new, like your mock)
-# =========================
 with st.sidebar:
     st.markdown("### Section")
     section = st.selectbox(
@@ -1121,11 +1366,10 @@ with st.sidebar:
             else:
                 sid = create_session(name=new_name.strip())
                 if sid:
-                    # 给新会话建空快照并设为激活
                     _save_snapshot(st.session_state.active_session_id)
                     st.session_state.active_session_id = sid
                     st.session_state.active_session_name = new_name.strip()
-                    _load_snapshot(sid)  # 空会话清空UI
+                    _load_snapshot(sid)
                     _save_snapshot(sid)
                     st.success(f"Created & activated [{sid}] {new_name.strip()}")
                     st.session_state["nav"] = "ChatDFT"
@@ -1136,7 +1380,6 @@ with st.sidebar:
     # --- Open existing ---
     sessions = get_sessions()
     sid_options = [(f"{s.get('name') or '(unnamed)'}  ·  #{s.get('id')}", s.get("id")) for s in sessions]
-    # 默认选中当前激活的会话
     default_idx = 0
     if st.session_state.active_session_id and sid_options:
         ids = [sid for _, sid in sid_options]
@@ -1148,36 +1391,29 @@ with st.sidebar:
                             format_func=lambda t: t[0] if isinstance(t, tuple) else str(t),
                             label_visibility="visible", key="open_chat_sel")
 
-    # 选择变化即激活 + hydrate
     if "___last_open_sid" not in st.session_state:
         st.session_state.___last_open_sid = None
     current_sid = open_sel[1] if open_sel else None
     if current_sid and current_sid != st.session_state.___last_open_sid:
-        # 切换会话：先保存旧，再加载新
         _save_snapshot(st.session_state.active_session_id)
         st.session_state.active_session_id = current_sid
         st.session_state.active_session_name = next((s.get("name") for s in sessions if s.get("id")==current_sid), "")
-
         loaded = _load_snapshot(current_sid)
         if not loaded:
             snap = fetch_session_state_from_backend(current_sid)
             for k, v in snap.items():
                 st.session_state[k] = v
             _save_snapshot(current_sid)
-
         st.session_state.___last_open_sid = current_sid
-        # 跳到 ChatDFT，直接看到已回填的 intent/hypothesis/plan
         st.session_state["nav"] = "ChatDFT"
         st.rerun()
 
     st.markdown("---")
     st.markdown("### ✏️ Edit Chat")
 
-    # 当前激活会话信息
     active_sid = st.session_state.active_session_id
     st.caption(f"Active: [{active_sid}] {st.session_state.active_session_name or '(none)'}" if active_sid else "Active: (none)")
 
-    # 保存编辑：仅改名/置顶（可按需扩展）
     ec1, ec2 = st.columns([3,1])
     new_title = ec1.text_input("Rename", value="", placeholder="leave blank to keep")
     pin_state = ec2.checkbox("Pinned", value=bool(next((s.get("pinned") for s in sessions if s.get('id')==active_sid), False)) if active_sid else False)
@@ -1191,7 +1427,6 @@ with st.sidebar:
     if st.button("❌ Delete Chat", use_container_width=True, disabled=not active_sid, type="secondary"):
         ok = delete_session(jaw=active_sid)
         if ok:
-            # 清空激活态
             st.session_state.active_session_id = None
             st.session_state.active_session_name = ""
             st.session_state.___last_open_sid = None
@@ -1199,7 +1434,6 @@ with st.sidebar:
             st.rerun()
         else:
             st.error("Delete failed.")
-
 
 # =========================
 # Router

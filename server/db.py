@@ -15,7 +15,7 @@ from sqlalchemy import (
     Column, Integer, String, Text, DateTime, ForeignKey, JSON, Float,
     UniqueConstraint, Boolean, Index
 )
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 # -----------------------------------------------------------------------------
@@ -29,12 +29,22 @@ DATABASE_URL = os.environ.get(
 
 # echo 可通过环境变量打开：SQLALCHEMY_ECHO=1
 ECHO = bool(int(os.environ.get("SQLALCHEMY_ECHO", "0")))
-
-engine = create_async_engine(DATABASE_URL, echo=ECHO, future=True, pool_pre_ping=True)
+engine = create_async_engine(
+    DATABASE_URL,
+    future=True,
+    echo=False,           # 需要可开 True
+    pool_pre_ping=True,
+)
 AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+# 用异步会话工厂；名称仍叫 SessionLocal，避免全项目替换
+SessionLocal = async_sessionmaker(
+    bind=engine,
+    expire_on_commit=False,
+    class_=AsyncSession,
+)
 Base = declarative_base()
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 # -----------------------------------------------------------------------------
 # Models
 # -----------------------------------------------------------------------------
