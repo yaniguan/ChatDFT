@@ -9,9 +9,26 @@ from server.chat.plan_agent import router as plan_router
 from server.chat.history_agent import router as history_router
 from server.chat.knowledge_agent import router as knowledge_router
 from server.execution.agent_routes import router as agent_router
+from server.execution.task_routes import router as exec_tasks_router
 
-app = FastAPI()
+# --- 放在 imports 后、routers include 之前 ---
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    # 首次启动时创建缺失的表（开发/测试环境用）
+    try:
+        from server.db import Base, engine  # 已有
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("[DB] create_all done.")
+    except Exception as e:
+        print("[DB] create_all skipped:", e)
+    yield
+
+# 用带 lifespan 的 FastAPI 覆盖原来的 app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
@@ -25,6 +42,7 @@ app.include_router(plan_router, tags=["chat"])        # <--- 必须有这行
 app.include_router(history_router, tags=["chat"])
 app.include_router(knowledge_router, tags=["chat"])
 app.include_router(agent_router)  # ← 新增
+app.include_router(exec_tasks_router, tags=["exec"])
 
 from server.chat.records_agent import router as records_router
 app.include_router(records_router)

@@ -5,14 +5,19 @@ ChatDFT 前端（Streamlit）
 Navigator:
   • Overview  —— 简介论文 & ChatDFT 功能（可编辑）
   • ChatDFT   —— 原有功能区（Tabs: Chat & Plan / Workflow / Papers/RAG / Tools / Records）
-  • Projects  —— 多会话管理（选择之前的对话、创建/重命名/删除、快照保存/加载）
   • Settings  —— 集群与路径（cluster、workdir、vasp_cmd、scratch、python_env、dry_run、sync_back）
 """
 from __future__ import annotations
-import json, re
+
+import json
+import re
+from typing import Any, Dict, List, Tuple
+
 import pandas as pd
 import streamlit as st
-from utils.api import post
+
+# 你自己的 API 包装
+from utils.api import post  # 如需 GET： from utils.api import post, get
 
 st.set_page_config(page_title="🔬 ChatDFT", layout="wide")
 
@@ -20,10 +25,8 @@ st.set_page_config(page_title="🔬 ChatDFT", layout="wide")
 # Session State (globals)
 # =========================
 DEFAULTS = {
-    # active project/session
     "active_session_id": None,
     "active_session_name": "",
-    # UI state payloads (当前会话的数据)
     "intent": {},
     "intent_raw": {},
     "hypothesis": "",
@@ -33,11 +36,9 @@ DEFAULTS = {
     "intermediates": [],
     "ts_candidates": [],
     "coads_pairs": [],
-    "workflow_results": [],
+    "workflow_results": [],        # 关键：初始化为列表，避免 None.append
     "selected_task_ids": [],
-    # 多会话 UI 快照缓存：{session_id: {intent, hypothesis, ...}}
     "_SESSION_CACHE": {},
-    # Settings
     "settings": {
         "cluster": "hoffman2",
         "workdir": "~/projects/chatdft_runs",
@@ -47,7 +48,6 @@ DEFAULTS = {
         "dry_run": False,
         "sync_back": True,
     },
-    # Overview markdown（可编辑）
     "overview_md": (
         "## Paper Overview\n"
         "- 在此粘贴/编辑你要介绍的论文要点（动机、方法、数据、结论、对你工作的启示）。\n\n"
@@ -63,16 +63,39 @@ for k, v in DEFAULTS.items():
         st.session_state[k] = v
 
 # =====================================
-# Server API wrappers (sessions & core)
+# Server API helpers
 # =====================================
 
+def _force_dict(x):
+    if isinstance(x, dict):
+        return x
+    if isinstance(x, str):
+        try:
+            return json.loads(x) or {}
+        except Exception:
+            return {}
+    return {}
+
+def get_sessions() -> list[dict]:
+    res = post("/chat/session/list", {}) or {}
+    return res.get("sessions") or []
+
+def create_session(name: str, project: str = "", tags: str = "", description: str = "") -> int | None:
+    res = post("/chat/session/create", {"name": name, "project": project, "tags": tags, "description": description}) or {}
+    return res.get("session_id")
+
+def update_session(jaw=None, **fields) -> bool:
+    if not jaw: return False
+    res = post("/chat/session/update", {"id": jaw, **fields}) or {}
+    return bool(res.get("ok"))
+
+def delete_session(jaw=None) -> bool:
+    if not jaw: return False
+    res = post("/chat/session/delete", {"id": jaw}) or {}
+    return bool(res.get("ok"))
+
 def fetch_session_state_from_backend(session_id: int) -> dict:
-    """
-    Try to fetch a structured snapshot for a session.
-    1) preferred: /chat/session/state  -> returns {intent, hypothesis, plan_raw, plan_tasks, rxn_net, intermediates, ts_candidates, coads_pairs, workflow_results}
-    2) fallback:  /chat/session/messages -> reconstruct from ChatMessage.msg_type
-    """
-    # try structured state first
+    """优先拉结构化快照；失败则回退从消息重建。"""
     try:
         res = post("/chat/session/state", {"id": session_id}) or {}
         if any(k in res for k in ("intent", "plan_tasks", "hypothesis", "plan_raw")):
@@ -80,7 +103,6 @@ def fetch_session_state_from_backend(session_id: int) -> dict:
     except Exception:
         pass
 
-    # fallback: pull recent messages and reconstruct
     try:
         msgs = post("/chat/session/messages", {"id": session_id, "limit": 500}) or {}
         items = msgs.get("messages") or []
@@ -88,20 +110,12 @@ def fetch_session_state_from_backend(session_id: int) -> dict:
         items = []
 
     snap = {
-        "intent": {},
-        "intent_raw": {},
-        "hypothesis": "",
-        "plan_tasks": [],
-        "plan_raw": {},
-        "rxn_net": [],
-        "intermediates": [],
-        "ts_candidates": [],
-        "coads_pairs": [],
-        "workflow_results": [],
-        "selected_task_ids": [],
+        "intent": {}, "intent_raw": {}, "hypothesis": "",
+        "plan_tasks": [], "plan_raw": {},
+        "rxn_net": [], "intermediates": [], "ts_candidates": [], "coads_pairs": [],
+        "workflow_results": [], "selected_task_ids": [],
     }
 
-    # newest-first to take latest values
     for m in reversed(items):
         mtype = (m.get("msg_type") or "").lower()
         content = m.get("content") or ""
@@ -114,52 +128,31 @@ def fetch_session_state_from_backend(session_id: int) -> dict:
             except Exception:
                 parsed = None
 
-        if mtype in {"intent"} and parsed:
+        if mtype == "intent" and parsed:
             snap["intent"] = parsed.get("intent") or parsed.get("fields") or parsed or {}
-        elif mtype in {"hypothesis"}:
+        elif mtype == "hypothesis":
             snap["hypothesis"] = parsed.get("hypothesis") if parsed else content
-        elif mtype in {"plan"}:
-            if parsed:
-                snap["plan_raw"] = parsed
-                snap["plan_tasks"] = parsed.get("tasks") or snap["plan_tasks"]
+        elif mtype == "plan" and parsed:
+            snap["plan_raw"] = parsed
+            snap["plan_tasks"] = parsed.get("tasks") or snap["plan_tasks"]
         elif mtype in {"workflow_summary", "records"} and parsed:
             snap["workflow_results"] = parsed.get("runs") or snap["workflow_results"]
-        elif mtype in {"rxn_network"} and parsed:
+        elif mtype == "rxn_network" and parsed:
             snap["rxn_net"]       = parsed.get("elementary_steps") or snap["rxn_net"]
             snap["intermediates"] = parsed.get("intermediates") or snap["intermediates"]
             snap["ts_candidates"] = parsed.get("ts_candidates") or snap["ts_candidates"]
             snap["coads_pairs"]   = parsed.get("coads_pairs") or snap["coads_pairs"]
 
-    # If rxn_net/intermediates missing but we have plan_raw/tasks, derive them
     if (not snap["rxn_net"]) and (snap["plan_raw"] or snap["plan_tasks"]):
         elem, inter, ts, coads = _extract_network_from_everywhere(
             snap.get("plan_raw") or {}, snap.get("plan_tasks") or [], snap.get("hypothesis") or ""
         )
         snap["rxn_net"], snap["intermediates"], snap["ts_candidates"], snap["coads_pairs"] = elem, inter, ts, coads
-
     return snap
 
-import json as _json
-
-def _force_dict(x):
-    if isinstance(x, dict):
-        return x
-    if isinstance(x, str):
-        try:
-            return json.loads(x) or {}
-        except Exception:
-            return {}
-    return {}
-
 # =========================
-# Pretty helpers & parsing
+# Pretty helpers
 # =========================
-def _slug(s) -> str:
-    s = str(s or "").strip().lower()
-    s = re.sub(r"[^a-z0-9]+", "-", s)
-    s = re.sub(r"-{2,}", "-", s).strip("-")
-    return s or "unnamed"
-
 def _badge(s: str):
     st.markdown(
         f"<span style='display:inline-block; padding:6px 12px; margin:6px 8px 0 0; "
@@ -168,23 +161,55 @@ def _badge(s: str):
         unsafe_allow_html=True,
     )
 
-def _get_mechanisms_from_state() -> list[str]:
-    """从 plan_raw.workflow 或 rxn_network 取机制标签；回退 intent.tags。"""
-    pr = st.session_state.get("plan_raw") or {}
-    wf = pr.get("workflow") or {}
-    mechs = wf.get("mechanisms") or []
-    if not mechs:
-        mechs = (st.session_state.get("intent") or {}).get("tags") or []
-    # 去重清洗
-    out, seen = [], set()
-    for m in mechs:
-        s = str(m).strip()
-        if s and s not in seen:
-            seen.add(s); out.append(s)
-    return out
+def _nonempty(x) -> bool:
+    if x is None: return False
+    if isinstance(x, str): return x.strip() != ""
+    if isinstance(x, (list,tuple,dict,set)): return len(x) > 0
+    return True
 
+def _kv_badge(label: str, value) -> None:
+    if value is None or value == "" or value == []:
+        return
+    _badge(f"{label}: {value}")
+
+def _badges_grid(items: list[str], cols: int = 6, empty_text: str = "N/A"):
+    if not items:
+        st.caption(empty_text); return
+    columns = st.columns(cols)
+    for i, it in enumerate(items):
+        with columns[i % cols]:
+            _badge(it)
+
+def _json_safe(obj):
+    """把不可序列化对象转换为字符串，避免 st.json 报错/展示奇怪对象。"""
+    try:
+        json.dumps(obj)
+        return obj
+    except Exception:
+        pass
+    import streamlit.delta_generator as sdg
+    if isinstance(obj, sdg.DeltaGenerator):
+        return f"<UI:{obj.__class__.__name__}>"
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_json_safe(v) for v in obj]
+    try:
+        return str(obj)
+    except Exception:
+        return "<unserializable>"
+
+def _download_bytes(label: str, data: bytes, file_name: str, help: str = ""):
+    st.download_button(label, data=data, file_name=file_name, type="secondary", help=help)
+
+def _copy_text_area(label: str, content: str):
+    with st.expander(label, expanded=False):
+        st.code(content or "(empty)")
+
+# =========================
+# Intent / Hypothesis / Plan
+# =========================
 def _extract_conditions_from_intent(I: dict) -> dict:
-    """归一化条件：pH / potential / temperature / electrolyte / solvent 等。"""
     I = I or {}
     cond = I.get("conditions") or {}
     ph   = cond.get("pH") or cond.get("ph")
@@ -196,21 +221,22 @@ def _extract_conditions_from_intent(I: dict) -> dict:
     light= cond.get("illumination") or cond.get("light")
     return {"pH": ph, "U": U, "T": T, "electrolyte": elec, "solvent": solv, "pressure": press, "illumination": light}
 
-def _kv_badge(label: str, value) -> None:
-    if value is None or value == "" or value == []:
-        return
-    _badge(f"{label}: {value}")
+def _get_mechanisms_from_state() -> list[str]:
+    pr = st.session_state.get("plan_raw") or {}
+    wf = pr.get("workflow") or {}
+    mechs = wf.get("mechanisms") or []
+    if not mechs:
+        mechs = (st.session_state.get("intent") or {}).get("tags") or []
+    out, seen = [], set()
+    for m in mechs:
+        s = str(m).strip()
+        if s and s not in seen:
+            seen.add(s); out.append(s)
+    return out
 
-def _nonempty(x) -> bool:
-    if x is None: return False
-    if isinstance(x, str): return x.strip() != ""
-    if isinstance(x, (list,tuple,dict,set)): return len(x) > 0
-    return True
 def _intent_table(intent: dict) -> str:
-    """把 intent dict 转成 Markdown 表格"""
     if not intent:
         return "_(No intent data)_"
-
     lines = ["| Key | Value |", "| --- | --- |"]
     for k, v in intent.items():
         if isinstance(v, dict):
@@ -219,8 +245,8 @@ def _intent_table(intent: dict) -> str:
             v = ", ".join(str(x) for x in v)
         lines.append(f"| {k} | {v} |")
     return "\n".join(lines)
+
 def _intent_summary_card(I: dict):
-    """丰富版 Intent 摘要：系统/条件徽章/机制/置信度/RN 统计 + 详细表格。"""
     I = _force_dict(I or {})
     st.markdown("#### Intent")
 
@@ -275,613 +301,86 @@ def _intent_summary_card(I: dict):
     _intent_table(I)
 
 def _parse_hypothesis_md(md_text: str) -> dict:
-    """
-    解析 hypothesis_agent 的 Markdown 模板，鲁棒匹配：
-    支持: "Conditions:" / "**Conditions:**" / "**Conditions**:" 等。
-    子弹点自动抓取 0~N 条。
-    """
     if not isinstance(md_text, str) or not md_text.strip():
         return {"conditions": "", "hypothesis": "", "why": [], "next": [], "exp": []}
+    txt = md_text.strip().replace("\r\n","\n").replace("\r","\n")
 
-    txt = md_text.strip()
-
-    # 统一换行
-    txt = txt.replace("\r\n", "\n").replace("\r", "\n")
-
-    # 段落切片：找到各段标题位置
-    def _find_block(label: str) -> Tuple[int, int]:
-        # 允许 **Label:** / Label: / **Label**:
+    def _find_block(label: str) -> Tuple[int,int]:
         pat = rf"(?mi)^\s*(\*\*)?{re.escape(label)}(\*\*)?\s*:\s*"
         m = re.search(pat, txt)
-        if not m:
-            return (-1, -1)
+        if not m: return (-1,-1)
         start = m.end()
-        # 下一个标题（任何四个标题之一）开始处就是本段结束
         ANY = r"(Conditions|Hypothesis|Why it may be true|What to compute next|Optional experimental validation)"
-        pat_next = rf"(?mi)^\s*(\*\*)?{ANY}(\*\*)?\s*:\s*"
-        m2 = re.search(pat_next, txt[start:])
-        if m2:
-            end = start + m2.start()
-        else:
-            end = len(txt)
+        m2 = re.search(rf"(?mi)^\s*(\*\*)?{ANY}(\*\*)?\s*:\s*", txt[start:])
+        end = start + m2.start() if m2 else len(txt)
         return (start, end)
 
-    def _block_text(label: str) -> str:
-        s, e = _find_block(label)
-        if s < 0:
-            return ""
-        return txt[s:e].strip()
-
     def _first_line(s: str) -> str:
-        if not s:
-            return ""
-        # 取本段落第一行的纯文本（去掉前导 -/* 与粗体）
-        line = s.split("\n", 1)[0]
+        if not s: return ""
+        line = s.split("\n",1)[0]
         line = re.sub(r"^\s*[-*]\s*", "", line).strip()
         line = re.sub(r"^\*\*(.*?)\*\*$", r"\1", line)
         return line
 
     def _bullets(s: str) -> list:
-        if not s:
-            return []
+        if not s: return []
         items = []
         for line in s.split("\n"):
             m = re.match(r"^\s*[-*]\s+(.*)$", line)
-            if m:
-                items.append(m.group(1).strip())
+            if m: items.append(m.group(1).strip())
         return items
 
-    blk_cond = _block_text("Conditions")
-    blk_hypo = _block_text("Hypothesis")
-    blk_why  = _block_text("Why it may be true")
-    blk_next = _block_text("What to compute next")
-    blk_exp  = _block_text("Optional experimental validation")
+    blk = {k: txt[s:e].strip() if s>=0 else "" for k,(s,e) in {
+        "Conditions": _find_block("Conditions"),
+        "Hypothesis": _find_block("Hypothesis"),
+        "Why": _find_block("Why it may be true"),
+        "Next": _find_block("What to compute next"),
+        "Exp": _find_block("Optional experimental validation"),
+    }.items()}
 
     return {
-        "conditions": _first_line(blk_cond),
-        "hypothesis": _first_line(blk_hypo),
-        "why":  _bullets(blk_why),
-        "next": _bullets(blk_next),
-        "exp":  _bullets(blk_exp),
+        "conditions": _first_line(blk["Conditions"]),
+        "hypothesis": _first_line(blk["Hypothesis"]),
+        "why":  _bullets(blk["Why"]),
+        "next": _bullets(blk["Next"]),
+        "exp":  _bullets(blk["Exp"]),
     }
 
-def _render_tasks_selector():
-    """在 Workflow 页签渲染可勾选的计划任务 + 执行按钮。"""
-    tasks = st.session_state.get("plan_tasks") or []
-
-    # 如果任务集合变化，重置选中
-    ids_now = [t.get("id") for t in tasks if isinstance(t, dict)]
-    ids_prev = st.session_state.get("selected_task_ids") or []
-    if sorted(ids_now) != sorted([i for i in ids_prev if i in ids_now]):
-        st.session_state.selected_task_ids = []
-
-    st.markdown("### Planned Tasks")
-    if not tasks:
-        st.info("No tasks yet. Click **Generate Plan** in the Chat & Plan tab.")
-        return
-
-    c1, c2, c3, c4 = st.columns([1,1,1,3])
-    with c1:
-        if st.button("Select all", use_container_width=True):
-            st.session_state.selected_task_ids = ids_now[:]
-    with c2:
-        if st.button("Clear", use_container_width=True):
-            st.session_state.selected_task_ids = []
-    with c3:
-        if st.button("Invert", use_container_width=True):
-            picked = set(st.session_state.selected_task_ids or [])
-            st.session_state.selected_task_ids = [i for i in ids_now if i not in picked]
-
-    sel = set(st.session_state.selected_task_ids or [])
-
-    for t in tasks:
-        tid = t.get("id")
-        name = t.get("name", "Task")
-        desc = t.get("description", "")
-        section = t.get("section", "")
-        colA, colB, colC = st.columns([0.12, 0.48, 0.40], gap="small")
-        with colA:
-            on = st.checkbox(str(tid), value=(tid in sel), key=f"task_pick_{tid}")
-            if on: sel.add(tid)
-            else:  sel.discard(tid)
-        with colB:
-            st.markdown(f"**[{tid}] {name}**  \n<small>{section}</small>", unsafe_allow_html=True)
-        with colC:
-            st.caption(desc)
-
-    st.session_state.selected_task_ids = list(sel)
-
-    st.markdown("---")
-    cL, cR = st.columns([2,2])
-    with cL:
-        st.caption(f"Selected: **{len(sel)}** / {len(tasks)}")
-    with cR:
-        if st.button("▶️ Execute selected on HPC", type="primary", use_container_width=True, disabled=(len(sel)==0)):
-            with st.spinner("Submitting selected tasks to HPC…"):
-                res = api_execute(st.session_state.selected_task_ids)
-            st.success("Submitted. See results below.") if res.get("ok") else st.error(res.get("detail") or "Execute failed.")
-
 def _add_meta_from_hypothesis(next_bullets: list[str]):
-    """把 Next bullets 插入为首条 meta.clarify 元任务（仅前端）。"""
     if not next_bullets:
-        st.warning("No items found in 'What to compute next'.")
-        return
+        st.warning("No items found in 'What to compute next'."); return
     tasks = st.session_state.get("plan_tasks") or []
-    # 生成一个元任务（放在最前）
     meta_task = {
-        "id": 0,  # 放最前；仅前端展示，不提交 HPC
+        "id": 0,
         "section": "Meta",
         "name": "Plan notes — from Hypothesis",
         "agent": "meta.clarify",
         "description": "Imported from Hypothesis · What to compute next",
         "params": {
             "form": [],
-            "payload": {
-                "notes": next_bullets,
-                "source": "hypothesis",
-                "parallel_group": 0
-            }
+            "payload": {"notes": next_bullets, "source": "hypothesis", "parallel_group": 0}
         },
         "meta": {"parallel_group": 0, "action_endpoint": None}
     }
-    # 如果已有相同源的 meta，替换；否则插入到首位
     replaced = False
     for i, t in enumerate(tasks):
         if (t.get("agent") == "meta.clarify") and "notes" in ((t.get("params") or {}).get("payload") or {}):
-            tasks[i] = meta_task
-            replaced = True
-            break
+            tasks[i] = meta_task; replaced = True; break
     if not replaced:
         tasks = [meta_task] + tasks
     st.session_state.plan_tasks = tasks
-    # 同步到 plan_raw（可选）
     plan_raw = st.session_state.get("plan_raw") or {}
-    plan_raw.setdefault("tasks", st.session_state.plan_tasks)
-    st.session_state.plan_raw = plan_raw
+    if isinstance(plan_raw, dict):
+        plan_raw["tasks"] = tasks
+        st.session_state.plan_raw = plan_raw
     st.success(f"Added {len(next_bullets)} note(s) to plan as meta.clarify.")
 
-def _render_hypothesis_block(md_text: str):
-    st.markdown("#### Hypothesis")
-    if not md_text:
-        st.info("Empty hypothesis.")
-        return
-    parsed = _parse_hypothesis_md(md_text)
-
-    a, b = st.columns([1,1])
-    with a:
-        st.markdown("**Conditions**")
-        st.write(parsed.get("conditions") or "_N/A_")
-    with b:
-        st.markdown("**Hypothesis**")
-        st.write(parsed.get("hypothesis") or "_N/A_")
-
-    c1, c2, c3 = st.columns([1,1,1])
-    with c1:
-        st.markdown("**Why it may be true**")
-        items = parsed.get("why") or []
-        if items:
-            for it in items: st.markdown(f"- {it}")
-        else:
-            st.write("_N/A_")
-    with c2:
-        st.markdown("**What to compute next**")
-        items_next = parsed.get("next") or []
-        if items_next:
-            for it in items_next: st.markdown(f"- {it}")
-        else:
-            st.write("_N/A_")
-        # 👉 新按钮：把 next 导入为计划注释/元任务
-        if items_next and st.button("➕ Add 'What to compute next' to plan (meta.clarify)", use_container_width=True):
-            _add_meta_from_hypothesis(items_next)
-    with c3:
-        st.markdown("**Optional experimental validation**")
-        items = parsed.get("exp") or []
-        if items:
-            for it in items: st.markdown(f"- {it}")
-        else:
-            st.write("_N/A_")
-
-    with st.expander("Raw hypothesis (Markdown)", expanded=False):
-        st.markdown(md_text)
-
 # =========================
-# Formatting helpers for RN/steps
+# Plan → RN 抽取（严格 1:1）
 # =========================
-def _fmt_step_entry(s):
-    """Normalize a step entry to a readable markdown bullet."""
-    if isinstance(s, dict):
-        name = s.get("name") or s.get("label")
-        if name:
-            why = s.get("why")
-            rp  = None
-            if "reactants" in s or "products" in s:
-                rp = f"{s.get('reactants','?')} → {s.get('products','?')}"
-            extra = f" — {why}" if why else ""
-            core = f"{name}{extra}"
-            return f"- {core}" + (f"\n  - {rp}" if rp else "")
-        if "reactants" in s or "products" in s:
-            return f"- {s.get('reactants','?')} → {s.get('products','?')}"
-        return f"- {_json.dumps(s, ensure_ascii=False)}"
-    if isinstance(s, (list, tuple)) and len(s) >= 2:
-        return f"- {s[0]} → {s[1]}"
-    return f"- {s}"
-
-def _fmt_list_md(seq):
-    seq = seq or []
-    return "\n".join(_fmt_step_entry(x) for x in seq)
-
-def _fmt_pairs_md(pairs):
-    pairs = pairs or []
-    lines = []
-    for x in pairs:
-        if isinstance(x, (list, tuple)) and len(x) >= 2:
-            lines.append(f"- {x[0]} + {x[1]} (co-ads)")
-        elif isinstance(x, dict) and "a" in x and "b" in x:
-            lines.append(f"- {x['a']} + {x['b']} (co-ads)")
-        else:
-            lines.append(f"- {x}")
-    return "\n".join(lines)
-
-def _fmt_step_compact(s):
-    """将 step 转成紧凑的一行文字：优先显示 反应式 / 名称 / why。"""
-    if isinstance(s, dict):
-        r = s.get("reactants"); p = s.get("products")
-        name = s.get("name") or s.get("label")
-        why  = s.get("why")
-        rxn  = f"{r} → {p}" if (r or p) else None
-        parts = []
-        if name: parts.append(str(name))
-        if rxn:  parts.append(rxn)
-        if why:  parts.append(why)
-        return " — ".join([x for x in parts if x])
-    if isinstance(s, (list, tuple)) and len(s) >= 2:
-        return f"{s[0]} → {s[1]}"
-    return str(s)
-
-def _step_to_row(s):
-    """用于表格：拆成多列"""
-    if isinstance(s, dict):
-        return {
-            "Name": s.get("name") or s.get("label") or "",
-            "Reaction": (f"{s.get('reactants')} → {s.get('products')}"
-                         if (s.get('reactants') or s.get('products')) else ""),
-            "Why": s.get("why") or "",
-        }
-    if isinstance(s, (list, tuple)) and len(s) >= 2:
-        return {"Name": "", "Reaction": f"{s[0]} → {s[1]}", "Why": ""}
-    return {"Name": "", "Reaction": str(s), "Why": ""}
-
-# =========================
-# APIs to backend
-# =========================
-def api_intent(query: str) -> dict:
-    # 1) 确保有 session_id；没有就创建一个，避免 400
-    sid = st.session_state.get("active_session_id")
-    if not sid:
-        new_name = (st.session_state.get("active_session_name") or "").strip() or "Untitled"
-        sid = create_session(name=new_name)
-        if not sid:
-            st.error("Failed to create session for intent.")
-            return {}
-        st.session_state.active_session_id = sid
-        st.session_state.active_session_name = new_name
-
-    # 2) 组织 payload
-    guided = {"stage": "catalysis", "area": "electro", "task": query.strip()[:140]}
-    payload = {"session_id": sid, "text": (query or "").strip(), "guided": guided}
-
-    # 3) 请求
-    res = post("/chat/intent", payload) or {}
-
-    # 4) 写入前端状态
-    st.session_state.intent_raw = res
-    intent = res.get("intent") or res.get("fields") or {}
-    st.session_state.intent = _force_dict(intent)
-
-    # 5) 反馈
-    if not res.get("ok"):
-        err = res.get("error") or "Intent API error"
-        st.error(f"{err}. Received: {res.get('received')}")
-    else:
-        st.success(f"Intent generated. confidence={res.get('confidence',0):.2f}")
-    return intent
-
-def api_hypothesis() -> str:
-    """
-    更鲁棒的 hypothesis 拉取：
-    - 兼容 {"result_md": "..."} / {"md": "..."} / {"hypothesis":{"md":"..."}}
-    - 如果没有 md，兜底把整个对象 json 展示，避免空
-    - 同时回填 steps/inter/ts/coads（按优先级取）
-    """
-    payload = {
-        "intent": st.session_state.intent,
-        "knowledge": {},
-        "history": []
-    }
-    if st.session_state.active_session_id:
-        payload["session_id"] = st.session_state.active_session_id
-
-    res = post("/chat/hypothesis", payload) or {}
-
-    # 1) 多套路拿 md 文本
-    md_text = ""
-    if isinstance(res, str):
-        md_text = res
-    elif isinstance(res, dict):
-        cand = (
-            res.get("result_md")
-            or res.get("md")
-            or (res.get("hypothesis") or {}).get("result_md")
-            or (res.get("hypothesis") or {}).get("md")
-            or res.get("hypothesis")  # 有时就是个纯字符串
-        )
-        if isinstance(cand, str):
-            md_text = cand
-        elif isinstance(cand, dict) and "md" in cand and isinstance(cand["md"], str):
-            md_text = cand["md"]
-        elif isinstance(cand, dict) and "result_md" in cand and isinstance(cand["result_md"], str):
-            md_text = cand["result_md"]
-        else:
-            # 兜底：把 res 打印为 JSON，避免 UI 是空
-            try:
-                md_text = json.dumps(res, ensure_ascii=False, indent=2)
-            except Exception:
-                md_text = str(res)
-    else:
-        md_text = str(res or "")
-
-    st.session_state.hypothesis = md_text or ""
-
-    # 2) 同时抽结构（后端可能已经给了）
-    steps = (
-        res.get("steps")
-        or res.get("elementary_steps")
-        or (res.get("hypothesis") or {}).get("steps")
-        or []
-    )
-    inter = (
-        res.get("intermediates")
-        or (res.get("hypothesis") or {}).get("intermediates")
-        or []
-    )
-    ts = (
-        res.get("ts")
-        or res.get("ts_candidates")
-        or (res.get("hypothesis") or {}).get("ts")
-        or (res.get("hypothesis") or {}).get("ts_candidates")
-        or []
-    )
-    coads = (
-        res.get("coads")
-        or res.get("coads_pairs")
-        or (res.get("hypothesis") or {}).get("coads")
-        or (res.get("hypothesis") or {}).get("coads_pairs")
-        or []
-    )
-
-    # 3) 如果还缺，就用已有 extractor 兜底
-    if not (steps and inter):
-        elem2, inter2, ts2, coads2 = _extract_network_from_everywhere(
-            plan_res=st.session_state.get("plan_raw") or {},
-            tasks=st.session_state.get("plan_tasks") or [],
-            hypothesis=md_text
-        )
-        steps = steps or elem2
-        inter = inter or inter2
-        ts    = ts or ts2
-        coads = coads or coads2
-
-    st.session_state.rxn_net       = steps or []
-    st.session_state.intermediates = inter or []
-    st.session_state.ts_candidates = ts or []
-    st.session_state.coads_pairs   = coads or []
-    return md_text
-
-def api_plan() -> list:
-    """Call /chat/plan and strictly use backend-provided fields.
-       This keeps Workflow tab 1:1 consistent with the plan (e.g., 45 steps)."""
-    payload = {
-        "intent": st.session_state.intent,
-        "hypothesis": st.session_state.hypothesis,
-        "history": []
-    }
-    if st.session_state.active_session_id:
-        payload["session_id"] = st.session_state.active_session_id
-
-    res = post("/chat/plan", payload) or {}
-
-    # save the raw plan
-    st.session_state["plan_raw"] = res
-
-    # tasks for flat view
-    tasks = res.get("tasks") or []
-    st.session_state.plan_tasks = tasks
-
-    # STRICT SYNC (no post-merging / re-extraction)
-    steps = res.get("steps") or res.get("elementary_steps") or []
-    inter = res.get("intermediates") or []
-    ts    = res.get("ts") or res.get("ts_candidates") or []
-    coads = res.get("coads") or res.get("coads_pairs") or []
-
-    # fallback only if backend truly didn't give anything
-    if not steps and not inter and not ts and not coads:
-        # last resort: keep old behavior (rarely used)
-        elem2, inter2, ts2, coads2 = _extract_network_from_everywhere(
-            plan_res=res, tasks=tasks, hypothesis=st.session_state.hypothesis or ""
-        )
-        steps, inter, ts, coads = elem2, inter2, ts2, coads2
-
-    st.session_state.rxn_net        = steps or []
-    st.session_state.intermediates  = inter or []
-    st.session_state.ts_candidates  = ts or []
-    st.session_state.coads_pairs    = coads or []
-
-    return tasks
-
-def api_execute(selected_ids: list):
-    settings = st.session_state.settings or {}
-    payload = {
-        "session_id": st.session_state.active_session_id,
-        "all_tasks": st.session_state.plan_tasks,
-        "selected_ids": selected_ids,
-        "cluster": settings.get("cluster", "hoffman2"),
-        "dry_run": bool(settings.get("dry_run", False)),
-        "sync_back": bool(settings.get("sync_back", True)),
-        "paths": {
-            "workdir": settings.get("workdir"),
-            "scratch": settings.get("scratch"),
-            "python_env": settings.get("python_env"),
-            "vasp_cmd": settings.get("vasp_cmd"),
-        },
-    }
-    res = post("/chat/execute", payload) or {}
-    if res.get("ok"):
-        st.session_state.workflow_results.append(res)
-    return res
-
-def api_knowledge(q: str, use_intent: bool, limit: int, fast: bool):
-    body = {"query": q, "limit": int(limit), "fast": bool(fast)}
-    if use_intent:
-        body["intent"] = st.session_state.intent
-    if st.session_state.active_session_id:
-        body["session_id"] = st.session_state.active_session_id
-    return post("/chat/knowledge", body) or {}
-
-# ---- Session management APIs ----
-def get_sessions() -> list[dict]:
-    res = post("/chat/session/list", {}) or {}
-    return res.get("sessions") or []
-
-def create_session(name: str, project: str = "", tags: str = "", description: str = "") -> int | None:
-    res = post("/chat/session/create", {"name": name, "project": project, "tags": tags, "description": description}) or {}
-    return res.get("session_id")
-
-def update_session(jaw=None, **fields) -> bool:
-    if not jaw: return False
-    res = post("/chat/session/update", {"id": jaw, **fields}) or {}
-    return bool(res.get("ok"))
-
-def delete_session(jaw=None) -> bool:
-    if not jaw: return False
-    res = post("/chat/session/delete", {"id": jaw}) or {}
-    return bool(res.get("ok"))
-
-# =========================
-# Small UI helpers
-# =========================
-def _json_safe(obj):
-    """将任何对象转换成可被 st.json 接收的结构。"""
-    try:
-        json.dumps(obj)
-        return obj
-    except Exception:
-        pass
-    import streamlit.delta_generator as sdg
-    if isinstance(obj, sdg.DeltaGenerator):
-        return f"<UI:{obj.__class__.__name__}>"
-    if isinstance(obj, dict):
-        return {str(k): _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_json_safe(v) for v in obj]
-    if isinstance(obj, (set,)):
-        return [_json_safe(v) for v in obj]
-    try:
-        return str(obj)
-    except Exception:
-        return "<unserializable>"
-
-def _render_records_block(wf: dict):
-    st.markdown(f"### Run — Workdir: `{wf.get('workdir','')}`")
-    rows = wf.get("results") or []
-    if rows:
-        for r in rows:
-            step = str(r.get("step", "(unnamed)"))
-            status = str(r.get("status", ""))
-            st.markdown(f"- **{step}** → {status}")
-    if wf.get("summary") is not None:
-        with st.expander("Post-analysis summary", expanded=False):
-            st.json(_json_safe(wf["summary"]))
-
-def _badges_grid(items: list[str], cols: int = 6, empty_text: str = "N/A"):
-    if not items:
-        st.caption(empty_text); return
-    columns = st.columns(cols)
-    for i, it in enumerate(items):
-        with columns[i % cols]:
-            _badge(it)
-
-def _download_bytes(label: str, data: bytes, file_name: str, help: str = ""):
-    st.download_button(label, data=data, file_name=file_name, type="secondary", help=help)
-
-def _copy_text_area(label: str, content: str):
-    with st.expander(label, expanded=False):
-        st.code(content or "(empty)")
-
-def _split_parallel_groups(tasks: list[dict]) -> dict[str, list[dict]]:
-    groups = {}
-    for t in tasks:
-        g = (t.get("params",{}).get("payload") or {}).get("parallel_group") or "Other"
-        groups.setdefault(str(g), []).append(t)
-    for k in groups:
-        groups[k] = sorted(groups[k], key=lambda x: x.get("id", 0))
-    return dict(sorted(groups.items(), key=lambda kv: kv[0]))
-
-def _uniq(seq):
-    out, seen = [], set()
-    for s in seq:
-        s = str(s).strip()
-        if s and s not in seen:
-            seen.add(s); out.append(s)
-    return out
-
-def _normalize_arrow(s: str) -> str:
-    s = str(s).strip()
-    s = s.replace("⇒", "->").replace("→", "->").replace("⇌", "->").replace("⟶", "->")
-    s = s.replace("—>", "->").replace(" –> ", "->")
-    while "  " in s:
-        s = s.replace("  ", " ")
-    parts = [p.strip() for p in s.split("->") if p.strip()]
-    if len(parts) == 2:
-        return f"{parts[0]} → {parts[1]}"
-    return s
-
-_RX_ADS = re.compile(r"^(?:[A-Z][a-z]?\d*)+(?:[A-Z][a-z]?\d*)*\*$")
-_RX_GAS = re.compile(r"^(?:[A-Z][a-z]?\d*)+(?:[A-Z][a-z]?\d*)*\((?:g|aq)\)$")
-
-def _looks_like_species(tok: str) -> bool:
-    tok = tok.strip()
-    if not tok or " " in tok or len(tok) > 12:
-        return False
-    if tok.count("*") > 1 or tok.count("(") > 1 or tok.count(")") > 1:
-        return False
-    return bool(_RX_ADS.match(tok) or _RX_GAS.match(tok))
-
-def _only_species(tokens: list[str]) -> list[str]:
-    return [t for t in tokens if _looks_like_species(t)]
-
-# =========================
-# Extract RN from sources
-# =========================
-from typing import Any, Dict, List, Tuple
-# --- replace the whole function in client/home.py ---
-from typing import Any, Dict, List, Tuple
-import re, json
-
-def _extract_network_from_everywhere(
-    plan_res: Any,
-    tasks: List[dict],
-    hypothesis: Any
+def _extract_network_from_everywhere(plan_res: Any, tasks: List[dict], hypothesis: Any
 ) -> Tuple[List[Any], List[str], List[str], List[str]]:
-    """
-    Make Workflow view 1:1 with the generated plan list.
-    - Each task becomes one row in 'elem' (Elementary steps).
-    - For NEB/TS tasks: parse reaction A -> B into Reaction/Reactants/Products.
-    - For non-reaction tasks (DOS/PDOS, Assemble ΔG...), keep Name-only rows.
-    Also aggregates intermediates, ts, coads from plan/tasks/hypothesis.
-    """
 
-    # ---------- small utils ----------
-    
     def _to_str(x: Any) -> str:
         if x is None: return ""
         if isinstance(x, str): return x
@@ -907,30 +406,16 @@ def _extract_network_from_everywhere(
         return bool(_RX_ADS.match(tok) or _RX_GAS.match(tok))
 
     def _only_species(tokens: List[Any]) -> List[str]:
-        out = []
-        for t in tokens:
-            if _looks_like_species(t): out.append(_to_str(t))
-        return out
+        return [_to_str(t) for t in tokens if _looks_like_species(t)]
 
-    def _uniq(seq: List[Any]) -> List[Any]:
-        seen, out = set(), []
-        for x in seq:
-            k = json.dumps(x, ensure_ascii=False, sort_keys=True) if isinstance(x, dict) else _to_str(x)
-            if k not in seen:
-                seen.add(k); out.append(x)
-        return out
-
-    # ---------- collect from plan (as hints) ----------
     plan = plan_res if isinstance(plan_res, dict) else {}
     plan_elem  = (plan.get("elementary_steps")
                   or plan.get("reaction_network")
-                  or plan.get("steps")
-                  or [])
+                  or plan.get("steps") or [])
     plan_inter = plan.get("intermediates") or []
     plan_ts    = (plan.get("ts_candidates") or plan.get("ts_edges") or plan.get("ts") or [])
     plan_coads = plan.get("coads_pairs") or plan.get("coads") or []
 
-    # ---------- build elem strictly from tasks (1:1 rows) ----------
     elem_rows: List[Dict[str, Any]] = []
     ts_list: List[str] = []
     inter_list: List[str] = []
@@ -939,27 +424,20 @@ def _extract_network_from_everywhere(
     ARROWS = ("->","→","⇒","⟶")
 
     def _parse_reaction_from_task(t: dict) -> str:
-        """Prefer explicit payload/form 'step'; fallback to parsing from 'name'."""
-        # 1) payload.step
         payload = (t.get("params") or {}).get("payload") or {}
         step_txt = _to_str(payload.get("step"))
         if any(a in step_txt for a in ARROWS):
             return _normalize_arrow(step_txt)
-
-        # 2) form field named 'step'
         for f in (t.get("params") or {}).get("form") or []:
             if str(f.get("key")).lower() == "step":
                 v = _to_str(f.get("value"))
                 if any(a in v for a in ARROWS):
                     return _normalize_arrow(v)
-
-        # 3) parse from task name like: "NEB — A -> B  · CI-NEB ..."
         name = _to_str(t.get("name"))
         s = name
         if "—" in s: s = s.split("—", 1)[1]
         elif "–" in s: s = s.split("–", 1)[1]
         elif " - " in s: s = s.split(" - ", 1)[1]
-        # cut common tails
         for tail in ("·", "•", " CI-NEB", " NEB", "(CI-NEB)"):
             if tail in s:
                 s = s.split(tail, 1)[0]
@@ -968,7 +446,6 @@ def _extract_network_from_everywhere(
             return _normalize_arrow(s)
         return ""
 
-    # map every task to a row; keep order & count identical to tasks
     for t in (tasks or []):
         row: Dict[str, Any] = {"Name": _to_str(t.get("name") or "Task")}
         rxn = _parse_reaction_from_task(t)
@@ -979,22 +456,14 @@ def _extract_network_from_everywhere(
                 "products":  rxn.split(" → ")[1] if " → " in rxn else "",
             })
             ts_list.append(rxn)
-
-            # mine species from reaction
             toks = re.split(r"[+\s→]+", rxn.replace("(", " ").replace(")", " "))
             inter_list += _only_species(toks)
-
-        # also pick species from task name (e.g., H*, CO2(g))
         name_tokens = re.split(r"[,\s/+\-·•]+", _to_str(t.get("name")))
         inter_list += _only_species(name_tokens)
-
-        # collect any explicit payload lists
         payload = (t.get("params") or {}).get("payload") or {}
         inter_list += payload.get("intermediates") or []
         ts_list    += payload.get("ts_candidates") or []
         coads_list += payload.get("coads_pairs") or []
-
-        # final row: convert to elem-row shape the table expects
         elem_rows.append({
             "name": row.get("Name"),
             "reaction": row.get("reaction",""),
@@ -1002,8 +471,6 @@ def _extract_network_from_everywhere(
             "products": row.get("products",""),
         })
 
-    # ---------- merge with plan/hypothesis extras (non-dominant) ----------
-    # extras go after task-rows; we don't dedup elem_rows to keep count identical to tasks
     extras: List[Dict[str, Any]] = []
     for x in plan_elem:
         if isinstance(x, dict):
@@ -1026,34 +493,311 @@ def _extract_network_from_everywhere(
                            "reactants":rxn.split(" → ")[0] if " → " in rxn else "",
                            "products":rxn.split(" → ")[1] if " → " in rxn else ""})
 
-    # final elem = tasks-first + plan extras (do not dedup tasks part)
     elem = elem_rows + extras
-
-    # ---------- intermediates / ts / coads tidy ----------
-    # add plan-level and hypothesis-derived species
     inter_list += plan_inter
     ts_list    += plan_ts
     coads_list += plan_coads
 
-    # from hypothesis free text (very light)
     hypo_text = _to_str(hypothesis)
     if hypo_text:
         rough = re.findall(r"\b([A-Za-z0-9()*]+)\b", hypo_text)
-        inter_list += _only_species(rough)
+        inter_list += [s for s in rough if _looks_like_species(s)]
 
-    # uniq but keep order
-    intermediates = _uniq(inter_list)
-    ts_clean = _uniq([_normalize_arrow(x) for x in ts_list if _to_str(x)])
-    coads_clean = _uniq([_to_str(c) for c in coads_list if _to_str(c)])
+    def _uniq_order(seq):
+        seen, out = set(), []
+        for s in seq:
+            k = _to_str(s)
+            if k and k not in seen:
+                seen.add(k); out.append(s)
+        return out
 
-    # sort intermediates: adsorbates first, then gas/aq, then others
+    intermediates = _uniq_order(inter_list)
+    ts_clean = _uniq_order([_normalize_arrow(x) for x in ts_list if _to_str(x)])
+    coads_clean = _uniq_order([_to_str(c) for c in coads_list if _to_str(c)])
+
     ads = [s for s in intermediates if s.endswith("*")]
     gas = [s for s in intermediates if s.endswith("(g)") or s.endswith("(aq)")]
     rest = [s for s in intermediates if s not in ads and s not in gas]
     intermediates_sorted = ads + gas + rest
 
-    # NOTE: do not collapse elem (to preserve exact count == tasks count)
     return elem, intermediates_sorted, ts_clean, coads_clean
+
+# =========================
+# Backend calls (intent/hypo/plan/execute)
+# =========================
+def api_intent(query: str) -> dict:
+    sid = st.session_state.get("active_session_id")
+    if not sid:
+        new_name = (st.session_state.get("active_session_name") or "").strip() or "Untitled"
+        sid = create_session(name=new_name)
+        if not sid:
+            st.error("Failed to create session for intent."); return {}
+        st.session_state.active_session_id = sid
+        st.session_state.active_session_name = new_name
+
+    guided = {"stage": "catalysis", "area": "electro", "task": query.strip()[:140]}
+    payload = {"session_id": sid, "text": (query or "").strip(), "guided": guided}
+    res = post("/chat/intent", payload) or {}
+
+    st.session_state.intent_raw = res
+    intent = res.get("intent") or res.get("fields") or {}
+    st.session_state.intent = _force_dict(intent)
+
+    if not res.get("ok"):
+        st.error(res.get("error") or "Intent API error")
+    else:
+        st.success(f"Intent generated. confidence={res.get('confidence', 0):.2f}")
+    return intent
+
+def api_hypothesis() -> str:
+    payload = {"intent": st.session_state.intent, "knowledge": {}, "history": []}
+    if st.session_state.active_session_id:
+        payload["session_id"] = st.session_state.active_session_id
+    res = post("/chat/hypothesis", payload) or {}
+
+    md_text = ""
+    if isinstance(res, str):
+        md_text = res
+    elif isinstance(res, dict):
+        cand = (
+            res.get("result_md") or res.get("md")
+            or (res.get("hypothesis") or {}).get("result_md")
+            or (res.get("hypothesis") or {}).get("md")
+            or res.get("hypothesis")
+        )
+        if isinstance(cand, str): md_text = cand
+        elif isinstance(cand, dict) and isinstance(cand.get("md"), str): md_text = cand["md"]
+        elif isinstance(cand, dict) and isinstance(cand.get("result_md"), str): md_text = cand["result_md"]
+        else:
+            try: md_text = json.dumps(res, ensure_ascii=False, indent=2)
+            except Exception: md_text = str(res)
+    else:
+        md_text = str(res or "")
+
+    st.session_state.hypothesis = md_text or ""
+
+    steps = (
+        res.get("steps") or res.get("elementary_steps") or
+        (res.get("hypothesis") or {}).get("steps") or []
+    )
+    inter = res.get("intermediates") or (res.get("hypothesis") or {}).get("intermediates") or []
+    ts = (
+        res.get("ts") or res.get("ts_candidates") or
+        (res.get("hypothesis") or {}).get("ts") or (res.get("hypothesis") or {}).get("ts_candidates") or []
+    )
+    coads = (
+        res.get("coads") or res.get("coads_pairs") or
+        (res.get("hypothesis") or {}).get("coads") or (res.get("hypothesis") or {}).get("coads_pairs") or []
+    )
+
+    if not (steps and inter):
+        elem2, inter2, ts2, coads2 = _extract_network_from_everywhere(
+            plan_res=st.session_state.get("plan_raw") or {},
+            tasks=st.session_state.get("plan_tasks") or [],
+            hypothesis=md_text
+        )
+        steps = steps or elem2
+        inter = inter or inter2
+        ts    = ts or ts2
+        coads = coads or coads2
+
+    st.session_state.rxn_net       = steps or []
+    st.session_state.intermediates = inter or []
+    st.session_state.ts_candidates = ts or []
+    st.session_state.coads_pairs   = coads or []
+    return md_text
+
+def api_plan() -> list:
+    payload = {"intent": st.session_state.intent, "hypothesis": st.session_state.hypothesis, "history": []}
+    if st.session_state.active_session_id:
+        payload["session_id"] = st.session_state.active_session_id
+
+    res = post("/chat/plan", payload) or {}
+    st.session_state["plan_raw"] = res
+
+    tasks = res.get("tasks") or []
+    st.session_state.plan_tasks = tasks
+
+    steps = res.get("steps") or res.get("elementary_steps") or []
+    inter = res.get("intermediates") or []
+    ts    = res.get("ts") or res.get("ts_candidates") or []
+    coads = res.get("coads") or res.get("coads_pairs") or []
+
+    if not steps and not inter and not ts and not coads:
+        elem2, inter2, ts2, coads2 = _extract_network_from_everywhere(
+            plan_res=res, tasks=tasks, hypothesis=st.session_state.hypothesis or ""
+        )
+        steps, inter, ts, coads = elem2, inter2, ts2, coads2
+
+    st.session_state.rxn_net        = steps or []
+    st.session_state.intermediates  = inter or []
+    st.session_state.ts_candidates  = ts or []
+    st.session_state.coads_pairs    = coads or []
+    return tasks
+
+def _get_hpc_session_uid() -> str:
+    """
+    懒创建一个 HPC session（供 /agent/run、/job/list 使用）。
+    - server 侧已有 /session/create 返回 {session_uid: "..."}
+    - 只创建一次，存到 st.session_state.hpc_session_uid
+    """
+    if st.session_state.get("hpc_session_uid"):
+        return st.session_state["hpc_session_uid"]
+
+    # 用当前 Chat 会话名拼一个更友好的 HPC 会话名
+    name = (st.session_state.get("active_session_name") or "chatdft").strip() or "chatdft"
+    try:
+        r = post("/session/create", {"name": name}) or {}
+        uid = r.get("session_uid") or r.get("uid")
+        if not uid:
+            # 后端没回 uid，就再兜底列一下
+            ls = post("/session/list", {}) or []
+            if ls and isinstance(ls, list) and isinstance(ls[0], dict):
+                uid = ls[-1].get("uid")
+        if not uid:
+            raise RuntimeError("No session_uid returned from /session/create")
+        st.session_state["hpc_session_uid"] = uid
+        return uid
+    except Exception as e:
+        st.error(f"Create HPC session failed: {e}")
+        # 返回空字符串，调用方会据此不携带 uid（但就看不到 Job 归属）
+        return ""
+    
+def api_execute(selected_ids: list):
+    """
+    提交当前 plan 中被勾选的任务到 /agent/run。
+    - 自动兜底 workflow_results 为 list
+    - 逐任务提交，聚合返回
+    - 使用 Settings 中的 cluster/dry_run/sync_back
+    - ★ 新增：携带 HPC session_uid，确保 HPC 监控页能看到这些 Job
+    """
+    if not isinstance(st.session_state.get("workflow_results"), list):
+        st.session_state.workflow_results = []
+
+    settings = st.session_state.get("settings") or {}
+    all_tasks = st.session_state.get("plan_tasks") or []
+    pick = set(selected_ids or [])
+    tasks = [t for t in all_tasks if t and t.get("id") in pick]
+
+    if not tasks:
+        return {"ok": False, "detail": "No tasks selected."}
+
+    # 取得/创建 HPC session_uid（client/app.py 的监控按它查询）
+    hpc_sess_uid = _get_hpc_session_uid()
+
+    out = {"ok": True, "submitted": [], "errors": [], "session_uid": hpc_sess_uid}
+
+    for t in tasks:
+        agent = (t.get("agent") or "").strip().lower()
+        payload = (t.get("params") or {}).get("payload") or {}
+
+        body = {
+            "agent": agent,
+            "task": t,  # 兼容后端流水线
+            "engine": (payload.get("engine") or "vasp"),
+            "cluster": settings.get("cluster", "hoffman2"),
+            # dry_run=True => 不提交；submit 取反
+            "submit": not bool(settings.get("dry_run", False)),
+            "wait": False,
+            "fetch": bool(settings.get("sync_back", True)),
+            "job_name": t.get("name") or f"task_{t.get('id')}",
+        }
+        # ★ 关键：把 HPC session_uid 传给后端，这样 Job 会挂到对应会话
+        if hpc_sess_uid:
+            body["session_uid"] = hpc_sess_uid
+
+        try:
+            r = post("/agent/run", body) or {}
+            if r.get("ok", True):  # 有些实现不回 ok 字段，视为成功
+                out["submitted"].append({"task_id": t.get("id"), "name": t.get("name"), "resp": r})
+            else:
+                out["ok"] = False
+                out["errors"].append({"task_id": t.get("id"), "name": t.get("name"), "error": r.get("detail") or "unknown"})
+        except Exception as e:
+            out["ok"] = False
+            out["errors"].append({"task_id": t.get("id"), "name": t.get("name"), "error": str(e)})
+
+    st.session_state.workflow_results.append(out)
+    return out
+
+# =========================
+# Execution 持久化（双路由回退）
+# =========================
+def _task_type_from_agent(agent: str, fallback: str = "model") -> str:
+    a = (agent or "").lower()
+    if a.startswith("structure."): return "structure"
+    if a.startswith("adsorption.co"): return "coadsorption"
+    if a.startswith("adsorption."): return "adsorption"
+    if a.startswith("neb."): return "neb"
+    if a.startswith("electronic.") or "dos" in a or "bader" in a: return "dos"
+    if a.startswith("post."): return "post"
+    if a in {"run_dft"}: return "model"
+    return fallback
+
+def _build_exec_tasks_payload(session_id: int, tasks: list[dict], only_ids: set[int] | None = None) -> dict:
+    items = []
+    order = 1
+    for t in (tasks or []):
+        tid = t.get("id")
+        if only_ids is not None and tid not in only_ids:
+            continue
+        title = t.get("name") or f"Task {order}"
+        agent = (t.get("agent") or t.get("section") or "")
+        task_type = _task_type_from_agent(agent)
+        items.append({
+            "order_idx": order,
+            "title": title,
+            "task_type": task_type,
+            "payload": (t.get("params") or {}).get("payload") or {}
+        })
+        order += 1
+    return {"session_id": int(session_id), "tasks": items}
+
+def _get_plan_tasks_strict() -> list[dict]:
+    tasks = st.session_state.get("plan_tasks")
+    if isinstance(tasks, list):
+        return [t for t in tasks if isinstance(t, dict)]
+    plan_raw = st.session_state.get("plan_raw")
+    if isinstance(plan_raw, dict):
+        t = plan_raw.get("tasks")
+        if isinstance(t, list):
+            return [x for x in t if isinstance(x, dict)]
+    return []
+
+def api_persist_execution(selected_only: bool = False) -> dict:
+    """保存任务到 Execution；优先 /exec/tasks/commit；只有在抛异常时才回退到 /task/commit。"""
+    sid = st.session_state.get("active_session_id")
+    if not sid:
+        return {"ok": False, "detail": "No active session_id."}
+
+    tasks = _get_plan_tasks_strict()
+    if not tasks:
+        return {"ok": False, "detail": "No tasks in plan."}
+
+    if selected_only:
+        sel = set(st.session_state.get("selected_task_ids") or [])
+        tasks = [t for t in tasks if t.get("id") in sel]
+    if not tasks:
+        return {"ok": False, "detail": "No selected tasks to save."}
+
+    # 统一构造 payload：新路由使用规范化后的 payload
+    exec_payload = _build_exec_tasks_payload(sid, tasks)
+
+    # route 1: /exec/tasks/commit（只要 2xx 就认为成功）
+    try:
+        res = post("/exec/tasks/commit", exec_payload) or {}
+        return {"ok": True, "route": "exec", "resp": res}
+    except Exception as e1:
+        last_err = str(e1)
+
+    # route 2: 仅当上面抛异常时，回退旧路由
+    try:
+        legacy_payload = {"session_id": sid, "tasks": tasks}
+        res2 = post("/task/commit", legacy_payload) or {}
+        return {"ok": True, "route": "legacy", "resp": res2}
+    except Exception as e2:
+        return {"ok": False, "detail": f"exec route failed: {last_err}; legacy route failed: {e2}"}
+
 # =========================
 # Per-session snapshot I/O
 # =========================
@@ -1062,6 +806,7 @@ _SNAPSHOT_KEYS = [
     "rxn_net", "intermediates", "ts_candidates", "coads_pairs",
     "workflow_results", "selected_task_ids",
 ]
+
 def _save_snapshot(session_id: int | None):
     if not session_id: return
     cache = st.session_state._SESSION_CACHE
@@ -1072,6 +817,7 @@ def _load_snapshot(session_id: int | None):
     if not session_id: return False
     snap = st.session_state._SESSION_CACHE.get(int(session_id))
     if not snap:
+        # 清空为默认
         for k in _SNAPSHOT_KEYS:
             st.session_state[k] = DEFAULTS.get(k, [] if k.endswith("s") else {})
         st.session_state["hypothesis"] = ""
@@ -1101,7 +847,127 @@ def section_overview():
     if sid:
         st.success(f"Active session: [{sid}] {st.session_state.active_session_name or '(unnamed)'}")
     else:
-        st.info("No active session. 请到 **Projects** 选择或创建一个。")
+        st.info("No active session. 请到 **Settings** 或侧边栏创建。")
+
+def _render_hypothesis_block(md_text: str):
+    st.markdown("#### Hypothesis")
+    if not md_text:
+        st.info("Empty hypothesis."); return
+    parsed = _parse_hypothesis_md(md_text)
+
+    a, b = st.columns([1,1])
+    with a:
+        st.markdown("**Conditions**")
+        st.write(parsed.get("conditions") or "_N/A_")
+    with b:
+        st.markdown("**Hypothesis**")
+        st.write(parsed.get("hypothesis") or "_N/A_")
+
+    c1, c2, c3 = st.columns([1,1,1])
+    with c1:
+        st.markdown("**Why it may be true**")
+        items = parsed.get("why") or []
+        if items: [st.markdown(f"- {it}") for it in items]
+        else: st.write("_N/A_")
+    with c2:
+        st.markdown("**What to compute next**")
+        nxt = parsed.get("next") or []
+        if nxt: [st.markdown(f"- {it}") for it in nxt]
+        else: st.write("_N/A_")
+        if nxt and st.button("➕ Add 'What to compute next' to plan (meta.clarify)", use_container_width=True):
+            _add_meta_from_hypothesis(nxt)
+    with c3:
+        st.markdown("**Optional experimental validation**")
+        items = parsed.get("exp") or []
+        if items: [st.markdown(f"- {it}") for it in items]
+        else: st.write("_N/A_")
+
+def _step_to_row(s):
+    if isinstance(s, dict):
+        return {
+            "Name": s.get("name") or s.get("label") or "",
+            "Reaction": (f"{s.get('reactants')} → {s.get('products')}"
+                         if (s.get('reactants') or s.get('products')) else ""),
+            "Why": s.get("why") or "",
+        }
+    if isinstance(s, (list, tuple)) and len(s) >= 2:
+        return {"Name": "", "Reaction": f"{s[0]} → {s[1]}", "Why": ""}
+    return {"Name": "", "Reaction": str(s), "Why": ""}
+
+def _fmt_step_compact(s):
+    if isinstance(s, dict):
+        r = s.get("reactants"); p = s.get("products")
+        name = s.get("name") or s.get("label")
+        why  = s.get("why")
+        rxn  = f"{r} → {p}" if (r or p) else None
+        parts = []
+        if name: parts.append(str(name))
+        if rxn:  parts.append(rxn)
+        if why:  parts.append(why)
+        return " — ".join([x for x in parts if x])
+    if isinstance(s, (list, tuple)) and len(s) >= 2:
+        return f"{s[0]} → {s[1]}"
+    return str(s)
+
+def _render_tasks_selector():
+    """在 Workflow 页签渲染可勾选的计划任务 + 执行按钮。"""
+    tasks = st.session_state.get("plan_tasks") or []
+
+    ids_now = [t.get("id") for t in tasks if isinstance(t, dict)]
+    ids_prev = st.session_state.get("selected_task_ids") or []
+    if sorted(ids_now) != sorted([i for i in ids_prev if i in ids_now]):
+        st.session_state.selected_task_ids = []
+
+    st.markdown("### Planned Tasks")
+    if not tasks:
+        st.info("No tasks yet. Click **Generate Plan** in the Chat & Plan tab.")
+        return
+
+    c1, c2, c3, _ = st.columns([1,1,1,3])
+    with c1:
+        if st.button("Select all", use_container_width=True):
+            st.session_state.selected_task_ids = ids_now[:]
+    with c2:
+        if st.button("Clear", use_container_width=True):
+            st.session_state.selected_task_ids = []
+    with c3:
+        if st.button("Invert", use_container_width=True):
+            picked = set(st.session_state.selected_task_ids or [])
+            st.session_state.selected_task_ids = [i for i in ids_now if i not in picked]
+
+    sel = set(st.session_state.selected_task_ids or [])
+    for t in tasks:
+        tid = t.get("id")
+        name = t.get("name", "Task")
+        desc = t.get("description", "")
+        section = t.get("section", "")
+        colA, colB, colC = st.columns([0.12, 0.48, 0.40], gap="small")
+        with colA:
+            on = st.checkbox(str(tid), value=(tid in sel), key=f"task_pick_{tid}")
+            if on: sel.add(tid)
+            else:  sel.discard(tid)
+        with colB:
+            st.markdown(f"**[{tid}] {name}**  \n<small>{section}</small>", unsafe_allow_html=True)
+        with colC:
+            st.caption(desc)
+    st.session_state.selected_task_ids = list(sel)
+
+    st.markdown("---")
+    cL, cR = st.columns([2,2])
+    with cL:
+        st.caption(f"Selected: **{len(sel)}** / {len(tasks)}")
+    with cR:
+        disabled = (len(sel) == 0)
+        if st.button("▶️ Execute selected on HPC", type="primary", use_container_width=True, disabled=disabled):
+            try:
+                with st.spinner("Submitting selected tasks to HPC…"):
+                    res = api_execute(st.session_state.selected_task_ids)
+                if res.get("ok"):
+                    st.success("Submitted. See results below.")
+                else:
+                    st.error(res.get("detail") or (res.get("errors") and res["errors"][0].get("error")) or "Execute failed.")
+            except Exception as e:
+                st.error(f"Execute failed: {e}")
 
 def section_chatdft_with_tabs():
     st.title("🧠 ChatDFT")
@@ -1109,31 +975,25 @@ def section_chatdft_with_tabs():
     if sid:
         st.caption(f"Active session: [{sid}] {st.session_state.active_session_name or '(unnamed)'}")
     else:
-        st.warning("No active session. 建议在 **Projects** 选择/创建会话（不影响使用，仅影响记录与回溯）。")
+        st.warning("No active session. 建议在侧边栏创建/选择会话（不影响功能，仅影响记录）")
 
-    tab_chat, tab_workflow, tab_papers= st.tabs(["💬 Chat & Plan", "🧪 Workflow", "📑 Papers / RAG"])
+    tab_chat, tab_workflow, tab_papers = st.tabs(["💬 Chat & Plan", "🧪 Workflow", "📑 Papers / RAG"])
 
-    # --- Chat & Plan ---
+    # Chat & Plan
     with tab_chat:
         st.subheader("User Inquiry → Intent → Hypothesis → Plan")
-        # 用当前 plan_raw 的字段，强一致同步到 Workflow 视图
         if st.button("↻ Sync workflow view with latest plan"):
             res   = st.session_state.get("plan_raw") or {}
             tasks = st.session_state.get("plan_tasks") or []
-
-            # 直接取后端产物，保持 1:1 一致
             steps = res.get("steps") or res.get("elementary_steps") or []
             inter = res.get("intermediates") or []
             ts    = res.get("ts") or res.get("ts_candidates") or []
             coads = res.get("coads") or res.get("coads_pairs") or []
-
-            # 如果后端真的没给（极少数情况），再兜底抽取
             if not steps and not inter and not ts and not coads:
                 elem2, inter2, ts2, coads2 = _extract_network_from_everywhere(
                     plan_res=res, tasks=tasks, hypothesis=st.session_state.hypothesis or ""
                 )
                 steps, inter, ts, coads = elem2, inter2, ts2, coads2
-
             st.session_state.rxn_net        = steps
             st.session_state.intermediates  = inter
             st.session_state.ts_candidates  = ts
@@ -1156,10 +1016,11 @@ def section_chatdft_with_tabs():
                 else: st.info("No tasks produced.")
 
         st.markdown("---")
+        # Intent + Hypothesis 展示
         _intent_summary_card(_force_dict(st.session_state.intent) or {})
         _render_hypothesis_block(st.session_state.hypothesis or "")
 
-    # --- Workflow ---
+    # Workflow
     def _workflow_right_panel():
         inter = st.session_state.intermediates or []
         ts    = st.session_state.ts_candidates or []
@@ -1182,7 +1043,7 @@ def section_chatdft_with_tabs():
         st.markdown("---"); st.markdown("**Co-ads pairs**")
         _badges_grid(coads, cols=3, empty_text="No Co-ads pairs.")
         if coads:
-            coads_txt = _fmt_pairs_md(coads)
+            coads_txt = "\n".join([str(x) for x in coads])
             _download_bytes("⬇️ Download coads.txt", coads_txt.encode("utf-8"), "coads_pairs.txt")
             _copy_text_area("Copy co-ads pairs", coads_txt)
 
@@ -1192,136 +1053,97 @@ def section_chatdft_with_tabs():
         with left:
             steps = st.session_state.rxn_net or []
             st.markdown("**Elementary steps**")
-
             if steps:
                 rows = [_step_to_row(s) for s in steps]
                 df_steps = pd.DataFrame(rows)
                 df_steps.insert(0, "#", list(range(1, len(rows)+1)))
             else:
                 df_steps = pd.DataFrame(columns=["#","Name","Reaction","Why"])
-
             st.dataframe(df_steps, use_container_width=True, hide_index=True)
 
-            # 下载/复制
             lines = [_fmt_step_compact(s) for s in (steps or [])]
             txt = "\n".join(lines)
             _download_bytes("⬇️ Download steps.txt", txt.encode("utf-8"), "elementary_steps.txt")
             _copy_text_area("Copy steps (plain text)", txt)
         with right:
             _workflow_right_panel()
+
         _render_tasks_selector()
 
-    # --- Papers / RAG ---
-    with tab_papers:
-        st.subheader("arXiv search (fast) + optional intent context")
-        q = st.text_input("Keywords", key="paper_kw", placeholder="e.g., CO2 reduction Cu(111) alkaline kinetics")
-        colA, colB, colC, colD = st.columns([1,1,1,3])
-        use_intent = colA.checkbox("Use intent context", value=True)
-        fast_mode  = colB.checkbox("Fast", value=True, help="仅 arXiv + 轻量 enrich")
-        limit      = colC.number_input("Max papers", value=10, step=1, min_value=1, max_value=50)
-        if colD.button("🔎 Search", type="primary"):
-            if not q.strip() and not use_intent:
-                st.warning("Enter keywords or enable intent context.")
-            else:
-                with st.spinner("Searching arXiv…"):
-                    res = api_knowledge(q, use_intent, int(limit), fast_mode)
-            papers = res.get("records") or []
-            if not papers:
-                st.info("No papers found.")
-            else:
-                show = []
-                for p in papers:
-                    show.append({
-                        "Title": p.get("title"),
-                        "Venue": p.get("venue"),
-                        "Year":  p.get("year"),
-                        "URL":   p.get("url"),
-                        "DOI":   p.get("doi"),
-                        "Relevance": f"{p.get('relevance',0):.2f}",
-                    })
-                st.dataframe(pd.DataFrame(show), use_container_width=True, hide_index=True)
-                lines = []
-                for p in papers:
-                    parts = [str(p.get("title") or "").strip()]
-                    if p.get("venue"): parts.append(p["venue"])
-                    if p.get("year"):  parts.append(str(p["year"]))
-                    if p.get("doi"):   parts.append(f"doi:{p['doi']}")
-                    if p.get("url"):   parts.append(p["url"])
-                    lines.append(" — ".join([x for x in parts if x]))
-                _copy_text_area("Copy top results (plain)", "\n".join(lines))
-                st.caption(res.get("result") or "")
+        # === NEW: 保存到 Execution & 一键提交 ===
+        st.markdown("---")
+        st.markdown("### Persist plan → Execution")
 
-def section_projects():
-    st.title("📂 Projects (Sessions)")
-    _save_snapshot(st.session_state.active_session_id)
+        csa, csb, csc = st.columns([1, 1, 1])
 
-    sessions = get_sessions()
-    if not sessions:
-        st.info("No sessions yet. Create one below.")
-    else:
-        data = []
-        for s in sessions:
-            data.append({
-                "ID": s.get("id"),
-                "Name": s.get("name"),
-                "Project": s.get("project"),
-                "Tags": s.get("tags"),
-                "Status": s.get("status"),
-                "Pinned": s.get("pinned"),
-                "Updated": s.get("updated_at"),
-            })
-        st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
+        with csa:
+            if st.button("💾 Save all to Execution", use_container_width=True):
+                sid = st.session_state.get("active_session_id")
+                if not sid:
+                    st.warning("No active session.")
+                else:
+                    payload = _build_exec_tasks_payload(
+                        session_id=sid,
+                        tasks=st.session_state.get("plan_tasks") or []
+                    )
+                    try:
+                        _ = post("/exec/tasks/commit", payload)
+                        st.success(f"Saved {len(payload['tasks'])} tasks to Execution ✔")
+                    except Exception as e:
+                        st.error(f"Save failed: {e}")
 
-    st.markdown("---")
-    colL, colR = st.columns([2,2])
-    with colL:
-        sid_options = [(f"[{s.get('id')}] {s.get('name')}", s.get("id")) for s in sessions] if sessions else []
-        chosen = st.selectbox("Select a session to activate", sid_options, index=0 if sid_options else None,
-                              format_func=lambda t: t[0] if isinstance(t, tuple) else str(t))
-        if sid_options and st.button("✅ Set Active"):
-            _, sid = chosen
-            _save_snapshot(st.session_state.active_session_id)
-            st.session_state.active_session_id = sid
-            st.session_state.active_session_name = next((s.get("name") for s in sessions if s.get("id")==sid), "")
-            loaded = _load_snapshot(sid)
-            if not loaded:
-                snap = fetch_session_state_from_backend(sid)
-                for k, v in snap.items():
-                    st.session_state[k] = v
-                _save_snapshot(sid)
-            st.success(f"Activated session [{sid}] and loaded state.")
-            st.session_state["nav"] = "ChatDFT"
-            st.rerun()
+        with csb:
+            if st.button("💾 Save selected to Execution", use_container_width=True,
+                        disabled=not (st.session_state.get("selected_task_ids"))):
+                sid = st.session_state.get("active_session_id")
+                if not sid:
+                    st.warning("No active session.")
+                else:
+                    selected = set(st.session_state.get("selected_task_ids") or [])
+                    payload = _build_exec_tasks_payload(
+                        session_id=sid,
+                        tasks=st.session_state.get("plan_tasks") or [],
+                        only_ids=selected
+                    )
+                    try:
+                        _ = post("/exec/tasks/commit", payload)
+                        st.success(f"Saved {len(payload['tasks'])} selected tasks to Execution ✔")
+                    except Exception as e:
+                        st.error(f"Save failed: {e}")
 
-    with colR:
-        st.markdown("**Quick actions**")
-        if sessions:
-            default_sid = st.session_state.active_session_id or (sessions[0].get("id"))
-            sid2 = st.selectbox(
-                "Pick a session to modify",
-                [s.get("id") for s in sessions],
-                index=[s.get("id") for s in sessions].index(default_sid) if default_sid in [s.get("id") for s in sessions] else 0,
-                key="sid_to_mod"
-            )
-            new_name = st.text_input("Rename to", value="", placeholder="leave blank to keep")
-            pin_val  = st.checkbox("Pinned", value=next((bool(s.get("pinned")) for s in sessions if s.get("id")==sid2), False))
+        with csc:
+            if st.button("🚀 Dispatch saved Execution to HPC", use_container_width=True):
+                sid = st.session_state.get("active_session_id")
+                if not sid:
+                    st.warning("No active session.")
+                else:
+                    try:
+                        res = post("/exec/tasks/dispatch", {"session_id": sid, "submit": not st.session_state.settings.get("dry_run", False),
+                                                            "fetch": bool(st.session_state.settings.get("sync_back", True))})
+                        if res.get("ok"):
+                            st.success(f"Dispatched {len(res.get('submitted', []))} task(s).")
+                        else:
+                            st.error(f"Dispatch partial/failed: {res}")
+                    except Exception as e:
+                        st.error(f"Dispatch failed: {e}")
 
-            cA, cB = st.columns(2)
-            if cA.button("💾 Apply (rename/pin)"):
-                fields = {"pinned": pin_val}
-                if new_name.strip():
-                    fields["name"] = new_name.strip()
-                ok = update_session(jaw=sid2, **fields)
-                st.success("Updated.") if ok else st.error("Update failed.")
-                st.rerun()
-
-            if cB.button("🗑 Delete this session"):
-                ok = delete_session(jaw=sid2)
-                if ok and st.session_state.active_session_id == sid2:
-                    st.session_state.active_session_id = None
-                    st.session_state.active_session_name = ""
-                st.success("Deleted.") if ok else st.error("Delete failed.")
-                st.rerun()
+        # 简单查看 ExecutionTask 列表（可选）
+        try:
+            sid = st.session_state.get("active_session_id")
+            if sid:
+                lst = post("/exec/tasks/list", {"session_id": sid}) or {}
+                tasks_show = lst.get("tasks") or []
+                if tasks_show:
+                    st.caption("Saved Execution tasks")
+                    df = pd.DataFrame([{
+                        "#": t.get("order_idx"),
+                        "Title": t.get("title"),
+                        "Type": t.get("task_type"),
+                        "Status": t.get("status"),
+                    } for t in tasks_show])
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+        except Exception:
+            pass
 
 def section_settings():
     st.title("⚙️ Settings (Cluster & Paths)")
@@ -1355,7 +1177,7 @@ with st.sidebar:
 
     st.markdown("### Chat Sessions")
 
-    # --- New Chat ---
+    # New chat
     new_box = st.container()
     with new_box:
         c1, c2 = st.columns([3,1])
@@ -1377,7 +1199,7 @@ with st.sidebar:
                 else:
                     st.error("Create failed.")
 
-    # --- Open existing ---
+    # Open existing
     sessions = get_sessions()
     sid_options = [(f"{s.get('name') or '(unnamed)'}  ·  #{s.get('id')}", s.get("id")) for s in sessions]
     default_idx = 0
@@ -1386,8 +1208,7 @@ with st.sidebar:
         if st.session_state.active_session_id in ids:
             default_idx = ids.index(st.session_state.active_session_id)
 
-    open_label = "Open chat"
-    open_sel = st.selectbox(open_label, sid_options, index=default_idx if sid_options else None,
+    open_sel = st.selectbox("Open chat", sid_options, index=default_idx if sid_options else None,
                             format_func=lambda t: t[0] if isinstance(t, tuple) else str(t),
                             label_visibility="visible", key="open_chat_sel")
 
@@ -1442,7 +1263,5 @@ if st.session_state["nav"] == "Overview":
     section_overview()
 elif st.session_state["nav"] == "ChatDFT":
     section_chatdft_with_tabs()
-elif st.session_state["nav"] == "Projects":
-    section_projects()
 else:
     section_settings()

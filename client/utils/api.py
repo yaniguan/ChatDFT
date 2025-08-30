@@ -6,6 +6,11 @@ from typing import Any, Dict, List, Optional
 # ─── Configure your backend URL (default is port 8080) ─────────────────────────
 BASE = os.getenv("CHATDFT_BACKEND", "http://localhost:8080").rstrip("/")
 
+def get(path, params=None):
+    r = requests.get(f"{BASE}{path}", params=params, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
 def post(ep: str, body: dict, timeout: int = 90) -> dict:
     """
     ep: endpoint path, e.g. "/chat/ask"

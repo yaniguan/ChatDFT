@@ -331,6 +331,40 @@ class ExecutionRun(Base):
     meta = Column(JSON)              # 预留字段（cluster、dry_run 等）
     created_at = Column(DateTime, default=datetime.utcnow)
 
+# ======= NEW: ExecutionTask (Planner ↔ Execution 的唯一真相源) =======
+class ExecutionTask(Base):
+    __tablename__ = "execution_task"
+
+    id         = Column(String, primary_key=True, default=uid)  # 用字符串UUID更方便前后端传递
+    # 绑定到 ChatDFT 会话（用现有 chat_session.id，与你的 Chat/HPC 左栏“Open chat”一致）
+    session_id = Column(Integer, ForeignKey("chat_session.id", ondelete="CASCADE"), index=True)
+
+    # 任务展示与排序
+    order_idx  = Column(Integer, nullable=False)                 # 1,2,3...
+    title      = Column(String, nullable=False)                  # e.g. "[4] Relax on sites — H2O*"
+    task_type  = Column(String, nullable=False)                  # e.g. "model" | "adsorption" | "neb" | ...
+
+    # 规范化任务规格：Planner 写“要做什么”，Execution 渲染时补齐 artifacts/hpc/job
+    payload    = Column(JSON, nullable=False)                    # 见下备注里的 schema 建议
+
+    # 状态机：PLANNED -> READY -> SUBMITTED -> RUNNING -> DONE / ERROR
+    status     = Column(String, default="PLANNED", index=True)
+
+    # 执行期由 Execution/HPC 写入
+    hpc_job_id = Column(String, nullable=True)                   # qsub/sbatch 返回的 job id
+    local_dir  = Column(String, nullable=True)                   # runs/<session>/<task_id>/
+    remote_dir = Column(String, nullable=True)                   # 远端工作目录
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_execution_task_session_order", "session_id", "order_idx"),
+        Index("idx_execution_task_status", "status"),
+        # 保证同一 session 下 (order_idx,title) 大概率不重复（可选）
+        # UniqueConstraint("session_id", "order_idx", name="uc_exec_task_session_order"),
+    )
+    
 class ExecutionStep(Base):
     __tablename__ = "execution_step"
     id = Column(Integer, primary_key=True, autoincrement=True)

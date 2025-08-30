@@ -11,45 +11,47 @@
 - PostAnalysisAgent：本地结果聚合（可选）
 - Prepare-only：submit=False 时仅生成本地输入与结构，返回预览，不提交 HPC
 
-通用请求体字段（可选）：
-- task: Dict，等价 plan 里单个 task（至少带 params.payload）
+请求体可选字段：
+- task: Dict（等价 plan 里单个 task，至少带 params.payload）
+- agent: str（如 structure.relax_slab / adsorption.scan / electronic.dos / neb.run / run_dft / meta.clarify / knowledge.search）
 - engine: "vasp"|"qe"（若没给，从 task.params.payload.engine 取，默认 vasp）
-- cluster: "hoffman2"|...（cluster_config.yaml 中定义）
-- submit: bool = True               # 是否提交到 HPC；False=仅生成（prepare-only）
-- wait: bool = False                # 是否阻塞等待
-- fetch: bool = True                # 是否拉回输出（仅在 submit 成功后）
-- poll: int = 60                    # wait 轮询秒
-- fetch_filters: [ "OUTCAR", ... ]  # fetch 时的文件过滤
-- do_post: bool = False             # 拉回后是否本地 PostAnalysis
-- job_name: str                     # HPC 脚本中的 job 名（可选）
-- run_id: int                       # 用于事件记录/订阅
+- cluster: "hoffman2"|...（在你的 cluster 配置中定义）
+- submit: bool = True      # 提交到 HPC；False=仅本地生成
+- wait: bool = False       # 是否阻塞等待队列/运行完成
+- fetch: bool = True       # 是否从 HPC 拉回输出（submit=True 时有效）
+- poll: int = 60           # wait 的轮询秒
+- fetch_filters: [ ... ]   # fetch 时的文件过滤
+- do_post: bool = True     # 拉回后是否本地 PostAnalysis
+- job_name: str            # HPC 脚本 job 名称
+- run_id: int              # 事件记录用
 """
 
 from __future__ import annotations
-from typing import Any, Dict, Tuple, List
+from typing import Any, Dict, Tuple, List, Optional
 from pathlib import Path
 import tempfile
 import json
 import os
+import re
 
 from fastapi import APIRouter, Request
 
-# 执行层
+# 执行层（与你的现有文件匹配）
 from .structure_agent import StructureAgent
 from .parameters_agent import ParametersAgent
 from .hpc_agent import HPCAgent
 from .post_analysis_agent import PostAnalysisAgent
 
-router = APIRouter(prefix="/agent")
+router = APIRouter(prefix="/agent", tags=["agent"])
 
 # ============================ 事件（可选） ============================
 try:
-    from server.execution.utils.events import post_event  # 你自己的事件总线
+    from server.execution.utils.events import post_event  # 如果没有就用兜底
 except Exception:
-    async def post_event(_payload):  # 极简兜底，不阻塞主流程
+    async def post_event(_payload):  # 不阻塞主流程
         return
 
-async def _emit(run_id: int | None, step_id: int | None, phase: str, payload: dict | None = None):
+async def _emit(run_id: Optional[int], step_id: Optional[int], phase: str, payload: Optional[dict] = None):
     """phase: queued | pre_submit | running | done | error | skipped"""
     try:
         await post_event({
@@ -61,7 +63,7 @@ async def _emit(run_id: int | None, step_id: int | None, phase: str, payload: di
     except Exception:
         pass
 
-# ============================ 小工具 ============================
+# ============================ 工具函数 ============================
 
 async def _json(request: Request) -> Dict[str, Any]:
     try:
@@ -70,8 +72,8 @@ async def _json(request: Request) -> Dict[str, Any]:
     except Exception:
         return {}
 
-def _ok(result: str, extra: Dict[str, Any] | None = None):
-    payload = {"ok": True, "result": result}
+def _ok(msg: str, extra: Dict[str, Any] | None = None):
+    payload = {"ok": True, "message": msg}
     if extra: payload.update(extra)
     return payload
 
@@ -79,9 +81,10 @@ def _fail(detail: str, status: int = 400):
     return {"ok": False, "detail": detail, "status_code": status}
 
 def _make_job_dir(task: Dict[str, Any]) -> Path:
-    # 更安全的 job 目录名： 00_Name
+    # 更安全/可读的 job 目录名： 00_Name（去除特殊字符）
     tid = int(task.get("id", 0))
-    name = (task.get("name") or "Task").replace(" ", "_")
+    name = (task.get("name") or "Task")
+    name = re.sub(r"[^\w\-\.]+", "_", name).strip("_") or "Task"
     base = tempfile.mkdtemp(prefix="chatdft_")
     job_dir = Path(base) / f"{tid:02d}_{name}"
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -112,7 +115,7 @@ def _ensure_json(path: Path, obj: Any):
     except Exception:
         pass
 
-# POSCAR 轻量预览（不依赖 pymatgen）
+# POSCAR 轻量预览（不依赖 pymatgen/ase）
 def _poscar_preview(p: Path) -> dict:
     try:
         t = p.read_text().splitlines()
@@ -132,7 +135,7 @@ def _poscar_preview(p: Path) -> dict:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-def _first_file(d: Path, names: List[str]) -> Path | None:
+def _first_file(d: Path, names: List[str]) -> Optional[Path]:
     for n in names:
         p = d / n
         if p.exists(): return p
@@ -185,7 +188,7 @@ async def _run_knowledge_local(task: Dict[str, Any], job_dir: Path) -> Dict[str,
     payload = {
         "query":  (((task.get("params") or {}).get("payload") or {}).get("query")) or "",
         "intent": (((task.get("params") or {}).get("payload") or {}).get("intent")) or {},
-        "limit":  (((task.get("params") or {}).get("payload") or {}).get("limit")) or 10,
+        "limit":  int((((task.get("params") or {}).get("payload") or {}).get("limit")) or 10),
         "fast":   True,
     }
     try:
@@ -212,8 +215,6 @@ async def _pipeline(agent_name: str, task: Dict[str, Any], opts: Dict[str, Any])
         prepare-only（submit=False）→ 早返回预览
         submit=True → Structure → Parameters → HPC（submit/wait/fetch）
     - post.analysis: 本地聚合
-
-    新增：执行事件上报（queued / pre_submit / running / done / error / skipped）
     """
     agent = _norm_agent(agent_name)
     job_dir = _make_job_dir(task)
@@ -222,7 +223,7 @@ async def _pipeline(agent_name: str, task: Dict[str, Any], opts: Dict[str, Any])
     run_id  = opts.get("run_id") or ((task.get("meta") or {}).get("run_id"))
     step_id = task.get("id")
 
-    # 进入队列
+    # 入队事件
     await _emit(run_id, step_id, "queued", {"agent": agent, "task": task, "job_dir": str(job_dir)})
 
     try:
@@ -234,23 +235,18 @@ async def _pipeline(agent_name: str, task: Dict[str, Any], opts: Dict[str, Any])
         fetch   = bool(opts.get("fetch", True))
         poll    = int(opts.get("poll", 60))
         fetch_filters = opts.get("fetch_filters") or None
-        do_post = bool(opts.get("do_post", False))
+        do_post = bool(opts.get("do_post", True))
         job_name = opts.get("job_name")
 
         out: Dict[str, Any] = {"agent": agent, "job_dir": str(job_dir)}
 
-        # 更完备的默认 fetch 过滤（前端传了就覆盖）
+        # 默认 fetch 过滤（前端传了就覆盖）
         DEFAULT_FETCH_FILTERS = [
             "OUTCAR", "vasprun.xml", "OSZICAR", "stdout*", "stderr*",
             "CONTCAR", "DOSCAR", "EIGENVAL", "PROCAR",
             "CHGCAR", "AECCAR*", "ELFCAR", "ACF.dat", "PARCHG*"
         ]
-
-        fetch_filters = opts.get("fetch_filters") or DEFAULT_FETCH_FILTERS
-
-        # 默认就打开后处理（拉回后本地聚合）
-        do_post = bool(opts.get("do_post", True))
-        job_name = opts.get("job_name")
+        fetch_filters = fetch_filters or DEFAULT_FETCH_FILTERS
 
         # 0) meta / knowledge
         if agent in {"meta.clarify", "meta.scope"}:
@@ -343,7 +339,7 @@ async def _pipeline(agent_name: str, task: Dict[str, Any], opts: Dict[str, Any])
 @router.post("/run")
 async def agent_run(request: Request):
     body = await _json(request)
-    # 默认就打开后处理 & 提供合理的 fetch 过滤
+    # 合理默认：打开 post + fetch，并给出常用过滤
     body.setdefault("do_post", True)
     body.setdefault("fetch", True)
     body.setdefault("fetch_filters", [
@@ -353,6 +349,7 @@ async def agent_run(request: Request):
     agent = body.get("agent") or ""
     task  = body.get("task")  or {}
     ok, res = await _pipeline(agent, task, body)
+    # 语义上执行失败也返回 200 给前端（便于界面展示错误）
     return _ok("Pipeline finished.", res) if ok else _fail(res.get("status","unknown error"), 200)
 
 @router.post("/clarify")

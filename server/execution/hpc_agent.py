@@ -20,7 +20,17 @@ from typing import Dict, Optional, Sequence, Any
 import json
 import yaml
 import json, unicodedata  # 新增
+# server/execution/hpc_agent.py
+from pathlib import Path
 
+class HPCAgent:
+    # 你的类里大概已有 __init__(cluster, dry_run=False, sync_back=True) 等
+    # 确保暴露以下方法名称（或在 task_routes 中按你的真实方法名调用）：
+    def prepare_script(self, step_ctx: dict, job_dir: Path) -> Path: ...
+    def submit(self, job_dir: Path) -> str: ...
+    def wait(self, job_id: str, poll: int = 60): ...
+    def fetch_outputs(self, job_dir: Path, filters=None): ...
+    
 def _slug(s) -> str:
     s = str(s or "").strip()
     # 统一到 ASCII，去掉奇异 unicode（比如全角破折号）
