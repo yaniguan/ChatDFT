@@ -1,4 +1,10 @@
 # server/main.py
+
+# Here I adding another logger for such task, which is for temp use, later on need to change to 
+# Default FastAPI usage OK!!!
+import logging, sys
+logging.basicConfig(level=logging.INFO, format="@@@@@ %(asctime)s %(levelname)s %(name)s: %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,6 +16,7 @@ from server.chat.history_agent import router as history_router
 from server.chat.knowledge_agent import router as knowledge_router
 from server.execution.agent_routes import router as agent_router
 from server.execution.task_routes import router as exec_tasks_router
+
 
 # --- 放在 imports 后、routers include 之前 ---
 

@@ -2,8 +2,13 @@
 from openai import OpenAI
 client = OpenAI()
 
-async def chatgpt_call(messages, model="gpt-4o", temperature=0.1, max_tokens=1800, **kwargs):
-    # 如果可以，开启 JSON 模式（新 SDK）
+# If this could be repeat for the whole things 
+
+# Here I need to replace everything with deepseek API OK!!!
+
+async def chatgpt_call(messages, model="gpt-5-nano", temperature=0.1, max_tokens=1800, **kwargs):
+    
+    
     response = client.chat.completions.create(
         model=model,
         messages=messages,

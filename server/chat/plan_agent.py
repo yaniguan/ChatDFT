@@ -20,6 +20,10 @@ POST /chat/execute
 """
 
 from __future__ import annotations
+
+import logging
+log = logging.getLogger(__name__)
+
 from typing import Any, Dict, List, Tuple, Optional
 from pathlib import Path
 import asyncio
@@ -508,6 +512,11 @@ def _build_tasks(intent: Dict[str, Any],
 # ========================= /chat/plan =========================
 @router.post("/chat/plan")
 async def api_plan(request: Request):
+
+    import logging
+    log = logging.getLogger(__name__)
+    log.info("Planning running here")
+
     body = await request.json()
     USE_SEED_POLICY = body.get("use_seed_policy", DEFAULTS["USE_SEED_POLICY"])
     CONF_THRESHOLD  = float(body.get("conf_threshold", DEFAULTS["CONF_THRESHOLD"]))
@@ -704,6 +713,7 @@ class PlanManager:
         agent = (task.get("agent") or "").lower()
 
         # 2) 安全的子目录名
+        # Fake IO things
         safe = f"{int(task.get('id', 0)):02d}_{_slug(task.get('name', 'Task'))}"
         job_dir = workdir / safe
         job_dir.mkdir(parents=True, exist_ok=True)
@@ -715,18 +725,26 @@ class PlanManager:
                     json.dumps(task.get("params", {}) or {}, ensure_ascii=False, indent=2)
                 )
                 return {"id": task.get("id"), "step": task.get("name"), "status": "done(meta)"}
+                       
 
             # ----- 结构/参数/HPC 提交类 -----
             if agent in {
                 "structure.relax_slab", "structure.intermediates", "structure.relax_adsorbate",
                 "adsorption.scan", "adsorption.co", "neb.run", "electronic.dos", "run_dft", "post.energy"
             }:
-                if self.struct_agent:
-                    self.struct_agent.build(task, job_dir)
+                if self.struct_agent: # Have test everything are OK!!!
+                    print(job_dir)
+                    self.struct_agent.build(task, job_dir) # Current position
+                
+                print("Start para running")
+
                 if self.param_agent:
                     self.param_agent.generate(task, job_dir)
 
+                print("Start hpc running")
+
                 if self.hpc_agent:
+                    print("Here we go for HPC!!!!")
                     payload = (task.get("params") or {}).get("payload") or {}
                     step_info = {
                         "name": task.get("name", "chatdft"),
@@ -735,25 +753,43 @@ class PlanManager:
                         "walltime": payload.get("walltime"),
                         "template_vars": payload.get("template_vars") or {},
                     }
+                    print('Stage 1')
                     try:
                         if hasattr(self.hpc_agent, "set_runtime_context"):
-                            self.hpc_agent.set_runtime_context(
+                            self.hpc_agent.set_runtime_context( # Set the task info
                                 project=(task.get("meta") or {}).get("project"),
                                 session_id=(task.get("meta") or {}).get("run_id"),
                             )
+                    except Exception as e:
+                        print(f'Here we print the error: {e}')
+                        pass
+                    print('Stage 2')
+
+                    self.hpc_agent.prepare_script(step_info, job_dir)
+                    jid = self.hpc_agent.submit(job_dir) # Submit right here
+
+                    print("stage 3")
+
+                    # Try to read remote metadata (cluster/remote_dir)
+                    remote_dir = None
+                    try:
+                        import json as _json
+                        meta_path = job_dir / "_remote.json"
+                        if meta_path.exists():
+                            m = _json.loads(meta_path.read_text() or "{}")
+                            remote_dir = m.get("remote_dir")
                     except Exception:
                         pass
 
-                    self.hpc_agent.prepare_script(step_info, job_dir)
-                    jid = self.hpc_agent.submit(job_dir)
-
-                    if not self.dry:
-                        self.hpc_agent.wait(jid, poll=60)
-                        self.hpc_agent.fetch_outputs(
-                            job_dir, filters=["OUTCAR", "vasprun.xml", "OSZICAR", "stdout", "stderr"]
-                        )
-
-                return {"id": task.get("id"), "step": task.get("name"), "status": "done(hpc)"}
+                return {
+                    "id": task.get("id"),
+                    "step": task.get("name"),
+                    "status": "Submitted",
+                    "job_id": (jid if 'jid' in locals() else None),
+                    "job_dir": str(job_dir),
+                    "remote_dir": remote_dir,
+                    "cluster": getattr(self.hpc_agent, 'cluster', None) if self.hpc_agent else None,
+                }
 
             # ----- post-only -----
             if agent == "post.analysis":
@@ -768,10 +804,19 @@ class PlanManager:
             return {"id": task.get("id"), "step": task.get("name"), "status": f"error: {e}"}
 
     def execute_selected(self, all_tasks: List[Dict[str, Any]], selected_ids: List[int]) -> Dict[str, Any]:
+
         work_root = Path(tempfile.mkdtemp(prefix="chatdft_"))
+
         results = []
+
+        log.info('Here we start to run the sel task')
+        log.info(f'Check input task ids {selected_ids}')
+
         for t in all_tasks:
             if t.get("id") in selected_ids:
+
+                log.info(f'True task check {t}')
+
                 results.append(self._exec_task(t, work_root))
         try:
             if self.post_agent:
@@ -783,11 +828,16 @@ class PlanManager:
             err  = sum(1 for r in rows if str(r.get("status","")).startswith("error"))
             skip = sum(1 for r in rows if str(r.get("status","")).startswith("skipped"))
             return {"done": done, "error": err, "skipped": skip, "total": len(rows)}
+
         return {"workdir": str(work_root), "results": results, "summary": _sum(results)}
 
 @router.post("/chat/execute")
-async def api_execute(request: Request):
+async def api_execute(request: Request): 
+
+    log.info("Executing running here")
+
     data = await request.json()
+
     try:
         mgr = PlanManager(
             cluster   = data.get("cluster", "hoffman2"),
@@ -795,12 +845,26 @@ async def api_execute(request: Request):
             sync_back = bool(data.get("sync_back", True)),
         )
         all_tasks = data.get("all_tasks") or []
-        selected  = data.get("selected_ids") or []
+        print(all_tasks)
+        # Do the replacement or not?
+        print("The idx keywork check")
+        print(data.get("selected_task_ids"))
+        selected  = data.get("selected_task_ids") or []
         if not isinstance(all_tasks, list) or not isinstance(selected, list):
             return {"ok": False, "detail": "all_tasks or selected_ids malformed"}
+        
+        # Wheter selection are OK or not
+        # import logging
+        # log = logging.getLogger(__name__)
+        # log.info(f'The all task check: {all_tasks}')
+        log.info(f'The sel task check: {selected}')
 
         res = mgr.execute_selected(all_tasks, selected)
+
+        print("Here we run to the end")
+
         return {"ok": True, **res}
+        
     except Exception as e:
         import traceback
         tb = traceback.format_exc()

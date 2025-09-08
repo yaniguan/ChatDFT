@@ -7,6 +7,7 @@ from sqlalchemy import select, update, delete
 from server.db_last import AsyncSessionLocal, ChatSession  # 确保 db.py 里有 ChatSession 模型
 from server.db_last import AsyncSessionLocal, ChatSession, ChatMessage
 from sqlalchemy import select, desc
+import json
 
 router = APIRouter(prefix="/chat/session")
 
@@ -131,6 +132,7 @@ async def state(req: Request):
     plan_m     = _pick_latest(rows, "plan")
     rxn_m      = _pick_latest(rows, "rxn_network")
     wf_m       = _pick_latest(rows, "workflow_summary") or _pick_latest(rows, "records")
+    hpc_m      = _pick_latest(rows, "hpc_jobs")
 
     def _parse(m):
         if not m: return None
@@ -147,6 +149,7 @@ async def state(req: Request):
     plan_raw      = _parse(plan_m) or {}
     rxn           = _parse(rxn_m) or {}
     workflow_res  = _parse(wf_m) or {}
+    hpc_jobs      = _parse(hpc_m)  # ← 反序列化 HPC 列表
 
     # 兼容前端字段
     plan_tasks = (plan_raw.get("tasks") if isinstance(plan_raw, dict) else None) or []
@@ -162,5 +165,33 @@ async def state(req: Request):
         "ts_candidates": rxn.get("ts_candidates") if isinstance(rxn, dict) else [],
         "coads_pairs": rxn.get("coads_pairs") if isinstance(rxn, dict) else [],
         "workflow_results": workflow_res.get("runs") if isinstance(workflow_res, dict) else [],
+        "hpc_jobs": hpc_jobs,
     }
     return snap
+
+
+@router.post("/hpc_jobs/save")
+async def save_hpc_jobs(req: Request):
+
+    # print("goes into the right position")
+
+    body = await req.json()
+
+    sid = body.get("id")
+    jobs = body.get("jobs") or []
+
+    if not sid:
+        print("No id inside")
+        raise HTTPException(400, "id required")
+    try:
+        print(jobs)
+        payload = json.dumps(jobs, ensure_ascii=False)
+    except Exception as e:
+        print("json loading wrong")
+        raise HTTPException(400, f"jobs not JSON-serializable: {e}")
+
+    async with AsyncSessionLocal() as s:
+        m = ChatMessage(session_id=int(sid), msg_type="hpc_jobs", content=payload, role='system')
+        s.add(m)
+        await s.commit()
+    return {"ok": True, "count": len(jobs)}

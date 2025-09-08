@@ -18,14 +18,14 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
-# -----------------------------------------------------------------------------
-# Engine / Session
-# -----------------------------------------------------------------------------
-# 例：postgresql+asyncpg://user:pass@host:5432/chatdft
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:password@localhost:5432/chatdft"
-)
+
+# DATABASE_URL = os.environ.get(
+#     "DATABASE_URL",
+#     "postgresql+asyncpg://postgres:yourpass@localhost:5432/chatdft"
+# )
+
+from server.settings import settings
+DATABASE_URL = settings.DATABASE_URL
 
 # echo 可通过环境变量打开：SQLALCHEMY_ECHO=1
 ECHO = bool(int(os.environ.get("SQLALCHEMY_ECHO", "0")))

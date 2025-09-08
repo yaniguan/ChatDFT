@@ -51,6 +51,7 @@ except Exception:
     async def post_event(_payload):  # 不阻塞主流程
         return
 
+# Here this function are for posting info only
 async def _emit(run_id: Optional[int], step_id: Optional[int], phase: str, payload: Optional[dict] = None):
     """phase: queued | pre_submit | running | done | error | skipped"""
     try:
@@ -174,6 +175,7 @@ def _run_hpc(task: Dict[str, Any], job_dir: Path, *, cluster: str, engine: str,
 
     return {"script": str(script), "job_id": job_id}
 
+
 def _run_post(job_dir: Path) -> Dict[str, Any]:
     post = PostAnalysisAgent()
     try:
@@ -181,6 +183,7 @@ def _run_post(job_dir: Path) -> Dict[str, Any]:
         return {"ok": True, "post": meta}
     except Exception as e:
         return {"ok": False, "error": f"post-analysis failed: {e}"}
+
 
 async def _run_knowledge_local(task: Dict[str, Any], job_dir: Path) -> Dict[str, Any]:
     import httpx
@@ -435,3 +438,26 @@ async def agent_post_analysis(request: Request):
 async def agent_report_plot(request: Request):
     body = await _json(request)
     return _ok("Figures generated.", {"figs": ["plot1.svg", "plot2.svg"], "echo": body})
+
+# -------------------------- HPC job helpers --------------------------
+@router.post("/job/status")
+async def agent_job_status(request: Request):
+    """
+    Check a single HPC job status.
+    Input: {"cluster": "hoffman2", "job_id": "12345"}
+    Output: {"ok": true, "status": "RUNNING"|"COMPLETED"|...}
+    """
+    body = await _json(request)
+    cluster = (body.get("cluster") or "hoffman2")
+    job_id = (body.get("job_id") or "").strip()
+    if not job_id:
+        return _fail("missing job_id", 200)
+    try:
+        hpc = HPCAgent(cluster=cluster, dry_run=False, sync_back=False)
+        st = hpc.check_job_status(job_id)
+        # print("Here we check the st output:")
+        # print(st)
+        # return _ok("status", {"status": 'Testing'})
+        return _ok("status", {"status": st})
+    except Exception as e:
+        return _fail(f"status check failed: {e}", 200)

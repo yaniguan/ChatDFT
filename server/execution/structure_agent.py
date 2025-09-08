@@ -74,7 +74,13 @@ def _extract_inputs(task: dict) -> dict:
     element = _normalize_element_name(p.get("element") or p.get("metal") or p.get("symbol") or p.get("element_symbol") or p.get("element_name") or p.get("_task_name"))
     if not element:
         raise ValueError("Cannot parse element from inputs. Please set element='Pt' (not 'Pt111').")
-    h,k,l = _parse_miller(p)
+    
+    # (s: str | None, facet: str | None)
+    for temp_data in task.get('params')['form']:
+        if temp_data['key'] == 'miller_index': 
+            h,k,l = _parse_miller(s=temp_data['value'], facet=task.get('params')['payload']['facet'])
+            break
+
     layers = int(float(p.get("layers") or 4))
     vac = float(p.get("vacuum") or p.get("vacuum_thickness") or 15.0)
     sc = str(p.get("supercell") or "4x4x1").lower()
@@ -176,7 +182,8 @@ class StructureAgent:
       - structure.cif / structure.json
       - POTCAR.spec （元素有序列表，供 HPC 端从 $VASP_PP_PATH 拼 POTCAR）
     """
-def build(self, task: dict, job_dir: Path) -> dict:
+    # Here they forget to get the slash going forward OK???
+    def build(self, task: dict, job_dir: Path) -> dict:
         job_dir = Path(job_dir)
         job_dir.mkdir(parents=True, exist_ok=True)
 

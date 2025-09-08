@@ -19,7 +19,9 @@ except Exception:
     REGISTRY = {}
 
 router = APIRouter()
-log = logging.getLogger(__name__)
+import logging
+# Here the logger has been get then we have a test over this OK!!!
+log = logging.getLogger(__name__) 
 
 # -----------------------------
 # 小工具：保存到 DB（同步会话）
@@ -607,6 +609,11 @@ def _make_user_prompt(user_text: str, guided: Dict[str, Any], fewshots: List[Dic
 # ==== 替换你的 api_intent ====
 @router.post("/chat/intent")
 async def api_intent(request: Request):
+
+    print("This is a test")
+    log.info("This is a test for chat agent")
+
+
     body = await request.json()
     session_id: int = body.get("session_id")
     user_text: str  = body.get("text") or ""

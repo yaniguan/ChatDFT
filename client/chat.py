@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 
 # 你自己的 API 包装
-from utils.api import post  # 如需 GET： from utils.api import post, get
+from utils.api import post, get  # 如需 GET： from utils.api import post, get
 
 st.set_page_config(page_title="🔬 ChatDFT", layout="wide")
 
@@ -663,7 +663,7 @@ def _get_hpc_session_uid() -> str:
         # 返回空字符串，调用方会据此不携带 uid（但就看不到 Job 归属）
         return ""
     
-def api_execute(selected_ids: list):
+def api_execute(selected_ids: list): # Here is where we start to sumbit the tasks
     """
     提交当前 plan 中被勾选的任务到 /agent/run。
     - 自动兜底 workflow_results 为 list
@@ -692,7 +692,7 @@ def api_execute(selected_ids: list):
         payload = (t.get("params") or {}).get("payload") or {}
 
         body = {
-            "agent": agent,
+            "agent": agent, # No agent selection needed OK!
             "task": t,  # 兼容后端流水线
             "engine": (payload.get("engine") or "vasp"),
             "cluster": settings.get("cluster", "hoffman2"),
@@ -707,7 +707,7 @@ def api_execute(selected_ids: list):
             body["session_uid"] = hpc_sess_uid
 
         try:
-            r = post("/agent/run", body) or {}
+            r = post("/agent/execute", body) or {} # Not exist
             if r.get("ok", True):  # 有些实现不回 ok 字段，视为成功
                 out["submitted"].append({"task_id": t.get("id"), "name": t.get("name"), "resp": r})
             else:
@@ -942,7 +942,7 @@ def _render_tasks_selector():
         desc = t.get("description", "")
         section = t.get("section", "")
         colA, colB, colC = st.columns([0.12, 0.48, 0.40], gap="small")
-        with colA:
+        with colA: # Here we select the task
             on = st.checkbox(str(tid), value=(tid in sel), key=f"task_pick_{tid}")
             if on: sel.add(tid)
             else:  sel.discard(tid)
@@ -961,10 +961,67 @@ def _render_tasks_selector():
         if st.button("▶️ Execute selected on HPC", type="primary", use_container_width=True, disabled=disabled):
             try:
                 with st.spinner("Submitting selected tasks to HPC…"):
-                    res = api_execute(st.session_state.selected_task_ids)
+
+                    # print("Running here 1")
+                    # print(st.session_state)
+                    # print(type(st.session_state))
+                    # print('The selected ids are:')
+                    # print(st.session_state.get('selected_task_ids'))
+                    # st.write(st.session_state.keys())
+                    # print('start to post')
+                    
+                    body = {
+                        "all_tasks": st.session_state.get('plan_tasks'), 
+                        "selected_task_ids": st.session_state.get('selected_task_ids'),
+                    }
+
+                    # print(type(st.session_state.get('plan_tasks')))
+                    # print('The selected task are')
+                    # print(st.session_state.get('plan_tasks')[1])
+
+                    res = post("/chat/execute", body) or {} # Here we sent to the backend
+                    # print("Running here 2")
+
+                    # print(res)
+
                 if res.get("ok"):
                     st.success("Submitted. See results below.")
+                    # Store plan-executed jobs for HPC monitor (job_id + cluster)
+                    try:
+                        jobs = []
+                        for row in (res.get("results") or []):
+                            jid = row.get("job_id")
+                            if not jid:
+                                continue
+                            jobs.append({
+                                "task_id": row.get("id"),
+                                "name": row.get("step"),
+                                "job_id": jid,
+                                "cluster": row.get("cluster") or (st.session_state.get("settings") or {}).get("cluster", "hoffman2"),
+                                "status": row.get("status") or "Submitted",
+                                "job_dir": row.get("job_dir"),
+                                "remote_dir": row.get("remote_dir"),
+                            })
+                        # Merge with existing, de-dup by job_id
+                        existing = {j.get("job_id"): j for j in (st.session_state.get("plan_jobs") or [])}
+                        for j in jobs:
+                            existing[j["job_id"]] = {**existing.get(j["job_id"], {}), **j}
+                        st.session_state["plan_jobs"] = list(existing.values())
+                        try:
+                            sid = st.session_state.get("active_session_id")
+                            if sid:
+                                jobs = st.session_state.get("plan_jobs") or []
+                                _ = post("/chat/session/hpc_jobs/save", {"id": int(sid), "jobs": jobs})
+                                print(f'The id is {sid}, jobs: {jobs}')
+                                print("running job saved")
+                            else:
+                                st.warning(f'no save jobs')
+                        except Exception as e:
+                            st.warning(f"Save job error: {e}")
+                    except Exception as _:
+                        pass
                 else:
+                    # print(res.get("detail") or (res.get("errors") and res["errors"][0].get("error")) or "Execute failed.")
                     st.error(res.get("detail") or (res.get("errors") and res["errors"][0].get("error")) or "Execute failed.")
             except Exception as e:
                 st.error(f"Execute failed: {e}")
@@ -977,7 +1034,7 @@ def section_chatdft_with_tabs():
     else:
         st.warning("No active session. 建议在侧边栏创建/选择会话（不影响功能，仅影响记录）")
 
-    tab_chat, tab_workflow, tab_papers = st.tabs(["💬 Chat & Plan", "🧪 Workflow", "📑 Papers / RAG"])
+    tab_chat, tab_workflow, tab_papers, tab_hpc_monitor = st.tabs(["💬 Chat & Plan", "🧪 Workflow", "📑 Papers / RAG", "🖥️ HPC Monitor"])
 
     # Chat & Plan
     with tab_chat:
@@ -1046,6 +1103,116 @@ def section_chatdft_with_tabs():
             coads_txt = "\n".join([str(x) for x in coads])
             _download_bytes("⬇️ Download coads.txt", coads_txt.encode("utf-8"), "coads_pairs.txt")
             _copy_text_area("Copy co-ads pairs", coads_txt)
+    
+
+    def refresh_plan_jobs():
+        jobs = st.session_state.get("plan_jobs") or []
+        default_cluster = (st.session_state.get("settings") or {}).get("cluster", "hoffman2")
+        updated = []
+        for j in jobs:
+            jid = str(j.get("job_id") or "").strip()
+            cluster = j.get("cluster") or default_cluster
+            if not jid:
+                updated.append(j)
+                continue
+            if j["status"] == 'COMPLETED':
+                updated.append(j)
+                continue
+            try:
+                res = post("/agent/job/status", {"cluster": cluster, "job_id": jid}) or {}
+                # print('Here we do the job checking fiashrfahsfhaf')
+                # print(res)
+                status = (res.get("status") or "").upper()
+                if not status:
+                    status = "COMPLETED"  # 空输出按已完成对待（SGE qstat -j 不存在时）
+                j2 = dict(j)
+                j2["status"] = status
+                updated.append(j2)
+            except Exception:
+                updated.append(j)
+        st.session_state["plan_jobs"] = updated
+        sid = st.session_state.get("active_session_id")
+        if sid:
+            _ = post("/chat/session/hpc_jobs/save", {"id": int(sid), "jobs": updated})
+
+
+    with tab_hpc_monitor:
+
+        st.subheader("HPC Task Monitoring")
+        st.caption("Locally tracked plan jobs")
+
+        plan_jobs = st.session_state.get("plan_jobs") or []
+        sid = st.session_state.get("active_session_id")
+        
+        try:
+            snap = post("/chat/session/state", {"id": int(sid)}) or {}
+            rows = snap.get("hpc_jobs") or []
+            st.session_state["plan_jobs"] = rows  # 不丢字段，原样存回
+            plan_jobs = st.session_state["plan_jobs"]
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+            pass
+
+        # Controls
+        c1, c2, c3 = st.columns([1,1,2])
+        with c1:
+            if st.button("↻ Refresh statuses"):
+                with st.spinner("Refreshing job statuses..."):
+                    refresh_plan_jobs()
+                    # st.experimental_rerun()
+                    pass
+                st.success("Statuses updated.")
+        with c2:
+            auto = st.toggle("Auto refresh (15s)", value=False)
+            if auto:
+                st.experimental_rerun() if st.experimental_get_query_params() else None
+                st_autorefresh = getattr(st, "autorefresh", None)
+                if st_autorefresh:
+                    st_autorefresh(interval=15_000, key="hpc_auto_refresh")
+
+        # Table for locally tracked jobs
+        if plan_jobs:
+            import pandas as _pd
+            df = _pd.DataFrame([{
+                "Task": j.get("name"),
+                "Job ID": j.get("job_id"),
+                "Cluster": j.get("cluster"),
+                "Status": j.get("status"),
+                "Job Dir": j.get("job_dir"),
+                "Remote Dir": j.get("remote_dir"),
+            } for j in (st.session_state.get("plan_jobs") or [])])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No locally tracked jobs yet. Submit tasks in the Workflow tab.")
+
+        st.markdown("---")
+
+        # Server-side job list via session_uid (if you use /session/create, /job/list)
+        st.caption("Server-side jobs (by session uid)")
+        sess_uid = st.session_state.get("hpc_session_uid") or ""
+        st.text(f"session_uid: {sess_uid or '(none)'}")
+        if sess_uid:
+            try:
+                jobs = fetch_server_jobs_by_session()  # returns list of dicts
+            except Exception as e:
+                jobs = []
+                st.error(f"Failed to fetch server jobs: {e}")
+            if jobs:
+                import pandas as _pd
+                df2 = _pd.DataFrame([{
+                    "Title": r.get("title"),
+                    "Status": r.get("status"),
+                    "PBS/SLURM ID": r.get("pbs_id"),
+                    "Job UID": r.get("job_uid"),
+                    "Local Dir": r.get("local_dir"),
+                    "Remote Dir": r.get("remote_dir"),
+                } for r in jobs])
+                st.dataframe(df2, use_container_width=True, hide_index=True)
+            else:
+                st.write("_No server-tracked jobs yet._")
+        else:
+            st.caption("Server-tracked jobs unavailable (no session_uid).")
 
     with tab_workflow:
         st.subheader("Reaction Network & Intermediates")

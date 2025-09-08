@@ -23,13 +23,19 @@ import json, unicodedata  # 新增
 # server/execution/hpc_agent.py
 from pathlib import Path
 
-class HPCAgent:
-    # 你的类里大概已有 __init__(cluster, dry_run=False, sync_back=True) 等
-    # 确保暴露以下方法名称（或在 task_routes 中按你的真实方法名调用）：
-    def prepare_script(self, step_ctx: dict, job_dir: Path) -> Path: ...
-    def submit(self, job_dir: Path) -> str: ...
-    def wait(self, job_id: str, poll: int = 60): ...
-    def fetch_outputs(self, job_dir: Path, filters=None): ...
+# class HPCAgent:
+#     # 你的类里大概已有 __init__(cluster, dry_run=False, sync_back=True) 等
+#     # 确保暴露以下方法名称（或在 task_routes 中按你的真实方法名调用）：
+#     def prepare_script(self, step_ctx: dict, job_dir: Path) -> Path: ...
+#     def submit(self, job_dir: Path) -> str: ...
+
+    # def wait(self, job_id: str, poll: int = 60): 
+    #     print(f'job_id: {job_id}')
+    #     sleep(60)
+    
+    
+
+    # def fetch_outputs(self, job_dir: Path, filters=None): ...
     
 def _slug(s) -> str:
     s = str(s or "").strip()
@@ -312,6 +318,7 @@ class HPCAgent:
         return jid
 
     def status(self, job_id: str) -> str:
+
         if self.scheduler == "slurm":
             cmd = self.status_cmd or f"squeue -j {job_id} -h -o %T"
             out = self._ssh_run(cmd, check=False).stdout.strip()
@@ -322,6 +329,33 @@ class HPCAgent:
             if "Unknown" in out or out == "":
                 return "COMPLETED"
             return "RUNNING"
+    def check_job_status(self, job_id: str) -> str:
+
+        default_cmd = f"qacct -j {job_id} | grep -E 'end_time' 2>&1 || true"
+        cmd = default_cmd
+        try:
+            cmd = cmd.format(job_id=job_id, jid=job_id)
+        except Exception:
+            pass
+
+        res = self._ssh_run(cmd, check=False)
+
+        text = ((res.stdout or "") + "\n" + (res.stderr or "")).strip().lower()
+
+        # print("The checked status are right hereafasdfasf")
+        # print(text)
+
+        if not text:
+            return "COMPLETED"
+
+        not_exist_markers = [
+            "error: ",
+            "not found",
+        ]
+        if any(marker in text for marker in not_exist_markers):
+            return "RUNNING"
+
+        return "COMPLETED"
 
     def wait(self, job_id: str, poll: int = 60, timeout: Optional[int] = None):
         if self.dry:
@@ -335,6 +369,35 @@ class HPCAgent:
             if timeout and (time.time() - start) > timeout:
                 raise TimeoutError(f"Job {job_id} timeout after {timeout}s")
             time.sleep(poll)
+
+    # def check_job_status(self, job_id: str) -> dict:
+    #     try:
+    #         # Execute qstat command to check job status
+    #         cmd = f"qstat -j {job_id} 2>&1 || true"
+    #         result = self._ssh_run(cmd, check=False)
+    #         out = result.stdout.strip()
+    #         err = result.stderr.strip()
+            
+    #         # Check if job doesn't exist or has finished
+    #         if ("do not exist" in out or "do not exist" in err or 
+    #             "Unknown Job Id" in out or "Unknown Job Id" in err or
+    #             (out == "" and err == "")):
+    #             return {
+    #                 "status": "COMPLETED",
+    #                 "message": f"Job {job_id} has finished or does not exist"
+    #             }
+    #         else:
+    #             # Job is still running or queued
+    #             return {
+    #                 "status": "RUNNING",
+    #                 "message": f"Job {job_id} is still running or queued",
+    #                 "details": out if out else err
+    #             }
+    #     except Exception as e:
+    #         return {
+    #             "status": "ERROR",
+    #             "message": f"Failed to check job status: {str(e)}"
+    #         }
 
     def cancel(self, job_id: str):
         cmd = self.cancel_cmd or ("scancel {jid}" if self.scheduler == "slurm" else "qdel {jid}")

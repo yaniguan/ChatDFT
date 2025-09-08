@@ -1,5 +1,7 @@
 # server/execution/task_routes.py
 # -*- coding: utf-8 -*-
+
+
 from __future__ import annotations
 
 from typing import List, Optional, Dict, Any, Tuple
@@ -7,6 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+# Here the logger are import!!!
+import logging
+log = logging.getLogger(__name__)
 
 # ---- 兼容不同项目里 db 依赖注入函数的命名 ----
 try:
@@ -105,6 +112,11 @@ async def commit_tasks(req: ExecCommitReq, db: AsyncSession = Depends(get_async_
     """
     覆盖式提交 ExecutionTask：先清旧，再插入新任务。
     """
+
+    # Here is like a test thing OK???
+    log.info("Testing only:")
+    log.info("Committed %d tasks for session %s", len(req.tasks), req.session_id)
+
     await db.execute(delete(ExecutionTask).where(ExecutionTask.session_id == req.session_id))
     await db.flush()
 
@@ -122,8 +134,12 @@ async def commit_tasks(req: ExecCommitReq, db: AsyncSession = Depends(get_async_
     await db.commit()
     return {"ok": True, "count": len(req.tasks)}
 
+# @router.post("/tasks/list")
+# async def list_tasks(session_id: int, db: AsyncSession = Depends(get_async_session)):
+
+from fastapi import Body
 @router.post("/tasks/list")
-async def list_tasks(session_id: int, db: AsyncSession = Depends(get_async_session)):
+async def list_tasks(session_id: int = Body(..., embed=True), db: AsyncSession = Depends(get_async_session)):
     q = await db.execute(
         select(ExecutionTask)
         .where(ExecutionTask.session_id == session_id)
