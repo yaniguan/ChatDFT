@@ -1,0 +1,45 @@
+hoffman2:
+  host: yaniguan@hoffman2.idre.ucla.edu
+  scheduler: sge                     # ← 正确标注为 SGE
+  remote_base: /u/scratch/y/yaniguan/chatdft
+  nodes: 1
+  ntasks: 32
+  time_limit: "24:00:00"
+  ssh_options: "-o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+
+  vasp_bin: ~/vasp_std_vtst_sol
+  qe_pw_bin: pw.x
+
+  # 明确命令（也可不写，让 HPCAgent 用默认）
+  submit_cmd: "qsub job.sh"
+  status_cmd: "qstat {job_id} 2>/dev/null || true"
+  cancel_cmd: "qdel {job_id}"
+
+  # Hoffman2/SGE 常见回显：Your job 123456 ("name") has been submitted
+  job_id_regex: "Your job (\\d+)"
+
+beluga:
+  scheduler: slurm
+  host: "liusheng@beluga.computecanada.ca"
+  remote_base: "/home/liusheng/scratch/chatdft"
+  ssh_options: "-o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+  vasp_bin: "vasp_std"
+  ntasks: 32
+  partition: "compute"
+  qos: "normal"
+  time_limit: "24:00:00"
+  template: "slurm.sh"
+  job_id_regex: "Submitted batch job (\\d+)"
+
+cedar:
+  scheduler: slurm
+  host: "liusheng@cedar.computecanada.ca"
+  remote_base: "/home/liusheng/scratch/chatdft"
+  ssh_options: "-o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+  vasp_bin: "vasp_std"
+  ntasks: 32
+  partition: "compute"
+  qos: "normal"
+  time_limit: "24:00:00"
+  template: "slurm.sh"
+  job_id_regex: "Submitted batch job (\\d+)"

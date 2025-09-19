@@ -1,0 +1,151 @@
+Domain,Inquiry
+Catalysis,Build a slab model of Pt(111) with a 3×3 supercell and 15 Å vacuum.
+Catalysis,Where are the most stable adsorption sites for CO on Cu(100)?
+Catalysis,"Compute adsorption energies of *COOH, *CO, and *OH on Ag(111) at U = –0.6 V."
+Catalysis,Set up a CI-NEB for CO₂ → COOH* → CO* pathway on Ni(111).
+Catalysis,What is the free energy barrier for N₂ dissociation on Ru(0001) at 500 K?
+Catalysis,Compare hydrogenation pathways: direct hydride transfer vs. proton–electron transfer.
+Catalysis,"Generate the d-band center of Cu, Ag, and Au surfaces and correlate with *CO binding."
+Catalysis,Plot charge density difference for H₂ adsorption on Pd(111).
+Catalysis,Run GC-DFT for OER intermediates on IrO₂ at 1.23 V.
+Catalysis,Estimate solvation effects for imine hydrogenation on Ag(111).
+Catalysis,"Calculate adsorption energy of H on Pt(111) at bridge, hollow, and atop sites."
+Catalysis,Model CO₂ hydrogenation to methanol on Cu(211).
+Catalysis,Compute free energy diagram for ammonia synthesis on Fe(111).
+Catalysis,What is the most stable configuration of *OOH on NiOOH surface?
+Catalysis,Run Bader charge analysis for CO adsorption on Au(111).
+Catalysis,Perform ELF analysis for hydride transfer to imine on Ag(111).
+Catalysis,Estimate dissolution potential of Ni in acidic conditions.
+Catalysis,What is the segregation tendency of Cu in Pt–Cu alloy under CO atmosphere?
+Catalysis,Generate Pourbaix diagram for Co(OH)₂ stability.
+Catalysis,Compare *CO binding on stepped vs. flat Cu surfaces.
+Catalysis,Run NEB for H diffusion across Pd(111) surface.
+Catalysis,Calculate activation barrier for O₂ dissociation on Ag(111).
+Catalysis,Simulate co-adsorption of CO and H₂O on Pt(111).
+Catalysis,Optimize structure of CH₃CHO adsorption on Rh(111).
+Catalysis,What is the effect of surface strain on CO binding on Ni(111)?
+Catalysis,Model HER intermediate free energies on MoS₂ edge sites.
+Catalysis,Simulate NO reduction on Fe–N₄ site in graphene.
+Catalysis,Perform spin-polarized DOS for O₂ adsorption on Fe(110).
+Catalysis,How does K⁺ cation modify CO₂RR selectivity on Ag(111)?
+Catalysis,Simulate electrochemical stability window for RuO₂.
+Catalysis,Compare binding energies of *N₂ and *NNH on Ru(0001).
+Catalysis,Compute oxygen vacancy formation energy in CeO₂ surface.
+Catalysis,Run AIMD for CO₂ in explicit water on Cu(100).
+Catalysis,Generate free energy diagram of methane activation on Ni(111).
+Catalysis,Model charge transfer in CO oxidation on Pt(111).
+Catalysis,Run GC-DFT for CO₂ hydrogenation at –1.0 V vs RHE.
+Catalysis,Compute vibrational frequencies of adsorbed CO on Cu(111).
+Catalysis,How does alloying Ag with Pd affect HER barrier?
+Catalysis,Predict scaling relations between *OH and *O adsorption on transition metals.
+Catalysis,Run NEB for C–O bond cleavage in *COOH on Cu(100).
+Catalysis,Estimate coverage-dependent adsorption energies for H on Pt(111).
+Catalysis,Compute Gibbs free energy change for CH₃OH formation from CO₂ on Cu.
+Catalysis,Simulate co-adsorption of imine and BiH₃ on Ag(111).
+Catalysis,Model electric field effects on CO₂ adsorption energy.
+Catalysis,Calculate stability of single-atom Pt on TiO₂.
+Catalysis,Compute work function change upon CO adsorption on Ni(111).
+Catalysis,Perform COHP analysis for O–O bond in *OOH on IrO₂.
+Catalysis,Predict turnover frequency for CO oxidation on Au nanoparticles.
+Catalysis,How does particle size affect d-band center of Pt clusters?
+Catalysis,Generate ELF slices for hydride shuttle mechanism with Pb on Ag.
+Materials,Obtain the POSCAR for LiFePO₄ from Materials Project and expand to 2×2×2.
+Materials,Substitute 5% Ni for Co in LaCoO₃ and relax the structure.
+Materials,What is the formation energy of Mg-doped Al₂O₃?
+Materials,Build convex hull for Li–S system at 0 K.
+Materials,Calculate band gap of CsPbI₃ using HSE06.
+Materials,Generate DOS and partial DOS for MoS₂ with spin–orbit coupling.
+Materials,Create an oxygen vacancy in TiO₂ (110) and compute defect formation energy.
+Materials,Insert interstitial H into MgH₂ and relax.
+Materials,Compute elastic constants of diamond.
+Materials,Obtain phonon spectrum of SiC and check stability.
+Materials,Simulate strain effects on band gap of MoS₂ monolayer.
+Materials,Build heterostructure of graphene on hBN and compute binding energy.
+Materials,What is the magnetic moment of Fe in Fe₂O₃ bulk?
+Materials,Generate effective mass for electrons and holes in GaAs.
+Materials,Calculate dielectric constant of SrTiO₃.
+Materials,Perform defect calculation for Li vacancy in LiCoO₂.
+Materials,Model surface energy of Al(111) and Al(100).
+Materials,Build phase diagram for Cu–Zn alloy.
+Materials,Simulate thermal conductivity of Si via phonon calculation.
+Materials,Check stability of metastable cubic ZrO₂ phase.
+Materials,Compute optical absorption spectrum of perovskite CsSnI₃.
+Materials,Model spin–orbit coupling effect in Bi₂Se₃.
+Materials,Estimate cohesive energy of NaCl.
+Materials,Calculate work function of MoS₂ monolayer.
+Materials,Generate electronic band structure of phosphorene.
+Materials,Simulate ferroelectric polarization in BaTiO₃.
+Materials,What is the defect formation energy of antisite in GaN?
+Materials,Perform elastic constant analysis for Ti alloy.
+Materials,Run phonon DOS for AlN and check for imaginary modes.
+Materials,Simulate pressure-induced phase transition of Si (diamond to β-Sn).
+Materials,Estimate formation enthalpy of Li₂O₂.
+Materials,Model interstitial diffusion in BCC Fe.
+Materials,Generate convex hull for Mg–Al system.
+Materials,Compute thermal expansion coefficient of quartz.
+Materials,Build interface between SrTiO₃ and LaAlO₃.
+Materials,Run AIMD for ZrO₂ at 1500 K.
+Materials,Calculate surface energy anisotropy for TiN.
+Materials,Simulate doping effects on conductivity of SnO₂.
+Materials,Perform Bader charge analysis for perovskite halides.
+Materials,Check stability of 2D silicene under strain.
+Materials,Compute band alignment between MoS₂ and WS₂.
+Materials,Model electron localization in amorphous SiO₂.
+Materials,Simulate magnetization of Fe–Ni alloys.
+Materials,Generate phonon band structure for MgB₂.
+Materials,Calculate Debye temperature of diamond.
+Materials,Model H intercalation in graphite.
+Materials,Run defect calculation for oxygen interstitial in UO₂.
+Materials,Simulate Raman spectrum of graphene.
+Materials,Perform spin-polarized calculation for Co-doped ZnO.
+Materials,Estimate exfoliation energy of MoS₂ monolayer.
+Batteries,What is the average intercalation voltage for Li in V₂O₅?
+Batteries,Simulate lithiation pathway of Si anode up to Li₁₅Si₄.
+Batteries,Run NEB for Li hopping in LiFePO₄ along [010].
+Batteries,Compute Na diffusion barrier in Na₃V₂(PO₄)₃.
+Batteries,Build an interface between Li metal and LiF SEI layer.
+Batteries,Estimate adhesion energy between solid electrolyte LLZO and cathode NCM.
+Batteries,Compute HOMO/LUMO alignment of EC on Li metal.
+Batteries,Check stability of FEC additive decomposition on graphite.
+Batteries,Predict open-circuit voltage curve for Mg insertion in V₂O₅.
+Batteries,Generate Pourbaix diagram for LiMn₂O₄.
+Batteries,Model Li diffusion in layered LiNi₀.₈Co₀.₁Mn₀.₁O₂.
+Batteries,Calculate phase diagram of Li–Si alloy system.
+Batteries,Simulate electrolyte decomposition on Li metal surface.
+Batteries,What is the interfacial energy between Li and Al₂O₃ coating?
+Batteries,Perform AIMD of LiPF₆ electrolyte at 350 K.
+Batteries,Compute redox potential of sulfur cathode in Li–S battery.
+Batteries,Estimate migration barrier for Li in LLZO.
+Batteries,Calculate electronic conductivity of Li₃PS₄.
+Batteries,Model cathode–electrolyte interface for sulfide SSE.
+Batteries,Run NEB for Na diffusion in layered NaCoO₂.
+Batteries,What is the stability of Mg anode in contact with borohydride electrolyte?
+Batteries,Compute OCV profile for Li intercalation in TiO₂.
+Batteries,Perform AIMD for EC:EMC mixture near graphite surface.
+Batteries,Estimate decomposition barrier of LiDFOB salt.
+Batteries,Model Li dendrite nucleation on Cu current collector.
+Batteries,Simulate SEI growth on Li metal via EC decomposition.
+Batteries,What is the electronic structure of LiNiO₂ cathode at full delithiation?
+Batteries,Compute Li binding energy on graphene anode.
+Batteries,Model cathode degradation at high voltage (5 V).
+Batteries,Run phase stability analysis of Li₇P₃S₁₁ electrolyte.
+Batteries,Predict voltage hysteresis for Li₂MnO₃ activation.
+Batteries,Compute Mg diffusion in Chevrel phase Mo₆S₈.
+Batteries,Simulate Li intercalation in graphite using vdW-DF.
+Batteries,Estimate thermal stability of Na₃PS₄ electrolyte.
+Batteries,Run NEB for Li diffusion in Li₃InCl₆.
+Batteries,Calculate defect chemistry of Li₁₀GeP₂S₁₂.
+Batteries,What is the interfacial reaction energy between NCM and sulfide SSE?
+Batteries,Perform AIMD for Na-ion conduction in Na₃Zr₂Si₂PO₁₂.
+Batteries,Compute Li migration in disordered rocksalt cathode.
+Batteries,Model electron–phonon coupling in LiCoO₂.
+Batteries,Run Bader charge analysis of Li in SEI species.
+Batteries,Calculate electrochemical stability window of Li₆PS₅Cl.
+Batteries,Simulate H₂O impurity effects on sulfide electrolyte stability.
+Batteries,What is the adhesion energy of cathode coating Al₂O₃ on NCM?
+Batteries,Compute Li diffusion barrier at Li/LLZO interface.
+Batteries,Estimate voltage curve for Ca intercalation in V₂O₅.
+Batteries,Model SEI composition evolution with cycling.
+Batteries,Perform defect calculation for Li vacancies in LiNi₀.₅Mn₀.₅O₂.
+Batteries,Predict lifetime of solid electrolyte interphase under cycling.
+Batteries,Simulate Li-ion solvation structure in EC:DMC solvent using AIMD.
