@@ -1,4 +1,4 @@
-# ChatDFT: Language-Guided Hypothesis, Simulation, and Analysis for Materials Discovery
+# ChatDFT: Language-Guided Hypothesis, Simulation, and Analysis for Molecular Exploration and Design
 
 > Talk to your DFT workflow. Let agents handle the rest.
 
