@@ -1,0 +1,258 @@
+# server/execution/calc_profiles.yaml
+# ---------------------------------------------------------------------------
+# VASP calculation profiles for ChatDFT.
+# parameters_agent.py reads this file at import time so VASP defaults live
+# here, not hardcoded in Python.  LLM references profiles by name.
+#
+# Profile hierarchy (later overrides earlier):
+#   base  →  profile  →  user form overrides
+#
+# Valid profile names:
+#   fast_screening | standard | high_accuracy | relax_bulk | relax_slab |
+#   neb | cineb | dimer | gcdft | nnp_singlepoint | electronic_scf |
+#   dos | pdos | band | elf | bader | cdd | work_function | cohp
+# ---------------------------------------------------------------------------
+
+# ── Shared base (all metal surface calcs) ────────────────────────────────
+base:
+  SYSTEM:  "ChatDFT"
+  PREC:    "Normal"
+  ENCUT:   400
+  EDIFF:   1.0e-5
+  ALGO:    "Fast"
+  ISMEAR:  1           # Methfessel-Paxton — metals
+  SIGMA:   0.2
+  GGA:     "PE"        # PBE
+  LREAL:   "Auto"
+  NCORE:   4
+  LWAVE:   false
+  LCHARG:  false
+  IBRION:  -1
+  NSW:     0
+  ISIF:    0
+
+# ── Screening — coarse, cheap ─────────────────────────────────────────────
+fast_screening:
+  _description: "Coarse single-point; ~40 % faster than standard. Use for large adsorption screens."
+  _inherits_base: true
+  PREC:    "Low"
+  ENCUT:   300
+  EDIFF:   1.0e-4
+  SIGMA:   0.3
+  NELM:    60
+
+# ── Standard single-point ─────────────────────────────────────────────────
+standard:
+  _description: "Default production single-point. Balanced accuracy / cost."
+  _inherits_base: true
+  ENCUT:   400
+  EDIFF:   1.0e-5
+  NELM:    120
+
+# ── High accuracy (convergence tests, reference energies) ────────────────
+high_accuracy:
+  _description: "Tight convergence for reference energies and benchmark comparisons."
+  _inherits_base: true
+  PREC:    "Accurate"
+  ENCUT:   520
+  EDIFF:   1.0e-6
+  LREAL:   "False"     # reciprocal-space projection — more accurate
+  NELM:    200
+  ADDGRID: true
+
+# ── Bulk relaxation ───────────────────────────────────────────────────────
+relax_bulk:
+  _description: "Full ionic + cell relaxation for bulk structures."
+  _inherits_base: true
+  PREC:    "Accurate"
+  ENCUT:   520
+  EDIFF:   1.0e-6
+  EDIFFG:  -0.01       # force threshold (eV/Å)
+  IBRION:  2
+  NSW:     120
+  ISIF:    3           # relax ions + cell shape + volume
+  POTIM:   0.3
+  NELM:    200
+
+# ── Slab / surface relaxation ─────────────────────────────────────────────
+relax_slab:
+  _description: "Ionic relaxation for slab geometries. Cell fixed (ISIF=2)."
+  _inherits_base: true
+  PREC:    "Normal"
+  ENCUT:   400
+  EDIFF:   1.0e-5
+  EDIFFG:  -0.03       # looser than bulk — surface atoms converge slowly
+  IBRION:  2
+  NSW:     200
+  ISIF:    2           # relax ions only; cell shape/volume fixed
+  POTIM:   0.3
+  NELM:    200
+
+# ── NEB (linear interpolation, no climbing) ──────────────────────────────
+neb:
+  _description: "Nudged elastic band for initial path. Use ci-neb for final TS."
+  _inherits_base: true
+  IBRION:  3
+  NSW:     300
+  ISIF:    0
+  POTIM:   0.0         # VTST overrides POTIM
+  EDIFFG:  -0.05
+  LCLIMB:  false
+  SPRING:  -5.0
+  IMAGES:  5
+
+# ── CI-NEB ────────────────────────────────────────────────────────────────
+cineb:
+  _description: "Climbing-image NEB for accurate transition-state energy."
+  _inherits_base: true
+  IBRION:  3
+  NSW:     300
+  ISIF:    0
+  POTIM:   0.0
+  EDIFFG:  -0.03
+  LCLIMB:  true
+  SPRING:  -5.0
+  IMAGES:  7
+
+# ── Dimer ─────────────────────────────────────────────────────────────────
+dimer:
+  _description: "Dimer method for TS search without NEB path."
+  _inherits_base: true
+  IBRION:  3
+  NSW:     400
+  ISIF:    0
+  POTIM:   0.0
+  EDIFFG:  -0.02
+  IOPT:    2           # VTST dimer optimizer
+
+# ── GC-DFT (VASPsol, grand-canonical) ────────────────────────────────────
+gcdft:
+  _description: "Grand-canonical DFT with implicit solvent (VASPsol). Set NELECT sweep externally."
+  _inherits_base: true
+  PREC:    "Normal"
+  ENCUT:   400
+  EDIFF:   1.0e-5
+  LSOL:    true
+  EB_K:    80          # dielectric constant (water)
+  IBRION:  2
+  NSW:     200
+  ISIF:    2
+  EDIFFG:  -0.03
+
+# ── NNP training single-point ─────────────────────────────────────────────
+nnp_singlepoint:
+  _description: "Single-point for NNP dataset. ISIF=2 gives stress tensor. ENCUT=450 consistently."
+  _inherits_base: true
+  PREC:    "Accurate"
+  ENCUT:   450          # keep consistent across ALL structures in dataset
+  EDIFF:   1.0e-6
+  ISIF:    2            # compute stress tensor — essential for NNP training
+  LWAVE:   false
+  LCHARG:  false
+  LREAL:   "Auto"
+  NELM:    200
+
+# ── Electronic structure (SCF prerequisite) ──────────────────────────────
+electronic_scf:
+  _description: "SCF prerequisite for DOS/band/ELF. Writes WAVECAR + CHGCAR."
+  _inherits_base: true
+  ISTART:  0
+  ICHARG:  2
+  EDIFF:   1.0e-6
+  LWAVE:   true         # MUST be True — non-SCF reads WAVECAR
+  LCHARG:  true         # MUST be True — non-SCF reads CHGCAR
+  NELM:    200
+
+# ── DOS (non-SCF) ─────────────────────────────────────────────────────────
+dos:
+  _description: "Density of states. Non-SCF (ICHARG=11). Requires prior SCF run."
+  _inherits_base: true
+  ISTART:  1
+  ICHARG:  11           # non-SCF: reads CHGCAR
+  ISMEAR:  -5           # tetrahedron — no smearing artifacts in DOS
+  SIGMA:   0.05
+  LORBIT:  11           # lm-decomposed PDOS
+  NEDOS:   2000
+  EMIN:    -15.0
+  EMAX:    10.0
+  LWAVE:   false
+  LCHARG:  false
+
+# ── PDOS ─────────────────────────────────────────────────────────────────
+pdos:
+  _description: "Projected DOS with orbital decomposition. Same INCAR as dos."
+  _inherits: "dos"
+
+# ── Band structure (non-SCF) ──────────────────────────────────────────────
+band:
+  _description: "Band structure. KPOINTS in line-mode with high-symmetry path."
+  _inherits_base: true
+  ISTART:  1
+  ICHARG:  11
+  ISMEAR:  0            # Gaussian — tetrahedron invalid on line-mode k-path
+  SIGMA:   0.05
+  LORBIT:  11
+  LWAVE:   false
+  LCHARG:  false
+
+# ── ELF ──────────────────────────────────────────────────────────────────
+elf:
+  _description: "Electron localization function. NCORE=1 mandatory (VASP hard requirement)."
+  _inherits_base: true
+  ISTART:  1
+  ICHARG:  0            # SCF with WAVECAR, NOT ICHARG=11
+  LELF:    true
+  LWAVE:   true
+  LCHARG:  true
+  NCORE:   1            # *** MANDATORY — VASP aborts if NCORE > 1 with LELF=T ***
+  PREC:    "Accurate"
+  EDIFF:   1.0e-6
+
+# ── Bader charge ─────────────────────────────────────────────────────────
+bader:
+  _description: "Bader charge analysis. LAECHG writes all-electron density for chgsum.pl."
+  _inherits_base: true
+  ISTART:  0
+  ICHARG:  2
+  PREC:    "Accurate"
+  ENCUT:   520
+  EDIFF:   1.0e-6
+  LREAL:   "False"      # reciprocal-space projection required for Bader
+  LAECHG:  true         # write AECCAR0 + AECCAR2
+  LWAVE:   false
+  LCHARG:  true
+
+# ── Charge density difference (CDD) ──────────────────────────────────────
+cdd:
+  _description: "Charge density difference. Run identical INCAR for AB, A (slab), B (adsorbate)."
+  _inherits_base: true
+  ISTART:  0
+  ICHARG:  2
+  EDIFF:   1.0e-6
+  LWAVE:   false
+  LCHARG:  true
+
+# ── Work function ─────────────────────────────────────────────────────────
+work_function:
+  _description: "Work function via LOCPOT. LDIPOL corrects artificial dipole of asymmetric slabs."
+  _inherits_base: true
+  ISTART:  0
+  ICHARG:  2
+  EDIFF:   1.0e-6
+  LVHAR:   true         # write LOCPOT (total electrostatic potential)
+  LDIPOL:  true
+  IDIPOL:  3            # correct along z-axis (slab normal)
+  LWAVE:   false
+  LCHARG:  false
+
+# ── COHP (LOBSTER) ────────────────────────────────────────────────────────
+cohp:
+  _description: "COHP for LOBSTER. ISYM=-1 mandatory (all k-points must be explicit)."
+  _inherits_base: true
+  ISTART:  0
+  ICHARG:  2
+  ISYM:    -1           # *** CRITICAL: LOBSTER needs all k-points unfolded ***
+  LWAVE:   true         # LOBSTER reads WAVECAR
+  LCHARG:  true
+  LORBIT:  11
+  EDIFF:   1.0e-6

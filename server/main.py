@@ -1,4 +1,7 @@
 # server/main.py
+from dotenv import load_dotenv
+load_dotenv()   # loads .env before any other import reads os.environ
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -25,7 +28,32 @@ async def lifespan(app):
         print("[DB] create_all done.")
     except Exception as e:
         print("[DB] create_all skipped:", e)
-    yield
+
+    # Daily literature update scheduler (runs once at startup + every 24 h)
+    import asyncio as _asyncio
+
+    async def _daily_literature_loop():
+        # Wait a few seconds for the server to fully start before first run
+        await _asyncio.sleep(15)
+        while True:
+            try:
+                from server.chat.knowledge_agent import run_daily_update
+                print("[Literature] Running daily arXiv update...")
+                await run_daily_update(trigger="scheduler")
+                print("[Literature] Daily update complete.")
+            except Exception as _e:
+                print("[Literature] Daily update error:", _e)
+            await _asyncio.sleep(24 * 3600)  # 24 hours
+
+    _task = _asyncio.create_task(_daily_literature_loop())
+    try:
+        yield
+    finally:
+        _task.cancel()
+        try:
+            await _task
+        except _asyncio.CancelledError:
+            pass
 
 # 用带 lifespan 的 FastAPI 覆盖原来的 app = FastAPI()
 app = FastAPI(lifespan=lifespan)
@@ -44,8 +72,24 @@ app.include_router(knowledge_router, tags=["chat"])
 app.include_router(agent_router)  # ← 新增
 app.include_router(exec_tasks_router, tags=["exec"])
 
+@app.get("/")
+async def health():
+    return {"ok": True, "service": "ChatDFT", "status": "running"}
+
 from server.chat.records_agent import router as records_router
 app.include_router(records_router)
+
+from server.chat.analyze_agent import router as analyze_router
+app.include_router(analyze_router, tags=["chat"])
+
+from server.chat.qa_agent import router as qa_router
+app.include_router(qa_router, tags=["qa"])
+
+from server.chat.taskstate_routes import router as taskstate_router
+app.include_router(taskstate_router)
+
+from server.chat.structure_library_routes import router as strulib_router
+app.include_router(strulib_router)
 
 
 

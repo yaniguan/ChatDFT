@@ -34,6 +34,14 @@ try:
 except Exception:
     _HAS_LLM = False
 
+# --- 可选：OUTCAR 调试器 + ZPE 提取 ---
+_HAS_DEBUGGER = False
+try:
+    from server.utils.outcar_debugger import debug_job, extract_zpe_from_outcar
+    _HAS_DEBUGGER = True
+except Exception:
+    pass
+
 
 # =========================================
 # 数据结构
@@ -50,6 +58,8 @@ class JobRecord:
     spin_mag: Optional[float] = None
     E_ads_eV: Optional[float] = None
     barrier_eV: Optional[float] = None
+    zpe_eV: Optional[float] = None          # extracted from OUTCAR freq calc
+    debug_issues: List[str] = None          # diagnostic codes from outcar_debugger
     notes: str = ""
     figs: List[str] = None  # 相对 job_dir 的图路径
     remote: Dict[str, Any] = None  # 透传 _remote.json（如果有）
@@ -539,7 +549,7 @@ class PostAnalysisAgent:
             ad = self._pick_adapter(d)
             if ad is None:
                 recs.append(JobRecord(job_dir=str(d), label=d.name, engine="unknown", calc="unknown",
-                                      notes="no engine detected", figs=[]))
+                                      notes="no engine detected", figs=[], debug_issues=[]))
                 continue
             try:
                 rec = ad.parse_job(d)
@@ -549,22 +559,47 @@ class PostAnalysisAgent:
                     rec.figs = figs or []
                 except Exception:
                     rec.figs = []
+
+                # ZPE extraction (only for freq / phonon calc type)
+                if _HAS_DEBUGGER and rec.calc in ("freq", "phonon", "vib"):
+                    try:
+                        rec.zpe_eV = extract_zpe_from_outcar(d / "OUTCAR")
+                    except Exception:
+                        pass
+
+                # OUTCAR convergence diagnostics
+                if _HAS_DEBUGGER and (d / "OUTCAR").exists():
+                    try:
+                        report = debug_job(str(d))
+                        if not report.converged or not report.elec_conv:
+                            rec.debug_issues = [i.code for i in report.issues]
+                            if rec.notes:
+                                rec.notes += "; "
+                            rec.notes += report.summary
+                            # Write debug report alongside job
+                            (d / "debug_report.json").write_text(
+                                json.dumps(report.to_dict(), indent=2)
+                            )
+                    except Exception:
+                        pass
+
             except Exception as e:
                 rec = JobRecord(job_dir=str(d), label=d.name, engine=ad.name, calc=ad.calc_type(d),
-                                notes=f"parse error: {e}", figs=[])
+                                notes=f"parse error: {e}", figs=[], debug_issues=[])
             recs.append(rec)
         return recs
 
     def _write_csv_json(self, root: Path, recs: List[JobRecord]) -> None:
         csv_path = root / "results.csv"
         cols = ["job_dir","label","engine","calc","E_eV","E_ads_eV","barrier_eV",
-                "fermi_eV","bandgap_eV","spin_mag","notes"]
+                "fermi_eV","bandgap_eV","spin_mag","zpe_eV","debug_issues","notes"]
         with open(csv_path, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(cols)
             for r in recs:
                 w.writerow([r.job_dir, r.label, r.engine, r.calc, r.E_eV, r.E_ads_eV,
-                            r.barrier_eV, r.fermi_eV, r.bandgap_eV, r.spin_mag, r.notes])
+                            r.barrier_eV, r.fermi_eV, r.bandgap_eV, r.spin_mag,
+                            r.zpe_eV, ",".join(r.debug_issues or []), r.notes])
 
         # JSON（包含 figs 与 remote）
         (root / "results.json").write_text(json.dumps([asdict(r) for r in recs], indent=2))

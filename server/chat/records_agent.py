@@ -1,36 +1,54 @@
 # server/chat/records_agent.py
+"""Thin shim — /chat/records redirects to analyze_agent's /chat/analyze endpoint."""
 from fastapi import APIRouter, Request
 from typing import Any, Dict
-from server.utils.rag_utils import rag_context
-from server.utils.openai_wrapper import chatgpt_call
 
 router = APIRouter()
+
 
 @router.post("/chat/records")
 async def chat_records(request: Request) -> Dict[str, Any]:
     """
-    Records Agent:
-    从记录（jobs、计算结果、实验记录等）中检索上下文，
-    并结合 RAG（可选知识库）生成分析结果或回答问题。
+    Legacy endpoint kept for backward compatibility.
+    Delegates to the analyze_agent pipeline which reads session DFT results,
+    runs RAG, and returns structured analysis.
     """
     data = await request.json()
-    query = data.get("query", "")
-    session_id = data.get("session_id")  # 如果记录绑定了 session，可以用
+    session_id = data.get("session_id")
+    focus = data.get("query") or data.get("focus") or "overall progress and next steps"
 
-    # 获取 RAG 上下文
-    context = rag_context(query, session_id)
+    # Build a synthetic request and call the analyze endpoint directly
+    from fastapi import Request as _Request
+    from starlette.datastructures import Headers
+    import json as _json
 
-    # 调用 LLM
-    answer = await chatgpt_call(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are the Records Agent. Use context and records to answer the query."},
-            {"role": "user", "content": f"[Context]\n{context}\n\n[User Query]\n{query}"}
-        ]
-    )
-
-    return {
-        "session_id": session_id,
-        "query": query,
-        "answer": answer
+    body = _json.dumps({"session_id": session_id, "focus": focus}).encode()
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/chat/analyze",
+        "headers": [(b"content-type", b"application/json")],
     }
+
+    # Simpler: just import and call the core logic directly
+    try:
+        from server.chat.analyze_agent import _load_session_context, _build_analysis_prompt
+        from server.utils.rag_utils import rag_context
+        from server.utils.openai_wrapper import chatgpt_call
+
+        ctx = await _load_session_context(session_id) if session_id else {}
+        rag_text = await rag_context(focus, session_id=session_id, top_k=8)
+        prompt = _build_analysis_prompt(ctx, focus, rag_text)
+
+        answer = await chatgpt_call(
+            [
+                {"role": "system", "content": "You are a senior computational chemistry advisor."},
+                {"role": "user", "content": prompt},
+            ],
+            model="gpt-4o",
+            temperature=0.3,
+            max_tokens=1800,
+        )
+        return {"ok": True, "session_id": session_id, "focus": focus, "answer": answer}
+    except Exception as e:
+        return {"ok": False, "session_id": session_id, "detail": str(e)}

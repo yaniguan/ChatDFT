@@ -276,24 +276,125 @@ async def _fetch_fewshots(session, stage: str, area: str, task_hint: str, k: int
     return out
 
 # -----------------------------
-# 置信度计算
+# 置信度计算（科学化多维度评分）
 # -----------------------------
 def _compute_confidence(intent: Dict[str, Any], fewshots: List[Dict[str, Any]], rag_refs: List[Dict[str, Any]]) -> float:
-    fields = ["stage","area","task","substrate","adsorbates","conditions","metrics","reaction_network","deliverables"]
-    cover = sum(1 for f in fields if intent.get(f)) / len(fields)
-    fs_score  = min(len(fewshots), 6) / 6.0
-    rag_score = min(len(rag_refs), 8) / 8.0
+    """
+    Scientifically meaningful confidence score based on 4 dimensions:
 
+    1. Specificity (0–0.30): How completely is the catalytic system specified?
+       - material + facet         (+0.12 each, 0.24 max)
+       - reactant + product       (+0.03 each)
+       - domain/area specified    (+0.03)
+
+    2. Literature support (0–0.25): Quality and quantity of RAG evidence.
+       - Number of retrieved refs  (0.10 max; log-saturating at 6 refs)
+       - Average relevance score   (0.15 max; uses rrf_score / rerank_score if present)
+
+    3. Mechanism completeness (0–0.30): How well is the reaction network described?
+       - Has >0 intermediates      (+0.06)
+       - Has >3 intermediates      (+0.06)   (key pathway populated)
+       - Has ≥3 elementary steps   (+0.06)   (elementary step resolution)
+       - At least one TS candidate (+0.06)   (transition state awareness)
+       - Reaction family in known REGISTRY (+0.06)
+
+    4. Conditions completeness (0–0.15): Domain-appropriate operating conditions.
+       - Electrochemistry: potential specified (+0.06), pH (+0.05), electrolyte (+0.04)
+       - Thermal catalysis: temperature specified (+0.08), pressure (+0.07)
+       - Other domains:  any condition specified (+0.05), two or more (+0.10)
+
+    Final score is clamped to [0.05, 0.98].
+    """
+    # ── 1. Specificity ────────────────────────────────────────────────────────
+    spec = 0.0
+    sys_info = intent.get("system") or {}
+    material = sys_info.get("material") or intent.get("substrate") or ""
+    facet    = sys_info.get("facet") or intent.get("facet") or ""
+    if material: spec += 0.12
+    if facet:    spec += 0.12
+    if intent.get("reactant") or (intent.get("adsorbates") and len(intent["adsorbates"]) > 0):
+        spec += 0.03
+    if intent.get("product") or (intent.get("deliverables") or {}).get("target_products"):
+        spec += 0.03
+    if intent.get("area") and intent["area"] not in ("", "heterogeneous_catalysis"):
+        spec += 0.03  # explicitly identified domain
+    # Bonus: fully specified system (material + facet + reactant + product)
+    if material and facet and intent.get("reactant") and intent.get("product"):
+        spec = min(spec + 0.03, 0.30)
+    spec = min(spec, 0.30)
+
+    # ── 2. Literature support ─────────────────────────────────────────────────
+    lit = 0.0
+    n_refs = len(rag_refs)
+    # Log-saturating: 1 ref → 0.04, 3 → 0.07, 6+ → 0.10
+    lit_count = 0.10 * (1 - math.exp(-n_refs / 3.0)) if n_refs > 0 else 0.0
+
+    # Relevance: average score from rag_refs (rrf_score or relevance key)
+    scores = []
+    for ref in rag_refs:
+        for key in ("rerank_score", "rrf_score", "relevance", "score"):
+            v = ref.get(key)
+            if isinstance(v, (int, float)) and v > 0:
+                scores.append(float(v))
+                break
+    # Also count fewshot quality
+    fs_scores = [float(fs.get("confidence", 0.5)) for fs in fewshots if fs.get("confidence")]
+    all_scores = scores + fs_scores
+    avg_rel = (sum(all_scores) / len(all_scores)) if all_scores else 0.0
+    # Normalize: typical rrf_score range is 0–1; fewshot confidence 0–1
+    lit_rel = 0.15 * min(avg_rel, 1.0)
+
+    lit = lit_count + lit_rel
+    lit = min(lit, 0.25)
+
+    # ── 3. Mechanism completeness ─────────────────────────────────────────────
+    mech = 0.0
     rn = intent.get("reaction_network") or {}
-    steps = (rn.get("steps") or [])
-    inters = (rn.get("intermediates") or [])
-    rn_score = 0.0
-    if steps or inters:
-        rn_score = 0.3 + 0.2 * min(len(steps), 8) / 8.0 + 0.2 * min(len(inters), 10) / 10.0
-        rn_score = min(rn_score, 0.7)
+    steps = rn.get("steps") or []
+    inters = rn.get("intermediates") or []
+    ts_cands = rn.get("ts") or rn.get("ts_candidates") or []
 
-    w = [0.35, 0.2, 0.2, 0.25]
-    conf = w[0]*cover + w[1]*fs_score + w[2]*rag_score + w[3]*rn_score
+    if len(inters) > 0:  mech += 0.06
+    if len(inters) > 3:  mech += 0.06  # real pathway (not just bare surface)
+    if len(steps) >= 3:  mech += 0.06  # elementary-step resolution
+    if ts_cands:         mech += 0.06  # transition-state awareness
+
+    # Check if any reaction key is in the known REGISTRY
+    tags = _to_list(intent.get("tags"))
+    if any(t in REGISTRY for t in tags if isinstance(t, str)):
+        mech += 0.06
+
+    mech = min(mech, 0.30)
+
+    # ── 4. Conditions completeness ────────────────────────────────────────────
+    cond_score = 0.0
+    cond = intent.get("conditions") or {}
+    area = (intent.get("area") or "").lower()
+
+    if "electro" in area:
+        # Electrochemistry: potential and pH are physically mandatory
+        if cond.get("potential_V_vs_RHE") is not None or cond.get("potential") is not None:
+            cond_score += 0.06
+        if cond.get("pH") is not None:
+            cond_score += 0.05
+        if cond.get("electrolyte"):
+            cond_score += 0.04
+    elif "thermal" in area:
+        # Thermal catalysis: temperature and pressure govern kinetics
+        if cond.get("temperature") is not None:
+            cond_score += 0.08
+        if cond.get("pressure") is not None:
+            cond_score += 0.07
+    else:
+        # Generic: reward any specified condition
+        n_conds = sum(1 for v in cond.values() if v is not None and v != "")
+        if n_conds >= 1: cond_score += 0.05
+        if n_conds >= 2: cond_score += 0.05  # 0.10 max for generic
+
+    cond_score = min(cond_score, 0.15)
+
+    # ── Final weighted sum ────────────────────────────────────────────────────
+    conf = spec + lit + mech + cond_score
     return round(max(0.05, min(conf, 0.98)), 3)
 
 # -----------------------------
@@ -564,24 +665,34 @@ def _intent_system_prompt():
     return (
         "You are an AI-for-Science intent parser for computational catalysis. "
         "Return a STRICT JSON object (no code fences, no prose) with EXACT keys:\n"
-        "{stage, area, task, substrate, facet, adsorbates, conditions, metrics, "
-        "reaction_network, deliverables, hypothesis, tags, constraints, summary}.\n"
+        "{stage, area, task, system, substrate, facet, adsorbates, reactant, product, "
+        "conditions, metrics, reaction_network, deliverables, hypothesis, tags, constraints, summary}.\n"
         "Schema:\n"
-        "- stage:str  (e.g., 'catalysis')\n"
-        "- area:str   (e.g., 'electro')\n"
-        "- task:str   (short)\n"
-        "- substrate:str | null  (e.g., 'Cu(111)')\n"
-        "- facet:str | null      (e.g., 'Cu(111)')\n"
-        "- adsorbates:[str]\n"
-        "- conditions:{pH:number|null, potential_V_vs_RHE:number|null, solvent:str|null, temperature:number|null, electrolyte:str|null}\n"
+        "- stage:str  (e.g., 'catalysis', 'screening', 'benchmarking')\n"
+        "- area:str   IMPORTANT: choose the most accurate from: "
+        "'electrochemistry' | 'thermal_catalysis' | 'photocatalysis' | 'heterogeneous_catalysis' | 'homogeneous_catalysis'. "
+        "Use 'thermal_catalysis' for dehydrogenation, C-H activation, steam reforming, hydrogenation WITHOUT electrochemical potential. "
+        "Use 'electrochemistry' ONLY when electrode potential / applied voltage is explicitly mentioned.\n"
+        "- task:str   (short description, e.g., 'study dehydrogenation mechanism')\n"
+        "- system:{catalyst:str, material:str, facet:str, molecule:[str]}  "
+        "e.g. {catalyst:'Ag111', material:'Ag', facet:'111', molecule:['C4H10','C4H8']}\n"
+        "- substrate:str | null  (e.g., 'Ag(111)')\n"
+        "- facet:str | null\n"
+        "- reactant:str  (starting molecule, e.g. 'C4H10')\n"
+        "- product:str   (target molecule, e.g. 'C4H8')\n"
+        "- adsorbates:[str]  (surface-adsorbed species including intermediates, e.g. ['C4H10*','C4H9*','C4H8*','H*'])\n"
+        "- conditions:{pH:number|null, potential_V_vs_RHE:number|null, solvent:str|null, "
+        "temperature:number|null, pressure:number|null, electrolyte:str|null}\n"
         "- metrics:[{name:str, unit?:str, note?:str}]\n"
-        "- reaction_network:{intermediates:[str], steps:[{reactants:[str], products:[str], kind?:str}], coads_pairs:[str]}\n"
+        "- reaction_network:{intermediates:[str], steps:[str], ts:[], coads:[], coads_pairs:[]}\n"
+        "  steps should be arrow-notation strings like 'C4H10* → C4H9* + H*'\n"
         "- deliverables:{target_products:[str], figures?:[str]}\n"
-        "- hypothesis:str\n"
+        "- hypothesis:str  (1–2 sentence scientific hypothesis about the mechanism)\n"
         "- tags:[str]\n"
         "- constraints:{notes?:str}\n"
         "- summary:str\n"
-        "All lists must be present (use [] if unknown). Fill best-effort defaults from context."
+        "All lists must be present (use [] if unknown). "
+        "CRITICAL: Set 'area' correctly — dehydrogenation on a metal surface = 'thermal_catalysis'."
     )
 
 def _make_user_prompt(user_text: str, guided: Dict[str, Any], fewshots: List[Dict[str, Any]], rag_text: str) -> List[Dict[str, str]]:
@@ -715,9 +826,60 @@ async def api_intent(request: Request):
 
     # 4) 标准化
     intent["stage"] = intent.get("stage") or guided.get("stage") or "catalysis"
-    intent["area"]  = intent.get("area")  or guided.get("area")  or "electro"
+    # Infer area from text rather than defaulting to "electro"
+    _area_default = "heterogeneous_catalysis"
+    _utl = user_text.lower()
+    if any(k in _utl for k in ["electro", "potential", "voltage", "electrode", "pcet",
+                                  "her ", "orr ", "oer ", "co2rr", "nrr ", "no3rr"]):
+        _area_default = "electrochemistry"
+    elif any(k in _utl for k in ["dehydrog", "c-h activ", "steam reform", "alkane",
+                                   "butane", "propane", "methane", "thermal"]):
+        _area_default = "thermal_catalysis"
+    intent["area"]  = intent.get("area")  or guided.get("area")  or _area_default
     intent["task"]  = intent.get("task")  or guided.get("task")  or user_text[:140]
     intent["model"] = "gpt-4o-mini"
+
+    # ── Electronic structure calculation detection ────────────────────────────
+    # Detect which types of electronic structure calculations the user wants.
+    # Results stored in intent["electronic_calcs"] as a list of calc IDs.
+    _ELEC_KEYWORDS: Dict[str, List[str]] = {
+        "static":        ["static scf", "single point", "scf", "wavecar", "chgcar"],
+        "dos":           ["dos", "density of state", "d-band center", "d band center",
+                          "fermi level", "electronic structure"],
+        "pdos":          ["pdos", "projected dos", "orbital projection", "d-band",
+                          "d band", "partial dos"],
+        "band":          ["band structure", "band gap", "band diagram", "bandgap",
+                          "electronic band", "dispersion"],
+        "elf":           ["elf", "electron localization", "elfcar", "bonding topology",
+                          "lone pair"],
+        "bader":         ["bader", "bader charge", "charge transfer", "oxidation state",
+                          "atomic charge", "mulliken"],
+        "cdd":           ["charge density difference", "cdd", "electron redistribution",
+                          "charge accumulation", "charge depletion"],
+        "work_function": ["work function", "surface potential", "vacuum level",
+                          "locpot", "lvhar", "ionization potential"],
+        "cohp":          ["cohp", "coop", "lobster", "crystal orbital", "bonding analysis",
+                          "orbital interaction", "hamilton population", "bond order"],
+    }
+    _utl2 = _utl  # already lowercase
+    detected_elec: List[str] = []
+    for calc_id, kws in _ELEC_KEYWORDS.items():
+        if any(kw in _utl2 for kw in kws):
+            detected_elec.append(calc_id)
+
+    # Remove 'pdos' if already captured under 'dos' (avoid duplicate tasks)
+    if "dos" in detected_elec and "pdos" in detected_elec:
+        detected_elec.remove("pdos")
+
+    # If any electronic calc detected, ensure 'static' is first (prerequisite)
+    if detected_elec and "static" not in detected_elec:
+        detected_elec.insert(0, "static")
+
+    if detected_elec:
+        intent["electronic_calcs"] = detected_elec
+        intent.setdefault("tags", [])
+        if "electronic_structure" not in intent["tags"]:
+            intent["tags"].append("electronic_structure")
 
     # 5) 置信度
     conf = _compute_confidence(intent, fewshots, rag_refs)

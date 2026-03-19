@@ -120,6 +120,58 @@ def _read_form_overrides(task: Dict[str, Any]) -> Dict[str, Any]:
         out[key] = f.get("value")
     return out
 
+# ── calc_profiles.yaml loader ──────────────────────────────────────────
+import yaml as _yaml
+
+_PROFILES_PATH = Path(__file__).parent / "calc_profiles.yaml"
+_CALC_PROFILES: Dict[str, Dict[str, Any]] = {}
+
+def _load_profiles() -> Dict[str, Dict[str, Any]]:
+    """
+    Load calc_profiles.yaml once.  Resolves _inherits_base by merging the
+    'base' section, then applies any explicit _inherits pointer.
+    Returns a flat dict: {profile_name: {VASP_KEY: value, ...}}.
+    """
+    try:
+        raw: Dict[str, Any] = _yaml.safe_load(_PROFILES_PATH.read_text()) or {}
+    except Exception:
+        return {}
+
+    base = {k: v for k, v in raw.get("base", {}).items() if not k.startswith("_")}
+    profiles: Dict[str, Dict[str, Any]] = {}
+
+    for name, body in raw.items():
+        if name == "base" or not isinstance(body, dict):
+            continue
+        meta_keys = {k for k in body if k.startswith("_")}
+        params = {k: v for k, v in body.items() if k not in meta_keys}
+
+        if body.get("_inherits_base"):
+            params = {**base, **params}
+
+        # resolve simple single-level _inherits
+        parent_name = body.get("_inherits")
+        if parent_name and parent_name in profiles:
+            params = {**profiles[parent_name], **params}
+
+        profiles[name] = params
+
+    return profiles
+
+
+def _get_vasp_profile(profile: str) -> Dict[str, Any]:
+    """
+    Return a copy of the named VASP profile (merged with base).
+    Falls back to the 'standard' profile, then to the internal _VASP_BASE dict.
+    LLM can reference profiles like 'high_accuracy', 'relax_slab', 'nnp_singlepoint'.
+    """
+    global _CALC_PROFILES
+    if not _CALC_PROFILES:
+        _CALC_PROFILES = _load_profiles()
+    params = _CALC_PROFILES.get(profile) or _CALC_PROFILES.get("standard") or {}
+    return dict(params)   # copy — safe to mutate
+
+
 # ------------------------ VASP 模板与生成 ------------------------
 
 _VASP_BASE = dict(
@@ -142,6 +194,54 @@ _VASP_BADER = dict(LCHARG=True, LAECHG=True, IBRION=-1, NSW=0)
 _VASP_VASPSOL = dict(LSOL=True, EB_K=78.4)  # 水的介电
 _VASP_GGAU  = dict(LDAU=True, LDAUTYPE=2, LDAUL=-1, LDAUU=0.0, LDAUJ=0.0)
 _VASP_NELECT= dict(NELECT=None)  # 仅声明，由 overrides 赋值
+
+# --- NEW: GC-DFT (Grand-Canonical DFT via VASPsol + NELECT) ---
+_VASP_GCDFT = dict(
+    LSOL=True, EB_K=78.4,          # VASPsol implicit solvent (water)
+    LAMBDA_D_DEBYE=3.0,             # Debye length (Å) for implicit electrolyte
+    NELECT=None,                    # Set by overrides; sweep to find target potential
+    IBRION=2, NSW=120, ISIF=2,
+    EDIFFG=-0.05,
+)
+
+# --- NEW: Frequency / Phonon calculation (adsorbate ZPE) ---
+_VASP_FREQ = dict(
+    IBRION=5,       # finite-difference Hessian
+    NFREE=2,        # displace ±POTIM (central differences)
+    POTIM=0.015,    # displacement step (Å) — 0.01–0.02 typical
+    NSW=1,          # one "ionic step" = full Hessian
+    ISIF=0,         # no stress; only forces
+    EDIFF=1e-7,     # tight SCF for accurate forces
+    LWAVE=False, LCHARG=False,
+)
+
+# --- NEW: CI-NEB (Climbing Image NEB) ---
+_VASP_CINEB = dict(
+    IBRION=3, POTIM=0,              # POTIM=0 → optimizer handles step
+    NSW=200,
+    ISIF=2,                         # fixed cell
+    IMAGES=7,                       # number of images (excluding IS/FS)
+    LCLIMB=True,                    # CI-NEB
+    SPRING=-5.0,                    # spring constant (eV/Å²)
+    ICHAIN=0,                       # NEB algorithm (0=NEB, 3=string method)
+    LNEBCELL=False,                 # set True only for variable-cell NEB
+    EDIFFG=-0.05,
+    ALGO="Fast",
+    LWAVE=False, LCHARG=False,
+)
+
+# --- NEW: Dimer method for TS search ---
+_VASP_DIMER = dict(
+    IBRION=3, POTIM=0,
+    NSW=200,
+    ISIF=2,
+    ICHAIN=2,                       # Dimer method
+    DdR=0.01,                       # dimer separation (Å)
+    DRotCosMin=0.01,                # convergence: min(cos θ) between rotation steps
+    DFnMin=0.01,                    # convergence: min force along dimer (eV/Å)
+    EDIFFG=-0.05,
+    LWAVE=False, LCHARG=False,
+)
 
 def _vasp_incar_lines(params: Dict[str, Any]) -> str:
     lines: List[str] = []
@@ -323,6 +423,13 @@ class ParametersAgent:
         # ---- 上下文/事件元数据 ----
         run_id  = ((task.get("meta") or {}).get("run_id"))
         step_id = task.get("id")
+        task_id = task.get("db_id") or task.get("task_id")
+
+        # Emit running status immediately
+        if task_id:
+            from server.execution.utils.task_status import emit_task_status_sync
+            emit_task_status_sync(task_id, "running")
+
         payload   = ((task.get("params") or {}).get("payload") or {})
         engine    = (payload.get("engine") or "vasp").lower()
         system    = (payload.get("system_kind") or "slab").lower()
@@ -371,12 +478,20 @@ class ParametersAgent:
             # 事件：完成
             _emit_sync(run_id, step_id, "params.done", {"result": out, "files": results.get("generated")})
             _append_jsonl(job_dir, "_param_log.jsonl", {"phase": "done", "result": out, "files": results.get("generated")})
+            if task_id:
+                from server.execution.utils.task_status import emit_task_status_sync
+                emit_task_status_sync(task_id, "done", output_data={
+                    "engine": engine, "modes": modes, "job_dir": str(job_dir),
+                })
             return out
 
         except Exception as e:
             err = {"ok": False, "error": str(e), "engine": engine}
             _emit_sync(run_id, step_id, "params.error", err)
             _append_jsonl(job_dir, "_param_log.jsonl", {"phase": "error", **err})
+            if task_id:
+                from server.execution.utils.task_status import emit_task_status_sync
+                emit_task_status_sync(task_id, "failed", error_msg=str(e))
             raise
 
     # ---------------- VASP 参数拼装 ----------------
@@ -400,8 +515,18 @@ class ParametersAgent:
             base = _merge(base, _VASP_ELF)
         elif mode == "bader":
             base = _merge(base, _VASP_BADER)
-        elif mode == "neb":
-            base.update(dict(IBRION=3, POTIM=0, NSW=200, IOAP=0))
+        elif mode in ("neb", "neb_run"):
+            base.update(dict(IBRION=3, POTIM=0, NSW=200, IMAGES=7,
+                             SPRING=-5.0, LCLIMB=False, ICHAIN=0, ISIF=2,
+                             LWAVE=False, LCHARG=False))
+        elif mode in ("cineb", "ci_neb"):
+            base = _merge(base, _VASP_CINEB)
+        elif mode in ("dimer", "dimer_neb"):
+            base = _merge(base, _VASP_DIMER)
+        elif mode in ("freq", "frequency", "phonon", "zpe"):
+            base = _merge(base, _VASP_FREQ)
+        elif mode in ("gcdft", "gc_dft", "grand_canonical"):
+            base = _merge(base, _VASP_GCDFT)
         elif mode == "vaspsol":
             base = _merge(base, _VASP_VASPSOL)
         elif mode in ("gga_u","ldau","u"):
@@ -429,3 +554,90 @@ class ParametersAgent:
             p["calculation"] = "scf"  # 需配合后处理
         # 覆盖
         return _merge(p, overrides)
+
+
+def analyze_benchmarks(bench_dir: Path) -> Dict[str, Any]:
+    """
+    Parse OSZICAR/vasprun.xml from benchmark sub-directories and return
+    convergence data + base64 matplotlib plots.
+    """
+    import glob, base64, io
+    bench_dir = Path(bench_dir)
+
+    encut_data: Dict[int, float] = {}
+    kppra_data: Dict[int, float] = {}
+
+    for sub in sorted(bench_dir.iterdir()):
+        if not sub.is_dir():
+            continue
+        name = sub.name
+        oszicar = sub / "OSZICAR"
+        energy = None
+        if oszicar.exists():
+            # Parse last F= line from OSZICAR
+            for line in reversed(oszicar.read_text().splitlines()):
+                m = re.search(r"F=\s*([-\d.E+]+)", line)
+                if m:
+                    try:
+                        energy = float(m.group(1))
+                    except ValueError:
+                        pass
+                    break
+        if energy is None:
+            continue
+        if name.startswith("encut_"):
+            try:
+                encut_data[int(name[6:])] = energy
+            except ValueError:
+                pass
+        elif name.startswith("kppra_"):
+            try:
+                kppra_data[int(name[6:])] = energy
+            except ValueError:
+                pass
+        elif name.startswith("ecut_"):
+            try:
+                encut_data[int(name[5:])] = energy
+            except ValueError:
+                pass
+
+    plots: Dict[str, str] = {}
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        def _make_plot(x_vals, y_vals, xlabel, title) -> str:
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(x_vals, y_vals, "o-", color="#2196F3")
+            # ΔE from converged (last point)
+            ref = y_vals[-1]
+            ax2 = ax.twinx()
+            ax2.plot(x_vals, [abs(v - ref) * 1000 for v in y_vals], "s--", color="#FF5722", alpha=0.7)
+            ax2.set_ylabel("ΔE from reference (meV/atom)", color="#FF5722")
+            ax.set_xlabel(xlabel); ax.set_ylabel("Total energy (eV)"); ax.set_title(title)
+            fig.tight_layout()
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png", dpi=120)
+            plt.close(fig)
+            return base64.b64encode(buf.getvalue()).decode()
+
+        if len(encut_data) >= 2:
+            xs = sorted(encut_data.keys())
+            ys = [encut_data[x] for x in xs]
+            plots["encut_convergence"] = _make_plot(xs, ys, "ENCUT (eV)", "ENCUT Convergence")
+
+        if len(kppra_data) >= 2:
+            xs = sorted(kppra_data.keys())
+            ys = [kppra_data[x] for x in xs]
+            plots["kppra_convergence"] = _make_plot(xs, ys, "KPPRA", "k-point Convergence")
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "encut": encut_data,
+        "kppra": kppra_data,
+        "plots": plots,
+        "n_points": len(encut_data) + len(kppra_data),
+    }

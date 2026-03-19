@@ -25,11 +25,15 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Request
 from .contracts import HypothesisBundle, RunEvent
 
-# === NEW: mechanism registry (optional import; stays noop if missing) ===
+# === Dynamic mechanism builder (replaces static REGISTRY) ===
 try:
-    from server.mechanisms.registry import REGISTRY
+    from server.mechanisms.builder import build_mechanism as _build_mechanism
+    _HAS_BUILDER = True
 except Exception:
-    REGISTRY = {}
+    _HAS_BUILDER = False
+    _build_mechanism = None  # type: ignore
+
+REGISTRY: dict = {}  # kept for backward-compat; no longer used by endpoint
 
 # 通用保存
 async def _save_artifact(session_id: int | None, msg_type: str, content):
@@ -187,6 +191,17 @@ def _llm_available() -> bool:
 async def _llm_markdown(fields: Dict[str, Any]) -> Optional[str]:
     if not _llm_available(): return None
     from server.utils.openai_wrapper import chatgpt_call  # type: ignore
+
+    intent = fields.get("intent") or {}
+    reactant, product = _extract_reactant_product(intent)
+    direction_note = ""
+    if reactant and product:
+        direction_note = (
+            f"\nCRITICAL: The reaction is {reactant} → {product} (FORWARD direction only). "
+            f"In the elementary steps section, list steps starting from {reactant} and "
+            f"ending at {product}. Never list steps in reverse order."
+        )
+
     sys = (
         "You are a senior computational chemist. Given the structured JSON 'fields', "
         "write a concise markdown hypothesis exactly in this layout:\n\n"
@@ -194,10 +209,12 @@ async def _llm_markdown(fields: Dict[str, Any]) -> Optional[str]:
         "**Hypothesis:** <single sentence>\n\n"
         "**Why it may be true (mechanistic rationale):**\n"
         "- <bullet 1>\n- <bullet 2>\n- <bullet 3>\n\n"
+        "**Elementary steps (forward direction):**\n"
+        "- <step 1: reactant(s) → intermediate(s)>\n- ...\n\n"
         "**What to compute next:**\n"
         "- <DFT task 1>\n- <DFT task 2>\n- <DFT task 3>\n\n"
         "**Optional experimental validation:**\n"
-        "- <suggestion> (0-2 bullets)"
+        f"- <suggestion> (0-2 bullets){direction_note}"
     )
     cond = _conditions_line((fields.get("intent") or {}).get("conditions") or {})
     sys2 = f"{sys}\n\nNote: Summarize conditions as: {cond if cond!='-' else 'N/A'}."
@@ -216,6 +233,24 @@ async def _llm_graph(intent: Dict[str, Any], hint: str="", seed: Optional[Dict[s
     """Ask LLM for strict JSON graph, with optional seed suggestions."""
     if not _llm_available(): return None
     from server.utils.openai_wrapper import chatgpt_call  # type: ignore
+
+    # Extract reactant/product for explicit forward-direction enforcement
+    reactant, product = _extract_reactant_product(intent)
+    direction_note = ""
+    if reactant and product:
+        direction_note = (
+            f"\nCRITICAL: The reaction proceeds FORWARD: {reactant} → {product}. "
+            f"The FIRST step MUST start with {reactant} as a reactant (not as a product). "
+            f"Steps must be listed in forward causal order. "
+            f"NEVER list {product} → {reactant} or any reverse-direction step as the first entry."
+        )
+        # For CO2RR specifically, ensure CO2 appears explicitly
+        if "CO2" in reactant.upper() or "co2rr" in str(intent.get("tags", [])).lower():
+            direction_note += (
+                f"\nFor CO2RR: explicitly include CO2(g) + * -> CO2* as the very FIRST step. "
+                f"Then COOH*, CO*, CHO*, etc. in forward order toward {product}."
+            )
+
     sys = (
         "You are an expert in heterogeneous and homogeneous catalysis. "
         "Produce STRICT JSON describing a reaction network for the given intent. "
@@ -227,7 +262,7 @@ async def _llm_graph(intent: Dict[str, Any], hint: str="", seed: Optional[Dict[s
         '  "coads_pairs": [["H*","H*"],["H*","OH*"]],\n'
         '  "ts_edges": ["H* + H* -> H2(g) + 2*"]\n'
         "}\n"
-        "Return ONLY JSON."
+        f"Return ONLY JSON.{direction_note}"
     )
     payload = {"intent": intent, "hint": hint or ""}
     if seed:
@@ -403,7 +438,8 @@ def _template_markdown(intent: Dict[str, Any]) -> str:
     cat_line = f"{cat}({facet})" if (cat != "-" and facet != "-") else cat
     cond_md = _conditions_line((intent.get("conditions") or {}))
 
-    if "her" in (rxn.lower()):
+    rxn_lower = rxn.lower()
+    if "her" in rxn_lower:
         return (
             f"**Conditions:** {cond_md}\n\n"
             f"**Hypothesis:** {cat_line} can catalyse HER efficiently via a Volmer–Heyrovsky–Tafel manifold with near-zero ΔG_H* on key sites.\n\n"
@@ -417,14 +453,206 @@ def _template_markdown(intent: Dict[str, Any]) -> str:
             f"- NEB barriers for Volmer/Heyrovsky/Tafel.\n"
             f"- Bader charges & PDOS under potential.\n"
         )
+
+    # Extract key species from intent for specific templates
+    sys_info = intent.get("system") or {}
+    mol_list = sys_info.get("molecule") or []
+    reactant = mol_list[0] if mol_list else (intent.get("reactant") or "substrate")
+    product  = mol_list[-1] if len(mol_list) > 1 else (intent.get("product") or "product")
+
+    if any(k in rxn_lower for k in ["dehydrog", "c-h activ", "alkane", "butane", "propane"]):
+        return (
+            f"**Conditions:** {cond_md}\n\n"
+            f"**Hypothesis:** {cat_line} facilitates the dehydrogenation of {reactant} to {product} "
+            f"via sequential C–H bond activation, with {cat_line} providing moderate adsorption of "
+            f"alkyl intermediates and fast recombinative H₂ desorption.\n\n"
+            f"**Why it may be true (mechanistic rationale):**\n"
+            f"- {cat_line} (Group IB metal) binds alkyl intermediates weakly enough to avoid "
+            f"deep dehydrogenation / coking, but strongly enough to activate C–H bonds.\n"
+            f"- Primary and secondary C–H bonds in {reactant} differ in activation barrier "
+            f"(sec < pri for 1-butene selectivity; pri < sec for 2-butene).\n"
+            f"- Two sequential β-hydride eliminations: {reactant}* → C₄H₉* + H* → {product}* + 2H*.\n"
+            f"- The rate-limiting step is likely the first C–H bond cleavage (highest barrier).\n"
+            f"- Electrochemical promotion (if GC-DFT) can tune ΔG through the potential-dependent "
+            f"CHE correction, opening a selectivity window.\n\n"
+            f"**Key unknowns to resolve:**\n"
+            f"- Adsorption geometry of {reactant}* on {cat_line}: flat (di-σ) vs. end-on.\n"
+            f"- Relative stability of 1-butenyl vs. 2-butenyl radical intermediates.\n"
+            f"- H* coverage at reaction conditions and its effect on recombination.\n"
+            f"- Whether surface reconstruction (e.g., Ag surface oxide) occurs under O-containing "
+            f"co-adsorbates.\n\n"
+            f"**What to compute next:**\n"
+            f"1. Relax {cat_line} slab (4×4, 4 layers, 15 Å vacuum).\n"
+            f"2. Adsorption: {reactant}*, {product}*, C₄H₉* (1-butenyl & 2-butenyl), H* "
+            f"(top/bridge/hollow sites, GCDFT for potential dependence).\n"
+            f"3. Gas-phase thermochemistry: {reactant}(g), {product}(g), H₂(g) with ZPE+TS corrections.\n"
+            f"4. NEB/CI-NEB: IS = {reactant}* → TS → FS = C₄H₉* + H* (×2 for both butenyl isomers).\n"
+            f"5. NEB: C₄H₉* → {product}* + H*.\n"
+            f"6. ZPE frequency calculations for all surface intermediates.\n"
+            f"7. ΔG free-energy diagram at T=500 K and applied potential (GC-DFT).\n"
+            f"8. Microkinetic model: TOF and selectivity vs. T and coverage.\n"
+        )
+
+    if any(k in rxn_lower for k in ["co2rr", "co2 reduc"]):
+        return (
+            f"**Conditions:** {cond_md}\n\n"
+            f"**Hypothesis:** {cat_line} selectively reduces CO₂ to valuable C₁/C₂ products "
+            f"via adsorbed COOH*/CO* intermediates under electrochemical driving force.\n\n"
+            f"**What to compute next:**\n"
+            f"- Adsorption: CO₂*, COOH*, CO*, CHO*, OCCHO*, H*.\n"
+            f"- NEB barriers for CO₂ activation and key PCET steps.\n"
+            f"- GC-DFT: potential-dependent ΔG diagram.\n"
+            f"- Microkinetic model for TOF vs. potential.\n"
+        )
+
+    # Generic fallback with more context than the bare minimum
     return (
         f"**Conditions:** {cond_md}\n\n"
-        f"**Hypothesis:** The chosen model is suitable to probe the target reactivity/physics.\n\n"
+        f"**Hypothesis:** {cat_line} can facilitate the conversion of {reactant} to {product} "
+        f"via surface-mediated intermediates. The key elementary steps involve adsorption, "
+        f"bond activation, and desorption of products.\n\n"
         f"**What to compute next:**\n"
-        f"- Build & relax slab/supercell.\n"
-        f"- Compute adsorption energetics of key intermediates.\n"
-        f"- If needed, find transition states (NEB/CI-NEB).\n"
+        f"- Build & relax {cat_line} slab (4×4, 4 layers).\n"
+        f"- Adsorption energetics: key intermediates + reactant/product.\n"
+        f"- Gas-phase thermochemistry with ZPE+entropy corrections.\n"
+        f"- Transition states (NEB/CI-NEB) for rate-limiting steps.\n"
+        f"- ΔG free-energy diagram + microkinetic model.\n"
     )
+
+# ============================ Dynamic mechanism seed (builder) ============================
+
+# Maps common reaction shortnames to (reactant, product) molecules
+_RXN_MOLECULE_MAP = {
+    "her":            ("H+",   "H2"),
+    "co2rr":          ("CO2",  "CO"),
+    "orr":            ("O2",   "H2O"),
+    "oer":            ("H2O",  "O2"),
+    "nrr":            ("N2",   "NH3"),
+    "no3rr":          ("NO3-", "NH3"),
+    "msr":            ("CH4",  "CO"),
+    "haber":          ("N2",   "NH3"),
+    "dehydrogenation":("C4H10","C4H8"),
+    "c-h activation": ("C4H10","C4H8"),
+    "alkane dehydrogenation": ("C4H10","C4H8"),
+    "propane dehydrogenation":("C3H8","C3H6"),
+    "methane activation":     ("CH4", "CH3"),
+}
+
+
+def _extract_reactant_product(intent: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    Robustly extract (reactant, product) from any intent format.
+    Checks top-level fields, system.molecule list, and reaction_network.steps.
+    """
+    # 1) Explicit top-level fields
+    reactant = intent.get("reactant") or ""
+    product  = intent.get("product")  or ""
+    if reactant and product:
+        return reactant, product
+
+    # 2) system.molecule list: first = reactant, last = product
+    mol_list = (intent.get("system") or {}).get("molecule") or []
+    if not isinstance(mol_list, list):
+        mol_list = [mol_list] if mol_list else []
+    if len(mol_list) >= 2:
+        if not reactant: reactant = str(mol_list[0])
+        if not product:  product  = str(mol_list[-1])
+    elif len(mol_list) == 1:
+        if not reactant: reactant = str(mol_list[0])
+
+    # 3) reaction_network.steps: parse "A → B" or "A -> B"
+    rn = intent.get("reaction_network") or {}
+    steps = rn.get("steps") or []
+    if steps and (not reactant or not product):
+        first_step = str(steps[0]) if steps else ""
+        for sep in ["→", "->", "⟶"]:
+            if sep in first_step:
+                parts = first_step.split(sep, 1)
+                lhs = parts[0].strip().replace("*", "").strip()
+                rhs = parts[1].strip().replace("*", "").replace("+ H*","").strip()
+                if lhs and not reactant: reactant = lhs
+                if rhs and not product:  product  = rhs
+                break
+
+    # 4) _RXN_MOLECULE_MAP shortcut from task text
+    if not reactant or not product:
+        task_text = (intent.get("task") or intent.get("reaction") or "").lower()
+        for key, (r0, p0) in _RXN_MOLECULE_MAP.items():
+            if key in task_text:
+                if not reactant: reactant = r0
+                if not product:  product  = p0
+                break
+
+    return reactant, product
+
+
+async def _get_mech_seed(intent: Dict[str, Any], session_id=None) -> Dict[str, Any]:
+    """Call build_mechanism() and convert MechanismResult to hypothesis seed format."""
+    if not _HAS_BUILDER or _build_mechanism is None:
+        return {}
+    try:
+        sys_info = intent.get("system") or {}
+        catalyst = (sys_info.get("catalyst") or sys_info.get("material") or
+                    intent.get("catalyst") or "")
+        facet    = sys_info.get("facet") or intent.get("facet") or "111"
+        surface  = f"{catalyst}({facet})" if catalyst else None
+
+        # Determine reaction domain
+        rxn_text = " ".join([
+            str(intent.get("domain") or ""),
+            str(intent.get("area") or ""),
+            str(intent.get("task") or ""),
+            str(intent.get("reaction") or intent.get("problem_type") or ""),
+            " ".join((intent.get("tags") or [])),
+        ]).lower()
+
+        domain = intent.get("domain") or ""
+        if not domain:
+            if any(k in rxn_text for k in ["co2rr", "her", "orr", "oer", "nrr", "no3rr"]):
+                domain = "electrochemical"
+            elif any(k in rxn_text for k in ["electroch", "potential", "pcet", "electrocatalys"]):
+                domain = "electrochemical"
+            elif any(k in rxn_text for k in ["dehydrog", "steam reform", "hydrogenation",
+                                               "oxidation", "c-h activ", "thermal", "heterogen"]):
+                domain = "thermal"
+            elif "photo" in rxn_text:
+                domain = "photocatalytic"
+            else:
+                domain = "thermal"  # safer default than electrochemical for unknown reactions
+
+        reactant, product = _extract_reactant_product(intent)
+
+        if not reactant or not product:
+            return {}
+
+        result = await _build_mechanism(
+            domain=domain,
+            reactant=reactant,
+            product=product,
+            surface=surface,
+            conditions=intent.get("conditions"),
+            session_id=session_id,
+        )
+
+        # Convert steps: [{"r":[...], "p":[...]}] -> "A + B -> C + D" strings
+        rn = []
+        for step in result.steps:
+            if isinstance(step, dict):
+                lhs = " + ".join(step.get("r") or [])
+                rhs = " + ".join(step.get("p") or [])
+                if lhs or rhs:
+                    rn.append(f"{lhs} -> {rhs}")
+
+        return {
+            "reaction_network": rn,
+            "intermediates":    result.intermediates,
+            "coads_pairs":      result.coads,
+            "ts_edges":         result.ts_candidates,
+            "provenance":       {**result.provenance, "builder_name": result.name},
+        }
+    except Exception:
+        return {}
+
 
 # ============================ FastAPI endpoint ============================
 
@@ -440,13 +668,8 @@ async def hypothesis_create(request: Request):
 
     fields = {"intent": intent, "knowledge": knowledge, "history": history}
 
-    # === NEW step 0: mechanism-based seed from registry ===
-    mech_keys = _mech_guess_from_intent(intent) if REGISTRY else []
-    mech_seed = _expand_mech(
-        mech_keys,
-        substrate=intent.get("substrate") or (intent.get("system") or {}).get("catalyst"),
-        facet=intent.get("facet") or (intent.get("system") or {}).get("facet"),
-    ) if mech_keys else {}
+    # === step 0: dynamic mechanism seed from builder ===
+    mech_seed = await _get_mech_seed(intent, session_id)
 
     # 1) try LLM graph (strict JSON) with seed
     llm_graph_raw = await _llm_graph(intent, hint, seed=mech_seed if mech_seed else None)
@@ -469,21 +692,59 @@ async def hypothesis_create(request: Request):
     # validate/repair
     graph_fixed, warns = _validate_graph(raw_graph_for_validation, intent)
     graph_fixed["provenance"]["warnings"] = _unique_seq(list(graph_fixed["provenance"].get("warnings", [])) + (warns or []))
-    if mech_keys:
-        # 把使用到的机制键记录在 provenance
-        graph_fixed["provenance"]["mechanisms"] = mech_keys
+    if mech_seed.get("provenance", {}).get("builder_name"):
+        graph_fixed["provenance"]["builder_name"] = mech_seed["provenance"]["builder_name"]
+
+    # Auto-generate TS edges for dehydrogenation if LLM/builder didn't produce them
+    if not graph_fixed.get("ts_edges"):
+        _intent_text = " ".join([
+            str(intent.get("task", "")), str(intent.get("area", "")),
+            str(intent.get("problem_type", "")), " ".join(intent.get("tags") or [])
+        ]).lower()
+        _is_dehyd = any(k in _intent_text for k in ["dehydrog", "c-h activ", "butane", "c4h10", "alkane"])
+        if _is_dehyd:
+            # Derive TS edges from reaction_network elementary steps (C-H bond breaking steps)
+            _rn_steps = graph_fixed.get("reaction_network") or []
+            _ts_auto = []
+            for _step in _rn_steps:
+                _s = " + ".join(_step.get("lhs", [])) + " -> " + " + ".join(_step.get("rhs", [])) if isinstance(_step, dict) else _step
+                # C-H activation steps: CₙHₓ* -> CₙHₓ₋₁* + H*
+                if re.search(r"C\d+H\d+\*\s*[-+][^>]*->\s*C\d+H\d+\*.*H\*", _s, re.IGNORECASE) or \
+                   re.search(r"C\d+H\d+\*\s*->\s*C\d+H\d+\*", _s, re.IGNORECASE):
+                    _ts_auto.append(_s)
+            # Fallback canonical TS for butane dehydrogenation
+            if not _ts_auto:
+                _inter = graph_fixed.get("intermediates") or []
+                _c4_inter = [i for i in _inter if re.match(r"C4H\d+\*", i)]
+                if len(_c4_inter) >= 2:
+                    _ts_auto = [f"{_c4_inter[i]}* -> {_c4_inter[i+1]} + H*" if not _c4_inter[i].endswith("*")
+                                else f"{_c4_inter[i]} -> {_c4_inter[i+1]} + H*"
+                                for i in range(len(_c4_inter)-1)]
+                else:
+                    _ts_auto = ["C4H10* -> C4H9* + H*", "C4H9* -> C4H8* + H*"]
+            graph_fixed["ts_edges"] = _ts_auto
 
     # 2) markdown hypothesis（与原逻辑一致）
     md = await _llm_markdown({"intent": intent, "knowledge": knowledge, "history": history})
     if not md:
         md = _template_markdown(intent)
 
+    # Populate bundle from graph_fixed (not request body) so plan agent gets correct intermediates
+    _rn = graph_fixed.get("reaction_network") or []
+    _steps_str = []
+    for _s in _rn:
+        if isinstance(_s, str):
+            _steps_str.append(_s)
+        elif isinstance(_s, dict):
+            _lhs = " + ".join(_s.get("lhs") or [])
+            _rhs = " + ".join(_s.get("rhs") or [])
+            _steps_str.append(f"{_lhs} -> {_rhs}")
     bundle = HypothesisBundle(
         md=md,
-        steps=data.get("steps", []),
-        intermediates=data.get("intermediates", []),
-        coads=[tuple(x) for x in (data.get("coads", []) or []) if isinstance(x,(list,tuple)) and len(x)==2],
-        ts=data.get("ts", []),
+        steps=_steps_str or data.get("steps", []),
+        intermediates=graph_fixed.get("intermediates") or data.get("intermediates", []),
+        coads=[tuple(x) for x in (graph_fixed.get("coads_pairs") or data.get("coads", []) or []) if isinstance(x,(list,tuple)) and len(x)==2],
+        ts=graph_fixed.get("ts_edges") or data.get("ts", []),
         confidence=float(data.get("confidence", 0.0) or 0.0),
     )
 
@@ -508,3 +769,136 @@ async def hypothesis_ingest_event(request: Request):
     evt = RunEvent(**(await request.json()))
     # TODO：可将 evt 持久化到 hypothesis_evidence 表，后续联动 refine
     return {"ok": True}
+
+
+@router.post("/chat/hypothesis/feedback")
+async def hypothesis_feedback(request: Request):
+    """
+    Receive execution results from low-level agents and feed them back to the
+    hypothesis/plan for refinement.
+
+    Expected body:
+    {
+      "session_id": int,
+      "task_id": str,          // WorkflowTask id that just finished
+      "result_type": str,      // "adsorption_energy" | "activation_barrier" | "debug" | ...
+      "species": str,          // "CO*", "COOH*", ...
+      "surface": str,          // "Pt(111)"
+      "value": float,          // primary result in eV
+      "converged": bool,
+      "extra": {}              // additional structured data
+    }
+
+    The endpoint:
+    1. Persists the result to DFTResult table
+    2. Calls the LLM to interpret the result in the context of the current hypothesis
+    3. Returns an updated hypothesis fragment + suggested plan adjustments
+    """
+    body = await request.json()
+    session_id  = body.get("session_id")
+    result_type = body.get("result_type", "unknown")
+    species     = body.get("species", "")
+    surface     = body.get("surface", "")
+    value       = body.get("value")
+    converged   = bool(body.get("converged", True))
+    extra       = body.get("extra") or {}
+    task_id     = body.get("task_id")
+
+    # 1) Persist to DFTResult
+    try:
+        from server.db import AsyncSessionLocal, DFTResult
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            row = DFTResult(
+                session_id=session_id,
+                result_type=result_type,
+                species=species,
+                surface=surface,
+                value=float(value) if value is not None else None,
+                converged=converged,
+                extra=extra,
+            )
+            db.add(row)
+            await db.commit()
+    except Exception:
+        pass  # don't break feedback on DB error
+
+    # 2) Load current hypothesis context
+    hypothesis_ctx = ""
+    rxn_network_ctx = ""
+    try:
+        from server.db import AsyncSessionLocal, ChatMessage
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == session_id,
+                       ChatMessage.msg_type.in_(["hypothesis", "rxn_network"]))
+                .order_by(ChatMessage.id.desc())
+                .limit(3)
+            )).scalars().all()
+            for r in rows:
+                if r.msg_type == "hypothesis" and not hypothesis_ctx:
+                    hypothesis_ctx = r.content[:1200]
+                elif r.msg_type == "rxn_network" and not rxn_network_ctx:
+                    rxn_network_ctx = r.content[:800]
+    except Exception:
+        pass
+
+    # 3) LLM interpretation of the new result
+    from server.utils.openai_wrapper import LLMAgent
+    prompt = f"""You are a DFT computational chemistry assistant. A new calculation result
+has arrived. Interpret it in the context of the current hypothesis and suggest any
+refinements to the research plan.
+
+CURRENT HYPOTHESIS (excerpt):
+{hypothesis_ctx or "(none yet)"}
+
+REACTION NETWORK (excerpt):
+{rxn_network_ctx or "(none yet)"}
+
+NEW RESULT:
+- Type: {result_type}
+- Species: {species}  Surface: {surface}
+- Value: {value} eV   Converged: {converged}
+- Extra: {json.dumps(extra, ensure_ascii=False)[:400]}
+
+Provide:
+1. A one-paragraph interpretation of what this result means physically/chemically.
+2. Any flag or warning if the value seems anomalous (e.g. implausibly large binding).
+3. 1–3 concrete follow-up recommendations (e.g. "check coverage dependence", "rerun with DFT+U", "this step may be rate-limiting").
+
+Be concise (< 200 words total). Use Markdown bullet points for #3."""
+
+    interpretation = ""
+    suggestions: List[str] = []
+    try:
+        raw = LLMAgent.chat(
+            messages=[{"role": "user", "content": prompt}],
+            model="gpt-4o-mini",
+            temperature=0.3,
+            max_tokens=400,
+        )
+        interpretation = raw.strip()
+        # Parse bullet points from the response for structured suggestions
+        for line in raw.splitlines():
+            line = line.strip()
+            if line.startswith(("- ", "* ", "• ")) or (len(line) > 2 and line[0].isdigit() and line[1] in ".):"):
+                suggestions.append(re.sub(r"^[\-\*•\d\.\):\s]+", "", line).strip())
+    except Exception as e:
+        interpretation = f"(LLM unavailable: {e})"
+
+    # 4) Save interpretation back to chat
+    await _save_artifact(session_id, "analysis",
+                         f"## Feedback: {result_type} — {species} / {surface}\n\n{interpretation}")
+
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "result_type": result_type,
+        "species": species,
+        "value": value,
+        "converged": converged,
+        "interpretation": interpretation,
+        "suggestions": suggestions[:3],
+    }

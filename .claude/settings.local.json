@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(wc:*)",
+      "Bash(python:*)",
+      "Bash(brew services:*)",
+      "Bash(psql --version)",
+      "Read(//usr/local/**)",
+      "Bash(brew install:*)",
+      "Bash(brew info:*)",
+      "Bash(brew list:*)",
+      "Read(//private/tmp/pgvector_build/**)",
+      "Bash(PG_CONFIG=/opt/homebrew/opt/postgresql@16/bin/pg_config make install)",
+      "Bash(pip install:*)",
+      "Bash(which python:*)",
+      "Bash(conda info:*)",
+      "Bash(/opt/miniconda3/envs/llm-agent/bin/python -c \"import sqlalchemy, asyncpg, pgvector; print\\('OK'\\)\" 2>&1)",
+      "Bash(/opt/miniconda3/envs/llm-agent/bin/pip install:*)",
+      "Bash(/opt/miniconda3/envs/llm-agent/bin/python scripts/test_ingest.py 2>&1)",
+      "Bash(psql:*)",
+      "Bash(cd:*)",
+      "Bash(\\\\\n/opt/miniconda3/envs/llm-agent/bin/python -c \"import py_compile; py_compile.compile\\('client/app.py'\\); print\\('syntax OK in llm-agent env'\\)\")",
+      "Bash(python3:*)",
+      "Bash(curl:*)",
+      "Bash(kill:*)",
+      "Bash(conda run:*)",
+      "Bash(lsof:*)",
+      "Bash(/opt/miniconda3/envs/llm-agent/bin/python -c \"\nimport ast, sys\nfor f in ['server/chat/intent_agent.py', 'client/app.py', 'server/execution/agent_routes.py', 'server/execution/structure_agent.py', 'client/utils/api.py']:\n    try:\n        ast.parse\\(open\\(f\\).read\\(\\)\\)\n        print\\(f'OK: {f}'\\)\n    except SyntaxError as e:\n        print\\(f'SYNTAX ERROR in {f}: {e}'\\)\n        sys.exit\\(1\\)\n\")",
+      "Bash(/opt/miniconda3/envs/llm-agent/bin/python -c \"\nimport ast\nfor f in ['server/chat/hypothesis_agent.py', 'client/app.py', 'server/execution/structure_agent.py']:\n    try:\n        ast.parse\\(open\\(f\\).read\\(\\)\\)\n        print\\(f'OK: {f}'\\)\n    except SyntaxError as e:\n        print\\(f'ERR: {f}: {e}'\\)\n\")"
+    ]
+  }
+}
