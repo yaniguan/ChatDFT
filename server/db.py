@@ -59,13 +59,21 @@ def uid() -> str:
 # ---------------------------------------------------------------------------
 # Engine / Session
 # ---------------------------------------------------------------------------
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:password@localhost:5432/chatdft",
-)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is required. "
+        "Example: postgresql+asyncpg://user@localhost:5432/chatdft_ase"
+    )
 ECHO = bool(int(os.environ.get("SQLALCHEMY_ECHO", "0")))
 
-engine = create_async_engine(DATABASE_URL, future=True, echo=ECHO, pool_pre_ping=True)
+engine = create_async_engine(
+    DATABASE_URL, future=True, echo=ECHO,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=3600,
+)
 
 AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
 SessionLocal = AsyncSessionLocal   # alias kept for backward compat

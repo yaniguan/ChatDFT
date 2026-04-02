@@ -39,7 +39,7 @@ REGISTRY: dict = {}  # kept for backward-compat; no longer used by endpoint
 async def _save_artifact(session_id: int | None, msg_type: str, content):
     if not session_id:
         return
-    from server.db_last import AsyncSessionLocal, ChatMessage
+    from server.db import AsyncSessionLocal, ChatMessage
     import json as _json
     txt = content if isinstance(content, str) else _json.dumps(content, ensure_ascii=False)
     async with AsyncSessionLocal() as s:

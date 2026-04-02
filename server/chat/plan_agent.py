@@ -64,7 +64,7 @@ async def _save_artifact(session_id: int | None, msg_type: str, content: Any):
     txt = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
     # 优先 async 会话
     try:
-        from server.db_last import AsyncSessionLocal, ChatMessage  # type: ignore
+        from server.db import AsyncSessionLocal, ChatMessage  # type: ignore
         async with AsyncSessionLocal() as s:                       # type: ignore
             m = ChatMessage(session_id=session_id, role="assistant", msg_type=msg_type, content=txt)
             s.add(m)

@@ -4,8 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, HTTPException
 from typing import Any, Dict
 from sqlalchemy import select, update, delete
-from server.db_last import AsyncSessionLocal, ChatSession  # 确保 db.py 里有 ChatSession 模型
-from server.db_last import AsyncSessionLocal, ChatSession, ChatMessage
+from server.db import AsyncSessionLocal, ChatSession  # 确保 db.py 里有 ChatSession 模型
+from server.db import AsyncSessionLocal, ChatSession, ChatMessage
 from sqlalchemy import select, desc
 
 router = APIRouter(prefix="/chat/session")
@@ -102,7 +102,7 @@ async def delete_session(req: Request):
 # 可选：用于前端 hydrate
 # server/chat/session_agent.py  (替换原 /state)
 from sqlalchemy import select, desc
-from server.db_last import AsyncSessionLocal, ChatMessage
+from server.db import AsyncSessionLocal, ChatMessage
 
 def _pick_latest(rows, mtype):
     for m in rows:

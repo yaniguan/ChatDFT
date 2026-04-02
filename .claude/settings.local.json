@@ -27,7 +27,16 @@
       "Bash(conda run:*)",
       "Bash(lsof:*)",
       "Bash(/opt/miniconda3/envs/llm-agent/bin/python -c \"\nimport ast, sys\nfor f in ['server/chat/intent_agent.py', 'client/app.py', 'server/execution/agent_routes.py', 'server/execution/structure_agent.py', 'client/utils/api.py']:\n    try:\n        ast.parse\\(open\\(f\\).read\\(\\)\\)\n        print\\(f'OK: {f}'\\)\n    except SyntaxError as e:\n        print\\(f'SYNTAX ERROR in {f}: {e}'\\)\n        sys.exit\\(1\\)\n\")",
-      "Bash(/opt/miniconda3/envs/llm-agent/bin/python -c \"\nimport ast\nfor f in ['server/chat/hypothesis_agent.py', 'client/app.py', 'server/execution/structure_agent.py']:\n    try:\n        ast.parse\\(open\\(f\\).read\\(\\)\\)\n        print\\(f'OK: {f}'\\)\n    except SyntaxError as e:\n        print\\(f'ERR: {f}: {e}'\\)\n\")"
+      "Bash(/opt/miniconda3/envs/llm-agent/bin/python -c \"\nimport ast\nfor f in ['server/chat/hypothesis_agent.py', 'client/app.py', 'server/execution/structure_agent.py']:\n    try:\n        ast.parse\\(open\\(f\\).read\\(\\)\\)\n        print\\(f'OK: {f}'\\)\n    except SyntaxError as e:\n        print\\(f'ERR: {f}: {e}'\\)\n\")",
+      "Bash(ls -lh /Users/yaniguan/Documents/04_vibecode/ChatDFT/server/*.py)",
+      "Bash(sort -k2)",
+      "Bash(mkdir -p /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/representations /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/generation /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/alignment /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/time_series)",
+      "Bash(touch /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/__init__.py /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/representations/__init__.py /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/generation/__init__.py /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/alignment/__init__.py /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/time_series/__init__.py)",
+      "Bash(grep -n \"class.*Req\\\\|class.*Resp\\\\|class.*Request\" /Users/yaniguan/Documents/04_vibecode/ChatDFT/server/chat/*.py)",
+      "Bash(xargs ls:*)",
+      "Bash(grep -n \"json.loads\\\\|json.dumps\\\\|subprocess\\\\|shell=True\" /Users/yaniguan/Documents/04_vibecode/ChatDFT/server/**/*.py)",
+      "Bash(grep -n \"import \\\\*\\\\|from.*import \\\\*\" /Users/yaniguan/Documents/04_vibecode/ChatDFT/server/**/*.py)",
+      "Bash(jupyter nbconvert:*)"
     ]
   }
 }

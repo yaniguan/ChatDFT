@@ -25,9 +25,11 @@ async def lifespan(app):
         from server.db import Base, engine  # 已有
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        print("[DB] create_all done.")
+        import logging
+        logging.getLogger("chatdft").info("DB create_all done.")
     except Exception as e:
-        print("[DB] create_all skipped:", e)
+        import logging
+        logging.getLogger("chatdft").warning("DB create_all skipped: %s", e)
 
     # Daily literature update scheduler (runs once at startup + every 24 h)
     import asyncio as _asyncio
@@ -57,10 +59,13 @@ async def lifespan(app):
 
 # 用带 lifespan 的 FastAPI 覆盖原来的 app = FastAPI()
 app = FastAPI(lifespan=lifespan)
+_ALLOWED_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:8501,http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=[o.strip() for o in _ALLOWED_ORIGINS],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(session_router, tags=["chat"])
@@ -73,8 +78,45 @@ app.include_router(agent_router)  # ← 新增
 app.include_router(exec_tasks_router, tags=["exec"])
 
 @app.get("/")
-async def health():
+async def root():
     return {"ok": True, "service": "ChatDFT", "status": "running"}
+
+
+@app.get("/health")
+async def health():
+    """Detailed health check with dependency status."""
+    checks = {"service": "running"}
+    # DB check
+    try:
+        from server.db import AsyncSessionLocal
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as s:
+            await s.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+    # ML monitoring
+    try:
+        from server.mlops.monitoring import production_monitor
+        checks["ml_health"] = production_monitor.health_status()
+    except Exception:
+        checks["ml_health"] = "unavailable"
+    # Model registry
+    try:
+        from server.mlops.model_registry import model_registry
+        checks["models_registered"] = len(model_registry.list_all())
+    except Exception:
+        checks["models_registered"] = 0
+    # Feature store
+    try:
+        from server.feature_store.store import feature_store
+        checks["features_registered"] = len(feature_store.list_features())
+        checks["features_cached"] = len(feature_store._cache)
+    except Exception:
+        checks["features_registered"] = 0
+
+    all_ok = checks.get("database") == "ok"
+    return {"ok": all_ok, "checks": checks}
 
 from server.chat.records_agent import router as records_router
 app.include_router(records_router)

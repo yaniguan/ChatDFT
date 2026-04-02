@@ -71,26 +71,33 @@ except Exception:
 # ===========================================================================
 
 _EMBED_CACHE: Dict[str, List[float]] = {}   # in-process cache (session lifetime)
+_EMBED_LOCK = asyncio.Lock()                 # prevent race conditions on cache writes
 
 
 async def embed_text(text: str, model: str = "text-embedding-3-small") -> List[float]:
-    """Return the embedding vector for *text*. Uses a simple in-memory cache."""
+    """Return the embedding vector for *text*. Thread-safe in-memory cache."""
     text = text.strip()
     if not text:
         return [0.0] * VECTOR_DIM
 
     key = hashlib.md5(text.encode()).hexdigest()
+    # Read without lock (dict reads are thread-safe in CPython)
     if key in _EMBED_CACHE:
         return _EMBED_CACHE[key]
 
     if not _OA_OK or _oa is None:
-        # Return a zero vector so the rest of the pipeline doesn't crash
         return [0.0] * VECTOR_DIM
 
     try:
         resp = await _oa.embeddings.create(input=text[:8000], model=model)
         vec = resp.data[0].embedding
-        _EMBED_CACHE[key] = vec
+        async with _EMBED_LOCK:
+            _EMBED_CACHE[key] = vec
+            # Evict oldest entries if cache grows too large
+            if len(_EMBED_CACHE) > 10000:
+                to_remove = list(_EMBED_CACHE.keys())[:2000]
+                for k in to_remove:
+                    _EMBED_CACHE.pop(k, None)
         return vec
     except Exception as e:
         log.warning("embed_text failed: %s", e)

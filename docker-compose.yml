@@ -1,0 +1,43 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: chatdft_ase
+      POSTGRES_USER: chatdft
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-chatdft_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatdft -d chatdft_ase"]
+      interval: 5s
+      retries: 5
+
+  server:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+asyncpg://chatdft:${DB_PASSWORD:-chatdft_dev}@db:5432/chatdft_ase
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      CORS_ORIGINS: http://localhost:8501,http://localhost:3000
+      HPC_HOST: ${HPC_HOST:-}
+      HPC_USER: ${HPC_USER:-}
+      REMOTE_BASE: ${REMOTE_BASE:-/tmp/chatdft}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ui:
+    build: .
+    command: streamlit run client/app.py --server.port 8501 --server.address 0.0.0.0
+    environment:
+      CHATDFT_BACKEND: http://server:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - server
+
+volumes:
+  pgdata:

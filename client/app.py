@@ -71,6 +71,20 @@ st.markdown("""
 }
 .task-name { font-weight: 600; font-size: 0.9rem; }
 .task-type { font-size: 0.75rem; color: #64748b; }
+
+/* top tab bar styling */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    border-bottom: 2px solid #e2e8f0;
+}
+.stTabs [data-baseweb="tab"] {
+    padding: 8px 16px;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+.stTabs [aria-selected="true"] {
+    border-bottom: 3px solid #6366f1;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -326,11 +340,10 @@ def render_login():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SIDEBAR
+# SIDEBAR  (compact: sessions + status only)
 # ─────────────────────────────────────────────────────────────────────────────
 def render_sidebar():
     with st.sidebar:
-        # Header
         st.markdown("""
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
             <span style="font-size:1.6rem">⚛️</span>
@@ -339,47 +352,7 @@ def render_sidebar():
         """, unsafe_allow_html=True)
         st.caption(f"👤 {st.session_state.username}")
         st.divider()
-
-        # Panel selector
-        panel = st.radio(
-            "Panel",
-            ["💬 Sessions", "📚 Literature", "📊 Analysis",
-             "🔬 QA & Debug", "🧱 Structure", "🗄 HTP Dataset", "⚙️ Settings"],
-            label_visibility="collapsed",
-            key="sidebar_panel_radio",
-        )
-        st.session_state.sidebar_panel = panel
-        st.divider()
-
-        # ── Sessions panel ────────────────────────────────────────────────
-        if panel == "💬 Sessions":
-            _render_session_panel()
-
-        # ── Literature panel ──────────────────────────────────────────────
-        elif panel == "📚 Literature":
-            _render_literature_panel()
-
-        # ── Analysis panel ────────────────────────────────────────────────
-        elif panel == "📊 Analysis":
-            _render_analysis_panel()
-
-        # ── QA & Debug panel ─────────────────────────────────────────────
-        elif panel == "🔬 QA & Debug":
-            _render_qa_panel()
-
-        # ── Structure Workspace panel ─────────────────────────────────────
-        elif panel == "🧱 Structure":
-            _render_structure_panel()
-
-        # ── HTP Dataset panel ─────────────────────────────────────────────
-        elif panel == "🗄 HTP Dataset":
-            _render_htp_panel()
-
-        # ── Settings panel ────────────────────────────────────────────────
-        elif panel == "⚙️ Settings":
-            _render_settings_panel()
-
-        # Bottom: backend status
+        _render_session_panel()
         st.divider()
         _render_backend_status()
 
@@ -669,9 +642,14 @@ def _render_analysis_panel():
 
 def _render_qa_panel():
     """QA & Benchmarking Hub — functional advisor, surface check, OUTCAR debug."""
-    st.markdown("**QA & Benchmarking**")
+    st.markdown("### QA & Diagnostics")
+    st.caption(
+        "DFT functional recommendations, surface stability checks (known reconstructions), "
+        "and VASP OUTCAR debugging with automatic INCAR patch generation."
+    )
 
-    tab1, tab2, tab3 = st.tabs(["🔧 Functional", "🗺 Surface", "🐛 Debug OUTCAR"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🔧 Functional Advisor", "🗺 Surface Stability",
+                                       "🐛 Debug OUTCAR", "📋 NEB Preparation"])
 
     with tab1:
         st.caption("Get DFT functional / INCAR recommendations for your system.")
@@ -740,13 +718,49 @@ def _render_qa_panel():
             else:
                 st.warning("Enter a job directory.")
 
+    with tab4:
+        st.caption(
+            "Get NEB pathway suggestions, competing mechanisms, and INCAR checklist "
+            "for transition state searches."
+        )
+        sid = st.session_state.session_id
+        neb_rxn = st.text_input("Reaction", placeholder="e.g. CO2RR, dehydrogenation",
+                                 key="qa_neb_rxn")
+        neb_surf = st.text_input("Surface", placeholder="e.g. Cu(111), Pt(111)",
+                                  key="qa_neb_surf")
+        if st.button("Get NEB Preparation", use_container_width=True, key="qa_neb_btn"):
+            if neb_rxn.strip() and neb_surf.strip():
+                with st.spinner("Generating NEB preparation guide..."):
+                    r = api.qa_neb_prep(sid or 0, neb_rxn.strip(), neb_surf.strip())
+                if r.get("ok"):
+                    st.markdown(r.get("checklist_md", ""))
+                    pairs = r.get("neb_pairs", [])
+                    if pairs:
+                        st.markdown("**Suggested NEB pairs (IS → FS):**")
+                        for p in pairs:
+                            st.code(f"{p[0]}  →  {p[1]}", language=None)
+                    incar = r.get("incar_neb", {})
+                    if incar:
+                        with st.expander("CI-NEB INCAR settings"):
+                            lines = [f"{k} = {v}" for k, v in incar.items()]
+                            st.code("\n".join(lines), language="fortran")
+                else:
+                    st.error(r.get("detail", "Failed"))
+            else:
+                st.warning("Enter both reaction and surface.")
+
 
 def _render_structure_panel():
     """Interactive structure builder: surface, molecule, site finding, adsorbate placement."""
-    st.markdown("**Structure Workspace**")
-    tab_surf, tab_mol, tab_deprot, tab_sites, tab_ads, tab_cpx = st.tabs([
-        "🏗 Build Surface", "🧬 Build Molecule", "⚗️ Deprotonate",
-        "🔍 Find Sites", "📌 Place Adsorbate", "🏢 Coordination Compound"
+    st.markdown("### Structure Lab")
+    st.caption(
+        "Build catalytic surfaces, molecules, adsorbate configurations, NEB pathways, "
+        "and coordination compounds. All structures are stored in the structure library."
+    )
+    tab_surf, tab_mol, tab_deprot, tab_sites, tab_ads, tab_cpx, tab_slab_ops, tab_neb, tab_iface = st.tabs([
+        "🏗 Surface", "🧬 Molecule", "⚗️ Deprotonate",
+        "🔍 Sites", "📌 Adsorbate", "🏢 Complex",
+        "🔧 Slab Ops", "🔗 NEB Images", "📐 Interface"
     ])
 
     with tab_surf:
@@ -1011,13 +1025,139 @@ def _render_structure_panel():
                 else:
                     st.error(r.get("error", "Config generation failed"))
 
+    with tab_slab_ops:
+        st.markdown("##### Slab Modifications")
+        st.caption("Add/remove layers, adjust vacuum, dope, or symmetrise an existing slab.")
+        slab_poscar = st.text_area(
+            "POSCAR (input slab)",
+            value=st.session_state.get("structure_panel_poscar", ""),
+            height=100, key="slab_ops_poscar",
+        )
+        col_op1, col_op2, col_op3 = st.columns(3)
+        with col_op1:
+            if st.button("Add layer", key="slab_add_layer", use_container_width=True) and slab_poscar.strip():
+                with st.spinner("Adding layer..."):
+                    r = api.slab_add_layer(slab_poscar.strip())
+                if r.get("ok"):
+                    st.session_state["structure_panel_poscar"] = r["poscar"]
+                    st.success(f"Added layer — {r.get('n_atoms','')} atoms")
+                else:
+                    st.error(r.get("detail", "Failed"))
+            if st.button("Delete top layer", key="slab_del_layer", use_container_width=True) and slab_poscar.strip():
+                with st.spinner("Removing layer..."):
+                    r = api.slab_delete_layer(slab_poscar.strip())
+                if r.get("ok"):
+                    st.session_state["structure_panel_poscar"] = r["poscar"]
+                    st.success(f"Removed layer — {r.get('n_atoms','')} atoms")
+                else:
+                    st.error(r.get("detail", "Failed"))
+        with col_op2:
+            new_vac = st.number_input("Vacuum (A)", 5.0, 30.0, 15.0, 0.5, key="slab_vac_val")
+            if st.button("Set vacuum", key="slab_set_vac", use_container_width=True) and slab_poscar.strip():
+                with st.spinner("Setting vacuum..."):
+                    r = api.slab_set_vacuum(slab_poscar.strip(), float(new_vac))
+                if r.get("ok"):
+                    st.session_state["structure_panel_poscar"] = r["poscar"]
+                    st.success("Vacuum updated")
+                else:
+                    st.error(r.get("detail", "Failed"))
+            if st.button("Make symmetric", key="slab_sym", use_container_width=True) and slab_poscar.strip():
+                with st.spinner("Symmetrising..."):
+                    r = api.slab_make_symmetric(slab_poscar.strip(), vacuum=float(new_vac))
+                if r.get("ok"):
+                    st.session_state["structure_panel_poscar"] = r["poscar"]
+                    st.success(f"Symmetric slab — {r.get('n_atoms','')} atoms")
+                else:
+                    st.error(r.get("detail", "Failed"))
+        with col_op3:
+            st.markdown("**Doping**")
+            dope_host = st.text_input("Host element", value="Cu", key="dope_host")
+            dope_dopant = st.text_input("Dopant", value="Ni", key="dope_dopant")
+            dope_conc = st.slider("Concentration", 0.0, 1.0, 0.1, 0.05, key="dope_conc")
+            if st.button("Dope slab", key="slab_dope_btn", use_container_width=True) and slab_poscar.strip():
+                with st.spinner("Doping..."):
+                    r = api.slab_dope(slab_poscar.strip(), dope_host, dope_dopant,
+                                       concentration=float(dope_conc))
+                if r.get("ok"):
+                    st.session_state["structure_panel_poscar"] = r["poscar"]
+                    st.success(f"Doped: {dope_host}→{dope_dopant} at {dope_conc:.0%}")
+                else:
+                    st.error(r.get("detail", "Failed"))
+
+    with tab_neb:
+        st.markdown("##### NEB Image Interpolation")
+        st.caption(
+            "Generate intermediate images between initial state (IS) and final state (FS) "
+            "for nudged elastic band calculations."
+        )
+        col_is, col_fs = st.columns(2)
+        with col_is:
+            is_poscar = st.text_area("Initial state POSCAR", height=120, key="neb_is_poscar",
+                                      placeholder="Paste IS POSCAR here")
+        with col_fs:
+            fs_poscar = st.text_area("Final state POSCAR", height=120, key="neb_fs_poscar",
+                                      placeholder="Paste FS POSCAR here")
+        n_images = st.slider("Number of images", 3, 11, 7, 2, key="neb_n_images",
+                              help="Odd numbers recommended (7 is standard for CI-NEB)")
+        if st.button("Generate NEB Images", type="primary", use_container_width=True, key="neb_gen_btn"):
+            if is_poscar.strip() and fs_poscar.strip():
+                with st.spinner(f"Interpolating {n_images} NEB images..."):
+                    r = api.generate_neb_images(is_poscar.strip(), fs_poscar.strip(), int(n_images))
+                if r.get("ok"):
+                    images = r.get("images", [])
+                    st.success(f"Generated {len(images)} NEB images")
+                    for i, img in enumerate(images):
+                        with st.expander(f"Image {i}", expanded=False):
+                            st.code(img.get("poscar", ""), language="text")
+                            st.download_button(
+                                f"Download image {i}",
+                                data=img.get("poscar", ""),
+                                file_name=f"image_{i:02d}.POSCAR",
+                                key=f"neb_dl_{i}",
+                            )
+                else:
+                    st.error(r.get("detail", "Interpolation failed"))
+            else:
+                st.warning("Provide both IS and FS POSCARs.")
+
+    with tab_iface:
+        st.markdown("##### Heterostructure Interface")
+        st.caption(
+            "Stack two structures to build an interface. "
+            "Useful for heterojunctions, bilayers, and supported catalysts."
+        )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            poscar_a = st.text_area("Structure A (bottom)", height=120, key="iface_poscar_a",
+                                     placeholder="Bottom slab POSCAR")
+        with col_b:
+            poscar_b = st.text_area("Structure B (top)", height=120, key="iface_poscar_b",
+                                     placeholder="Top slab/layer POSCAR")
+        iface_mismatch = st.slider("Max lattice mismatch (%)", 0.0, 10.0, 5.0, 0.5, key="iface_mismatch")
+        if st.button("Build Interface", type="primary", use_container_width=True, key="iface_build_btn"):
+            if poscar_a.strip() and poscar_b.strip():
+                with st.spinner("Building interface..."):
+                    r = api.build_interface(poscar_a.strip(), poscar_b.strip(),
+                                             lattice_mismatch=float(iface_mismatch))
+                if r.get("ok"):
+                    st.session_state["structure_panel_poscar"] = r.get("poscar", "")
+                    st.success(f"Interface built — {r.get('n_atoms','')} atoms")
+                    _render_structure_viz(r.get("viz", {}), r.get("plot_png_b64", ""))
+                    with st.expander("POSCAR", expanded=False):
+                        st.code(r.get("poscar", ""), language="text")
+                else:
+                    st.error(r.get("detail", "Interface build failed"))
+            else:
+                st.warning("Provide both structures.")
+
 
 def _render_htp_panel():
     """HTP NNP Dataset Generation — generate, monitor, and export training data."""
-    st.markdown("**HTP NNP Dataset**")
+    st.markdown("### HTP NNP Dataset Generator")
     st.caption(
-        "Generate diverse structures for neural-network-potential (NNP) training. "
-        "Structures are stored in ASE database and mirrored to PostgreSQL."
+        "Generate diverse structures for neural-network-potential (NNP) training via "
+        "7 physics-informed strategies: rattle, strain, temperature rattle (Einstein model), "
+        "surface rattle, alloy configurations, vacancy structures. Export to extXYZ for MACE/NequIP/DeePMD."
     )
 
     tab_gen, tab_stats, tab_export = st.tabs(["⚙️ Generate", "📊 Stats", "📤 Export"])
@@ -2397,51 +2537,136 @@ def run_pipeline(session_id: int, query: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MAIN CHAT PAGE
+# DASHBOARD
 # ─────────────────────────────────────────────────────────────────────────────
-def render_main():
-    # Header
+def render_dashboard():
     st.markdown("""
-    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:2px">
-        <h2 style="margin:0;font-weight:800">⚛️ ChatDFT</h2>
-        <span style="color:#64748b;font-size:0.95rem">
-            Describe your reaction system — intent, mechanism, and calculations happen automatically.
-        </span>
+    <div style="text-align:center;padding:20px 0 10px 0">
+        <span style="font-size:3rem">⚛️</span>
+        <h1 style="font-size:2.4rem;font-weight:800;letter-spacing:-1px;margin:0">ChatDFT</h1>
+        <p style="font-size:1.05rem;color:#64748b;margin-top:4px;max-width:600px;margin-left:auto;margin-right:auto">
+            Autonomous reaction pathway discovery via LLM-guided DFT.
+            Describe your reaction — we handle hypothesis, simulation, and analysis.
+        </p>
     </div>
     """, unsafe_allow_html=True)
 
     sid = st.session_state.session_id
     if sid:
-        sname = st.session_state.session_name or f"Session {sid}"
-        st.caption(f"Active session: **{sname}** (#{sid})")
+        st.success(f"Active session: **{st.session_state.session_name}** (#{sid})")
     else:
-        st.info("👈 Create or open a session from the sidebar to get started.")
+        st.info("Create a session from the sidebar to get started.")
 
-    st.divider()
+    st.markdown("---")
+    st.markdown("### Capabilities")
+
+    # Feature cards — 3 columns × 3 rows
+    FEATURES = [
+        ("💬", "Chat Pipeline",
+         "Natural language → Intent → Mechanism Hypothesis → DFT Plan. "
+         "Describe your reaction system and get a full calculation workflow.",
+         "Chat"),
+        ("🧱", "Structure Lab",
+         "Build surfaces (FCC/BCC/HCP), molecules (SMILES/PubChem), "
+         "find adsorption sites, place adsorbates, generate NEB images, dope slabs.",
+         "Structure Lab"),
+        ("📈", "Thermodynamics",
+         "Free energy diagrams (CHE framework), microkinetic models "
+         "(TOF, coverages, RDS), overpotential analysis. 20+ known pathways.",
+         "Thermodynamics"),
+        ("🔬", "QA & Diagnostics",
+         "DFT functional advisor, surface stability checker, "
+         "VASP OUTCAR debugger (8 failure modes + INCAR patches).",
+         "QA & Debug"),
+        ("📚", "Knowledge Base",
+         "RAG-powered literature search: arXiv + Zotero + Perplexity. "
+         "Hybrid semantic+keyword search with cross-encoder reranking.",
+         "Knowledge Base"),
+        ("🗄️", "HTP Dataset",
+         "Generate NNP training data: rattle, strain, temperature rattle (Einstein model), "
+         "alloy configs, vacancy structures. Export to extXYZ.",
+         "HTP Dataset"),
+        ("📊", "Results Analysis",
+         "LLM-as-senior-chemist: conclusions with confidence, "
+         "gap identification, publication readiness checklist, next calculation suggestions.",
+         "Analysis"),
+        ("📋", "Calc Profiles",
+         "22 VASP calculation profiles: relax, NEB, CI-NEB, dimer, GC-DFT, "
+         "DOS, bands, ELF, Bader, CDD, work function, COHP.",
+         "Settings"),
+        ("🖥️", "HPC Submission",
+         "Submit to PBS/SGE/SLURM clusters via SSH. "
+         "Auto-monitoring with convergence feedback loop.",
+         "Chat"),
+    ]
+
+    for row_start in range(0, len(FEATURES), 3):
+        cols = st.columns(3)
+        for i, col in enumerate(cols):
+            idx = row_start + i
+            if idx >= len(FEATURES):
+                break
+            icon, title, desc, tab_target = FEATURES[idx]
+            with col:
+                with st.container(border=True):
+                    st.markdown(f"### {icon} {title}")
+                    st.caption(desc)
+
+    # Quick stats
+    st.markdown("---")
+    st.markdown("### Pipeline")
+    st.markdown("""
+    ```
+    Natural Language  →  Intent Parsing  →  Hypothesis Generation  →  DFT Plan
+         (GPT-4o)         (RAG+few-shot)     (template+validate)     (task DAG)
+                                    ↓
+         Structure Building  →  Parameter Generation  →  HPC Submission  →  Post-Analysis
+          (ASE+pymatgen)        (22 VASP profiles)      (SSH+rsync)       (pymatgen parse)
+                                    ↓
+         Free Energy Diagram  →  Microkinetics  →  Publication Checklist
+           (CHE+ZPE+TS)        (Arrhenius MF)     (LLM analysis)
+    ```
+    """)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CHAT PAGE
+# ─────────────────────────────────────────────────────────────────────────────
+def render_chat_page():
+    sid = st.session_state.session_id
+    if not sid:
+        st.info("Create or open a session from the sidebar to start chatting.")
+        return
+
+    sname = st.session_state.session_name or f"Session {sid}"
+    st.caption(f"Session: **{sname}** (#{sid})")
 
     # Chat history
     for msg in st.session_state.chat_messages:
         render_message(msg)
 
-    # ── Quick Demo buttons ─────────────────────────────────────────────────────
-    if sid and not st.session_state.chat_messages:
+    # Quick Demo buttons
+    if not st.session_state.chat_messages:
         st.markdown("**Quick demos** — click to run a pre-configured workflow:")
         _DEMOS = [
-            ("🔥 Butane dehydrogenation",
+            ("🔥 Butane dehydrogenation on Pt(111)",
              "Study the dehydrogenation of C4H10 to C4H8 on Pt(111) surface via thermal catalysis. "
              "I want the full reaction mechanism including C-H bond activation steps, "
              "transition states (NEB), and a free energy diagram at 500 K."),
-            ("⚡ CO₂RR on Cu(111)",
+            ("⚡ CO2RR on Cu(111)",
              "Study CO2 reduction reaction (CO2RR) on Cu(111) surface to produce methanol (CH3OH). "
              "Electrochemical conditions: pH=7, U=-0.8 V vs RHE, KHCO3 electrolyte. "
-             "Include full CO2→COOH*→CO*→CHO*→CH2O*→CH3O*→CH3OH pathway with PCET steps."),
+             "Include full CO2->COOH*->CO*->CHO*->CH2O*->CH3O*->CH3OH pathway with PCET steps."),
+            ("🧲 N2 reduction on Fe(110)",
+             "Study the nitrogen reduction reaction (NRR) on Fe(110) surface via the distal mechanism. "
+             "Electrochemical conditions: pH=0, U=-0.5 V vs RHE."),
         ]
-        _demo_cols = st.columns(len(_DEMOS))
+        cols = st.columns(len(_DEMOS))
         _demo_query = None
-        for _col, (_label, _q) in zip(_demo_cols, _DEMOS):
-            with _col:
-                if st.button(_label, use_container_width=True, key=f"demo_{_label[:8]}"):
-                    _demo_query = _q
+        for col, (label, q) in zip(cols, _DEMOS):
+            with col:
+                if st.button(label, use_container_width=True, key=f"demo_{label[:10]}"):
+                    _demo_query = q
         if _demo_query:
             _add_message("user", _demo_query)
             with st.chat_message("user", avatar="👤"):
@@ -2456,33 +2681,201 @@ def render_main():
             st.rerun()
 
     # Input
-    placeholder = (
-        "e.g. I want to study the electrochemical dehydrogenation of C4H10 to C4H8 on Pt(111)"
-        if sid else
-        "Create a session first →"
+    query = st.chat_input(
+        "Describe your reaction system...",
+        disabled=not bool(sid),
     )
-    query = st.chat_input(placeholder, disabled=not bool(sid))
-
     if query and sid:
-        # Show user message
         _add_message("user", query)
         with st.chat_message("user", avatar="👤"):
             st.markdown(query)
-
-        # Run pipeline
         with st.chat_message("assistant", avatar="⚛️"):
             pipeline_data = run_pipeline(sid, query)
-
-        # Store result in chat history
         summary = _pipeline_summary(pipeline_data)
         _add_message("assistant", summary, kind="pipeline", data=pipeline_data)
-
-        # Store for sidebar reuse
         st.session_state.last_intent    = pipeline_data["intent"]
         st.session_state.last_hypothesis = pipeline_data["hypothesis"]
         st.session_state.last_plan       = pipeline_data["plan"]
-
         st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THERMODYNAMICS PAGE (promotes sidebar panels to full page)
+# ─────────────────────────────────────────────────────────────────────────────
+def render_thermo_page():
+    sid = st.session_state.session_id
+
+    col_fe, col_mk = st.columns(2)
+
+    with col_fe:
+        st.markdown("### Free Energy Diagram")
+        st.caption(
+            "Build a CHE (Computational Hydrogen Electrode) free energy diagram "
+            "with ZPE + entropy corrections from Norskov group defaults."
+        )
+        reaction_opts = ["CO2RR", "HER", "OER", "NRR", "NO3RR"]
+        rxn  = st.selectbox("Reaction", reaction_opts, key="fe_reaction_main")
+        T_fe = st.number_input("Temperature (K)", value=298.15, step=10.0, key="fe_T_main")
+        U_fe = st.number_input("Potential (V vs RHE)", value=0.0, step=0.1, key="fe_U_main",
+                               help="Applied electrode potential for CHE correction: dG(U) = dG(0) - n_e * U")
+        use_known = st.checkbox("Use known literature pathway", value=True, key="fe_known_main",
+                                help="Load benchmark pathway from the 20+ built-in literature pathways")
+        if st.button("Generate Diagram", type="primary", use_container_width=True, key="fe_btn_main"):
+            if not sid:
+                st.warning("Open a session first.")
+            else:
+                with st.spinner("Building free energy diagram (CHE + ZPE + TS corrections)..."):
+                    r = api.post("/chat/qa/free_energy", {
+                        "session_id": sid, "reaction": rxn,
+                        "temperature": T_fe, "potential_V": U_fe,
+                        "use_known_pathway": use_known,
+                    })
+                if r.get("ok"):
+                    _add_message("assistant", r.get("interpretation_md", ""),
+                                 kind="free_energy", data=r)
+                    st.rerun()
+                else:
+                    st.error(r.get("detail", "Failed"))
+
+    with col_mk:
+        st.markdown("### Microkinetic Model")
+        st.caption(
+            "Mean-field steady-state microkinetics with Arrhenius rate constants. "
+            "Computes TOF, surface coverages, and rate-controlling step."
+        )
+        rxn_mk = st.selectbox("Reaction", reaction_opts, key="mk_rxn_main")
+        T_mk = st.number_input("Temperature (K)", value=500.0, step=50.0, key="mk_T_main")
+        U_mk = st.number_input("Potential (V vs RHE)", value=-0.8, step=0.1, key="mk_U_main")
+        if st.button("Run Microkinetics", type="primary", use_container_width=True, key="mk_btn_main"):
+            if not sid:
+                st.warning("Open a session first.")
+            else:
+                with st.spinner("Solving mean-field steady-state equations..."):
+                    r = api.post("/chat/qa/microkinetics", {
+                        "session_id": sid, "reaction": rxn_mk,
+                        "temperature": T_mk, "potential_V": U_mk,
+                        "use_known_pathway": True,
+                    })
+                if r.get("ok"):
+                    _add_message("assistant", r.get("interpretation_md", ""),
+                                 kind="microkinetics", data=r)
+                    st.rerun()
+                else:
+                    st.error(r.get("detail", "Failed"))
+
+    # Show recent thermo results from chat
+    st.markdown("---")
+    st.markdown("### Results")
+    thermo_msgs = [m for m in st.session_state.chat_messages
+                   if m.get("kind") in ("free_energy", "microkinetics")]
+    if thermo_msgs:
+        for msg in thermo_msgs[-3:]:
+            render_message(msg)
+    else:
+        st.caption("No thermodynamics results yet. Generate a diagram above.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ANALYSIS PAGE (promoted from sidebar)
+# ─────────────────────────────────────────────────────────────────────────────
+def render_analysis_page():
+    sid = st.session_state.session_id
+    if not sid:
+        st.info("Open a session to analyse results.")
+        return
+
+    col_stats, col_run = st.columns([1, 2])
+
+    with col_stats:
+        st.markdown("### Session Stats")
+        r = api.get(f"/chat/analyze/summary/{sid}")
+        if r.get("ok"):
+            stats = r.get("dft_stats", {})
+            st.metric("Converged", stats.get("converged", 0))
+            st.metric("Failed", stats.get("failed", 0))
+            st.metric("Total", stats.get("total", 0))
+            if r.get("has_analysis"):
+                a = r.get("analysis", {})
+                status = a.get("publication_checklist", {}).get("status", "?")
+                icons = {"incomplete": "🔴", "near_complete": "🟡", "publishable": "🟢"}
+                st.markdown(f"Publication: {icons.get(status, '⚪')} `{status}`")
+        else:
+            st.caption("No stats available.")
+
+    with col_run:
+        st.markdown("### Run Analysis")
+        st.caption(
+            "GPT-4o acts as a senior computational chemist reviewing all DFT results "
+            "in this session. Returns conclusions, gaps, next steps, and publication checklist."
+        )
+        focus = st.selectbox(
+            "Analysis focus",
+            ["overall progress and next steps",
+             "mechanism gaps",
+             "publication readiness",
+             "kinetics and barriers",
+             "electrochemical potential effects"],
+            key="analysis_focus_main",
+        )
+        if st.button("Run Analysis", type="primary", use_container_width=True, key="run_analysis_main"):
+            with st.spinner("Analysing all session results (LLM + RAG)..."):
+                r = api.run_analyze(sid, focus=focus)
+            if r.get("ok"):
+                _add_message("assistant", r.get("summary_md", ""), kind="analysis", data=r)
+                st.rerun()
+            else:
+                st.error(r.get("detail", "Analysis failed"))
+
+    # Show recent analysis results
+    st.markdown("---")
+    analysis_msgs = [m for m in st.session_state.chat_messages if m.get("kind") == "analysis"]
+    if analysis_msgs:
+        for msg in analysis_msgs[-2:]:
+            render_message(msg)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN CONTENT WITH TABS
+# ─────────────────────────────────────────────────────────────────────────────
+def render_main_tabs():
+    tab_home, tab_chat, tab_struct, tab_thermo, tab_qa, tab_lit, tab_analysis, tab_htp, tab_settings = st.tabs([
+        "🏠 Home",
+        "💬 Chat Pipeline",
+        "🧱 Structure Lab",
+        "📈 Thermodynamics",
+        "🔬 QA & Debug",
+        "📚 Knowledge Base",
+        "📊 Analysis",
+        "🗄️ HTP Dataset",
+        "⚙️ Settings",
+    ])
+
+    with tab_home:
+        render_dashboard()
+
+    with tab_chat:
+        render_chat_page()
+
+    with tab_struct:
+        _render_structure_panel()
+
+    with tab_thermo:
+        render_thermo_page()
+
+    with tab_qa:
+        _render_qa_panel()
+
+    with tab_lit:
+        _render_literature_panel()
+
+    with tab_analysis:
+        render_analysis_page()
+
+    with tab_htp:
+        _render_htp_panel()
+
+    with tab_settings:
+        _render_settings_panel()
 
 
 def _pipeline_summary(data: dict) -> str:
@@ -2505,7 +2898,7 @@ def main():
         return
 
     render_sidebar()
-    render_main()
+    render_main_tabs()
 
 
 main()
