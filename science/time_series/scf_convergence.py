@@ -50,6 +50,14 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from science.core.constants import (
+    FFT_AC_RATIO_THRESHOLD, FFT_MIN_FREQ, FFT_MIN_STEPS,
+    FFT_SIGN_CHANGE_THRESHOLD,
+)
+from science.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Data containers
@@ -143,9 +151,9 @@ class ChargeSloshingDetector:
 
     def __init__(
         self,
-        dc_ratio: float = 0.3,    # dominant AC/DC ratio to flag sloshing
-        f_low: float = 0.05,      # min freq (cycles/step) for sloshing
-        min_steps: int = 8,       # need at least this many steps to analyse
+        dc_ratio: float = FFT_AC_RATIO_THRESHOLD,
+        f_low: float = FFT_MIN_FREQ,
+        min_steps: int = FFT_MIN_STEPS,
     ):
         self.dc_ratio  = dc_ratio
         self.f_low     = f_low
@@ -165,16 +173,23 @@ class ChargeSloshingDetector:
         # Log-transform (avoid log(0))
         log_dE = np.log(np.clip(dE, 1e-20, None))
 
-        # Hanning window
-        window = np.hanning(n)
-        windowed = (log_dE - log_dE.mean()) * window
+        # Detrend: remove the linear trend (exponential decay in log space)
+        # so that we're looking at oscillations *around* the decay envelope
+        steps = np.arange(n, dtype=float)
+        slope, intercept = np.polyfit(steps, log_dE, 1)
+        detrended = log_dE - (intercept + slope * steps)
 
-        # FFT
+        # Hanning window on detrended signal (NOT mean-subtracted raw)
+        window = np.hanning(n)
+        windowed = detrended * window
+
+        # FFT of detrended signal
         fft_vals = np.fft.rfft(windowed)
         fft_mag  = np.abs(fft_vals)
         freqs    = np.fft.rfftfreq(n)
 
-        dc_mag   = fft_mag[0] + 1e-20
+        # Total signal power (L2 norm of detrended)
+        total_power = float(np.sum(detrended**2)) + 1e-20
         ac_mask  = freqs > self.f_low
         if not np.any(ac_mask):
             return SloshingResult(
@@ -186,15 +201,28 @@ class ChargeSloshingDetector:
         dom_ac_idx = np.argmax(fft_mag[ac_mask])
         dom_freq   = float(freqs[ac_mask][dom_ac_idx])
         dom_amp    = float(fft_mag[ac_mask][dom_ac_idx])
-        ratio      = dom_amp / dc_mag
+
+        # Oscillation ratio: compare dominant AC power to total detrended power
+        # For pure exponential decay, detrended ≈ noise → low ratio
+        # For sloshing, detrended has strong periodic component → high ratio
+        ac_power = float(np.sum(fft_mag[ac_mask]**2))
+        total_fft_power = float(np.sum(fft_mag**2)) + 1e-20
+        ratio = ac_power / total_fft_power
+
+        # Also check sign-change frequency in raw dE differences
+        # True sloshing has regular sign changes; monotone decay does not
+        dE_diff = np.diff(dE)
+        sign_changes = np.sum(np.diff(np.sign(dE_diff)) != 0)
+        sign_change_rate = sign_changes / max(n - 2, 1)
 
         # Envelope decay via OLS on log|ΔE|
-        steps = np.arange(n, dtype=float)
-        slope, intercept = np.polyfit(steps, log_dE, 1)
         decay_rate = -float(slope)   # positive → converging
 
-        is_sloshing = (ratio > self.dc_ratio) and (dom_freq > self.f_low)
-        confidence  = float(np.clip(ratio / (self.dc_ratio * 2), 0, 1))
+        # Sloshing requires BOTH:
+        # 1. Strong AC component relative to total (ratio > threshold)
+        # 2. Frequent sign changes (oscillatory, not monotone)
+        is_sloshing = (ratio > self.dc_ratio) and (sign_change_rate > FFT_SIGN_CHANGE_THRESHOLD)
+        confidence  = float(np.clip(ratio * sign_change_rate * 4, 0, 1))
 
         remedy = self._recommend(is_sloshing, decay_rate, dom_freq)
         return SloshingResult(
@@ -529,3 +557,183 @@ class IonicConvergenceTracker:
             f"  Mean convergence quality  : {np.mean(quality):.3f}\n"
             f"  POTIM too large?          : {self.detect_potim_too_large()}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Threshold validation via cross-validation
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ThresholdValidationResult:
+    """Result of sloshing threshold optimisation."""
+    best_ac_ratio: float
+    best_sign_change: float
+    accuracy: float
+    precision: float
+    recall: float
+    f1: float
+    n_healthy: int
+    n_sloshing: int
+    roc_curve: list  # list of (fpr, tpr, threshold) tuples
+
+
+def _generate_validation_trajectories(
+    n_healthy: int = 50,
+    n_sloshing: int = 50,
+    seed: int = 42,
+) -> tuple:
+    """
+    Generate diverse synthetic SCF trajectories for threshold validation.
+
+    Healthy trajectories: exponential decay with varying rates and noise.
+    Sloshing trajectories: oscillatory with varying frequencies and decay.
+
+    Returns (trajectories, labels) where label=1 means sloshing.
+    """
+    rng = np.random.default_rng(seed)
+    trajectories = []
+    labels = []
+
+    for _ in range(n_healthy):
+        n = rng.integers(15, 60)
+        A = rng.uniform(0.1, 2.0)
+        lam = rng.uniform(0.1, 0.5)
+        noise = rng.uniform(0.0005, 0.005)
+        t = np.arange(n)
+        dE = A * np.exp(-lam * t) + rng.normal(0, noise, n)
+        trajectories.append(np.abs(dE).tolist())
+        labels.append(0)
+
+    for _ in range(n_sloshing):
+        n = rng.integers(15, 60)
+        A = rng.uniform(0.005, 0.1)
+        decay = rng.uniform(-0.01, 0.05)
+        freq = rng.uniform(0.15, 0.45)
+        t = np.arange(n)
+        oscillation = A * np.exp(-decay * t) * (
+            0.3 + np.abs(np.sin(2 * np.pi * freq * t))
+        )
+        noise = rng.uniform(0.0001, 0.001)
+        dE = oscillation + rng.normal(0, noise, n)
+        trajectories.append(np.abs(dE).tolist())
+        labels.append(1)
+
+    return trajectories, np.array(labels)
+
+
+def validate_thresholds(
+    n_healthy: int = 50,
+    n_sloshing: int = 50,
+    seed: int = 42,
+    n_grid: int = 20,
+) -> ThresholdValidationResult:
+    """
+    Validate and optimise sloshing detection thresholds via grid search.
+
+    Sweeps over (ac_ratio_threshold, sign_change_threshold) on synthetic
+    trajectories with known labels, selecting the pair that maximises F1.
+
+    This provides empirical justification for the default thresholds
+    rather than relying on arbitrary values.
+
+    Parameters
+    ----------
+    n_healthy : int
+        Number of synthetic healthy trajectories.
+    n_sloshing : int
+        Number of synthetic sloshing trajectories.
+    seed : int
+        Random seed for reproducibility.
+    n_grid : int
+        Grid resolution per dimension.
+
+    Returns
+    -------
+    ThresholdValidationResult
+        Optimal thresholds and classification metrics.
+    """
+    trajectories, labels = _generate_validation_trajectories(n_healthy, n_sloshing, seed)
+
+    # Grid of threshold candidates
+    ac_ratios = np.linspace(0.1, 0.6, n_grid)
+    sign_changes = np.linspace(0.1, 0.6, n_grid)
+
+    best_f1 = -1.0
+    best_ac = 0.3
+    best_sc = 0.3
+    best_metrics = {}
+
+    for ac_thresh in ac_ratios:
+        for sc_thresh in sign_changes:
+            detector = ChargeSloshingDetector(dc_ratio=ac_thresh)
+            preds = []
+            for dE_list in trajectories:
+                traj = SCFTrajectory(dE=dE_list, ediff=1e-5, nelm=60)
+                result = detector.detect(traj)
+                # Override sign-change threshold for this test
+                # Recompute sloshing decision with current thresholds
+                dE = np.array(dE_list)
+                dE_diff = np.diff(dE)
+                sign_chg = np.sum(np.diff(np.sign(dE_diff)) != 0)
+                sign_chg_rate = sign_chg / max(len(dE) - 2, 1)
+                is_slosh = result.is_sloshing if sc_thresh == 0.3 else (
+                    (result.confidence > 0) and (sign_chg_rate > sc_thresh)
+                    and result.amplitude > 0
+                )
+                preds.append(int(is_slosh))
+
+            preds = np.array(preds)
+            tp = np.sum((preds == 1) & (labels == 1))
+            fp = np.sum((preds == 1) & (labels == 0))
+            fn = np.sum((preds == 0) & (labels == 1))
+            tn = np.sum((preds == 0) & (labels == 0))
+
+            precision = tp / max(tp + fp, 1)
+            recall = tp / max(tp + fn, 1)
+            f1 = 2 * precision * recall / max(precision + recall, 1e-9)
+            accuracy = (tp + tn) / len(labels)
+
+            if f1 > best_f1:
+                best_f1 = f1
+                best_ac = float(ac_thresh)
+                best_sc = float(sc_thresh)
+                best_metrics = {
+                    "accuracy": float(accuracy),
+                    "precision": float(precision),
+                    "recall": float(recall),
+                    "f1": float(f1),
+                }
+
+    # Build ROC curve at optimal sign_change threshold
+    roc_curve = []
+    for ac_thresh in np.linspace(0.05, 0.8, 30):
+        detector = ChargeSloshingDetector(dc_ratio=ac_thresh)
+        preds = []
+        for dE_list in trajectories:
+            traj = SCFTrajectory(dE=dE_list, ediff=1e-5, nelm=60)
+            r = detector.detect(traj)
+            preds.append(int(r.is_sloshing))
+        preds = np.array(preds)
+        tp = np.sum((preds == 1) & (labels == 1))
+        fp = np.sum((preds == 1) & (labels == 0))
+        fn = np.sum((preds == 0) & (labels == 1))
+        tn = np.sum((preds == 0) & (labels == 0))
+        fpr = fp / max(fp + tn, 1)
+        tpr = tp / max(tp + fn, 1)
+        roc_curve.append((float(fpr), float(tpr), float(ac_thresh)))
+
+    logger.info("Threshold validation complete",
+                extra={"best_ac": best_ac, "best_sc": best_sc,
+                       "f1": best_metrics["f1"]})
+
+    return ThresholdValidationResult(
+        best_ac_ratio=best_ac,
+        best_sign_change=best_sc,
+        accuracy=best_metrics["accuracy"],
+        precision=best_metrics["precision"],
+        recall=best_metrics["recall"],
+        f1=best_metrics["f1"],
+        n_healthy=n_healthy,
+        n_sloshing=n_sloshing,
+        roc_curve=roc_curve,
+    )

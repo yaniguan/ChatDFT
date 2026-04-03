@@ -29,14 +29,14 @@ from .contracts import HypothesisBundle, RunEvent
 try:
     from server.mechanisms.builder import build_mechanism as _build_mechanism
     _HAS_BUILDER = True
-except Exception:
+except ImportError:
     _HAS_BUILDER = False
     _build_mechanism = None  # type: ignore
 
 REGISTRY: dict = {}  # kept for backward-compat; no longer used by endpoint
 
 # 通用保存
-async def _save_artifact(session_id: int | None, msg_type: str, content):
+async def _save_artifact(session_id: int | None, msg_type: str, content) -> Any:
     if not session_id:
         return
     from server.db import AsyncSessionLocal, ChatMessage
@@ -71,7 +71,7 @@ def _safe_json(s: str) -> Dict[str, Any]:
         if start >= 0 and end >= 0:
             return json.loads(s[start:end+1])
         return json.loads(s)
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return {}
 
 def _canonical_species(x: str) -> str:
@@ -185,7 +185,7 @@ def _llm_available() -> bool:
         from server.utils.openai_wrapper import chatgpt_call  # noqa
         _HAS_LLM = True
         return True
-    except Exception:
+    except ImportError:
         return False
 
 async def _llm_markdown(fields: Dict[str, Any]) -> Optional[str]:
@@ -226,7 +226,7 @@ async def _llm_markdown(fields: Dict[str, Any]) -> Optional[str]:
             temperature=0.3, max_tokens=600
         )
         return txt.strip()
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return None
 
 async def _llm_graph(intent: Dict[str, Any], hint: str="", seed: Optional[Dict[str, Any]]=None) -> Optional[Dict[str, Any]]:
@@ -308,7 +308,7 @@ _MECH_ALIASES = [
     (r"\bphotothermal\b.*methane|\bphotothermal\b.*ch4", ["Photothermal_methane_conversion"]),
 ]
 
-def _to_list(x):
+def _to_list(x) -> List:
     if x is None: return []
     if isinstance(x,(list,tuple)): return list(x)
     return [x]
@@ -371,7 +371,7 @@ def _expand_mech(keys: List[str], substrate: Optional[str], facet: Optional[str]
             ads = [z.strip() for z in re.split(r"[+]", L) if z.strip().endswith("*")]
             if len(ads)>=2: coads.append([ads[0], ads[1]])
     # 去重
-    def _uniq(seq):
+    def _uniq(seq) -> Any:
         seen=set(); out=[]
         for x in seq:
             j = json.dumps(x, sort_keys=True) if isinstance(x, (dict,list)) else str(x)
@@ -657,7 +657,7 @@ async def _get_mech_seed(intent: Dict[str, Any], session_id=None) -> Dict[str, A
 # ============================ FastAPI endpoint ============================
 
 @router.post("/chat/hypothesis")
-async def hypothesis_create(request: Request):
+async def hypothesis_create(request: Request) -> None:
     data: Dict[str, Any] = (await request.json()) or {}
     session_id = data.get("session_id")
     # extract intent/knowledge/history (keep API compatible)
@@ -765,14 +765,14 @@ async def hypothesis_create(request: Request):
     return {"ok": True, "hypothesis": bundle.model_dump(), "graph": graph_fixed, "fields": fields}
 
 @router.post("/chat/hypothesis/ingest_event")
-async def hypothesis_ingest_event(request: Request):
+async def hypothesis_ingest_event(request: Request) -> Dict[str, Any]:
     evt = RunEvent(**(await request.json()))
     # TODO：可将 evt 持久化到 hypothesis_evidence 表，后续联动 refine
     return {"ok": True}
 
 
 @router.post("/chat/hypothesis/feedback")
-async def hypothesis_feedback(request: Request):
+async def hypothesis_feedback(request: Request) -> None:
     """
     Receive execution results from low-level agents and feed them back to the
     hypothesis/plan for refinement.
@@ -885,7 +885,7 @@ Be concise (< 200 words total). Use Markdown bullet points for #3."""
             line = line.strip()
             if line.startswith(("- ", "* ", "• ")) or (len(line) > 2 and line[0].isdigit() and line[1] in ".):"):
                 suggestions.append(re.sub(r"^[\-\*•\d\.\):\s]+", "", line).strip())
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         interpretation = f"(LLM unavailable: {e})"
 
     # 4) Save interpretation back to chat

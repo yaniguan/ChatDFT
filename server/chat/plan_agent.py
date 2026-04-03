@@ -28,20 +28,20 @@ import json
 import os
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, FastAPI, Request
 
 # ---------- LLM & RAG ----------
 try:
     from server.utils.openai_wrapper import chatgpt_call  # async
-except Exception:
-    async def chatgpt_call(messages, **kw):
+except ImportError:
+    async def chatgpt_call(messages, **kw) -> Any:
         return json.dumps({"steps": [], "intermediates": [], "coads": [], "ts": []})
 
 try:
     from server.utils.rag_utils import rag_context  # async
-except Exception:
+except ImportError:
     async def rag_context(query: str, session_id: int | None = None, top_k: int = 8) -> str:
         return ""
 
@@ -49,7 +49,7 @@ except Exception:
 try:
     from server.mechanisms.builder import build_mechanism as _build_mechanism
     _HAS_BUILDER = True
-except Exception:
+except ImportError:
     _HAS_BUILDER = False
     _build_mechanism = None  # type: ignore
 
@@ -58,7 +58,7 @@ REGISTRY: dict = {}  # kept for backward-compat; no longer used by endpoint
 router = APIRouter()
 
 # ---------- 轻量持久化（失败静默） ----------
-async def _save_artifact(session_id: int | None, msg_type: str, content: Any):
+async def _save_artifact(session_id: int | None, msg_type: str, content: Any) -> Any:
     if not session_id:
         return
     txt = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
@@ -75,7 +75,7 @@ async def _save_artifact(session_id: int | None, msg_type: str, content: Any):
     # 回退到 sync 会话（放到线程池）
     try:
         from server.db import SessionLocal, ChatMessage  # type: ignore
-        def _save_sync():
+        def _save_sync() -> None:
             s = SessionLocal()
             try:
                 m = ChatMessage(session_id=session_id, role="assistant", msg_type=msg_type, content=txt)
@@ -93,7 +93,7 @@ def _slug(s) -> str:
     s = str(s or "").strip()
     try:
         s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         pass
     s = re.sub(r"[^A-Za-z0-9._-]+", "-", s)
     s = re.sub(r"-{2,}", "-", s).strip("-")
@@ -216,7 +216,7 @@ _MECH_ALIASES = [
     (r"\bphotothermal\b.*methane|\bphotothermal\b.*ch4", ["Photothermal_methane_conversion"]),
 ]
 
-def _to_list(x):
+def _to_list(x) -> List:
     if x is None: return []
     if isinstance(x,(list,tuple)): return list(x)
     return [x]
@@ -282,7 +282,7 @@ def _mech_seed(intent: Dict[str, Any], mech_keys: List[str]) -> Dict[str, Any]:
             if len(ads)>=2:
                 coads.append((ads[0], ads[1]))
     # 去重
-    def _uniq(seq):
+    def _uniq(seq) -> Any:
         seen=set(); out=[]
         for x in seq:
             j = json.dumps(x, sort_keys=True) if isinstance(x,(dict,list,tuple)) else str(x)
@@ -461,7 +461,7 @@ def _mass_balanced(step: str) -> bool:
     Rp = [p.strip() for p in R.split("+")]
     # relaxed if explicit e-/H+/OH-
     relaxed = any(p in {"e-","e⁻","e–"} for p in Lp+Rp) or any(x in step for x in ["H+","OH-"])
-    def side_count(parts):
+    def side_count(parts) -> Any:
         tot: Dict[str,int] = {}
         for sp in parts:
             spn = _normalize_species(sp)
@@ -472,7 +472,7 @@ def _mass_balanced(step: str) -> bool:
     try:
         ok = side_count(Lp) == side_count(Rp)
         return ok or relaxed
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return relaxed
 
 def _ok_intermediate(s: str, strict: bool = True) -> bool:
@@ -535,7 +535,7 @@ async def _llm_confidence(intent: Dict[str, Any], steps: List[str], inter: List[
         )
         m = re.search(r"(?:0?\.\d+|1(?:\.0+)?)", raw)
         return float(m.group(0)) if m else 0.0
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return 0.0
 
 # ========================= Build tasks =========================
@@ -552,13 +552,13 @@ def _build_tasks(intent: Dict[str, Any],
     # maps group-number → list of task IDs in that group (for dependency wiring)
     _group_ids: Dict[int, List[int]] = {}
 
-    def _field(key, label, ftype="text", value="", **kw):
+    def _field(key, label, ftype="text", value="", **kw) -> Any:
         d = {"key": key, "label": label, "type": ftype, "value": value}
         d.update({k:v for k,v in kw.items() if v is not None})
         return d
 
     def _task(section, name, agent, desc, form=None, payload=None, group=0,
-              endpoint=None, depends_on_groups: List[int] = None):
+              endpoint=None, depends_on_groups: List[int] = None) -> Any:
         nonlocal tid
         # Build depends_on from previous groups
         dep_ids: List[int] = []
@@ -1050,7 +1050,7 @@ def _build_tasks(intent: Dict[str, Any],
 
 # ========================= /chat/plan =========================
 @router.post("/chat/plan")
-async def api_plan(request: Request):
+async def api_plan(request: Request) -> None:
     body = await request.json()
     USE_SEED_POLICY = body.get("use_seed_policy", DEFAULTS["USE_SEED_POLICY"])
     CONF_THRESHOLD  = float(body.get("conf_threshold", DEFAULTS["CONF_THRESHOLD"]))
@@ -1073,7 +1073,7 @@ async def api_plan(request: Request):
             hyp_dict = json.loads(raw_hyp)
             if not isinstance(hyp_dict, dict):
                 hyp_dict = {}
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             hyp_dict = {}
     else:
         hyp_dict = {}
@@ -1176,9 +1176,9 @@ async def api_plan(request: Request):
 
     # 12) 组装 workflow（便于前端 HPC 页面）
     workflow = {
-        "id": f"wf-{session_id}-{int(datetime.utcnow().timestamp())}" if session_id else f"wf-{int(datetime.utcnow().timestamp())}",
+        "id": f"wf-{session_id}-{int(datetime.now(timezone.utc).timestamp())}" if session_id else f"wf-{int(datetime.now(timezone.utc).timestamp())}",
         "title": f"DFT workflow — {(intent_in.get('problem_type') or 'Task')}",
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.now(timezone.utc).isoformat() + "Z",
         "project": f"session-{session_id}" if session_id else None,
         "run_id": session_id,
         "mechanisms": [mech_name] if mech_name else [],
@@ -1228,14 +1228,14 @@ try:
     from ..execution.parameters_agent      import ParametersAgent
     from ..execution.hpc_agent             import HPCAgent
     from ..execution.post_analysis_agent   import PostAnalysisAgent
-except Exception:
+except ImportError:
     StructureAgent = object  # type: ignore
     ParametersAgent = object  # type: ignore
     HPCAgent = object  # type: ignore
     PostAnalysisAgent = object  # type: ignore
 
 class PlanManager:
-    def __init__(self, cluster: str = "hoffman2", dry_run: bool = False, sync_back: bool = True):
+    def __init__(self, cluster: str = "hoffman2", dry_run: bool = False, sync_back: bool = True) -> None:
         self.struct_agent = StructureAgent() if StructureAgent != object else None
         self.param_agent  = ParametersAgent() if ParametersAgent != object else None
         self.hpc_agent    = HPCAgent(cluster=cluster, dry_run=dry_run, sync_back=sync_back) if HPCAgent != object else None
@@ -1284,7 +1284,7 @@ class PlanManager:
                                 project=(task.get("meta") or {}).get("project"),
                                 session_id=(task.get("meta") or {}).get("run_id"),
                             )
-                    except Exception:
+                    except (ValueError, KeyError, TypeError):
                         pass
 
                     self.hpc_agent.prepare_script(step_info, job_dir)
@@ -1307,7 +1307,7 @@ class PlanManager:
             # 未知 agent
             return {"id": task.get("id"), "step": task.get("name"), "status": f"skipped (unknown agent: {agent})"}
 
-        except Exception as e:
+        except (ValueError, KeyError, TypeError) as e:
             return {"id": task.get("id"), "step": task.get("name"), "status": f"error: {e}"}
 
     def execute_selected(self, all_tasks: List[Dict[str, Any]], selected_ids: List[int]) -> Dict[str, Any]:
@@ -1319,9 +1319,9 @@ class PlanManager:
         try:
             if self.post_agent:
                 self.post_agent.analyze(work_root)
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             results.append({"step":"post.analysis","status":"error: post_agent.analyze failed"})
-        def _sum(rows):
+        def _sum(rows) -> Dict[str, Any]:
             done = sum(1 for r in rows if str(r.get("status","")).startswith("done"))
             err  = sum(1 for r in rows if str(r.get("status","")).startswith("error"))
             skip = sum(1 for r in rows if str(r.get("status","")).startswith("skipped"))
@@ -1329,7 +1329,7 @@ class PlanManager:
         return {"workdir": str(work_root), "results": results, "summary": _sum(results)}
 
 @router.post("/chat/execute")
-async def api_execute(request: Request):
+async def api_execute(request: Request) -> Dict[str, Any]:
     data = await request.json()
     try:
         mgr = PlanManager(

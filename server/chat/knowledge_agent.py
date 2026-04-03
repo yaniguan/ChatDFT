@@ -46,7 +46,7 @@ try:
         KnowledgeFigure, LiteratureUpdateLog,
     )
     _DB_OK = True
-except Exception as e:
+except ImportError as e:
     log.warning("knowledge_agent: DB import failed: %s", e)
     _DB_OK = False
     AsyncSessionLocal = None
@@ -62,7 +62,7 @@ try:
     from openai import AsyncOpenAI
     _oa = AsyncOpenAI()
     _OA_OK = True
-except Exception:
+except ImportError:
     _oa = None
     _OA_OK = False
 
@@ -70,7 +70,7 @@ except Exception:
 try:
     from server.utils.perplexity_client import search as _perplexity_search
     _PERPLEXITY_OK = True
-except Exception:
+except ImportError:
     _PERPLEXITY_OK = False
     async def _perplexity_search(*args, **kwargs):  # type: ignore
         return []
@@ -79,7 +79,7 @@ except Exception:
 try:
     from server.utils.zotero_client import search_library as _zotero_search
     _ZOTERO_OK = True
-except Exception:
+except ImportError:
     _ZOTERO_OK = False
     async def _zotero_search(*args, **kwargs):  # type: ignore
         return []
@@ -452,7 +452,7 @@ async def run_daily_update(trigger: str = "scheduler") -> Dict[str, Any]:
         try:
             async with AsyncSessionLocal() as s:
                 run_log = LiteratureUpdateLog(
-                    run_at=datetime.utcnow(),
+                    run_at=datetime.now(timezone.utc),
                     trigger=trigger,
                     queries_used=queries_run,
                     n_new_docs=total_new,
@@ -483,7 +483,7 @@ async def run_daily_update(trigger: str = "scheduler") -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/chat/knowledge")
-async def knowledge_search(request: Request):
+async def knowledge_search(request: Request) -> Any:
     """
     On-demand arXiv search + ingest + return relevant chunks.
     Also used by intent/hypothesis/plan agents via the API.
@@ -521,7 +521,7 @@ async def knowledge_search(request: Request):
     if use_perplexity and _PERPLEXITY_OK:
         try:
             perplexity_results = await _perplexity_search(rich_q, max_results=3)
-        except Exception as _pe:
+        except (ValueError, KeyError, TypeError) as _pe:
             log.debug("Perplexity search failed: %s", _pe)
 
     # ── Optional: Zotero personal library search ───────────────────────────────
@@ -530,7 +530,7 @@ async def knowledge_search(request: Request):
     if use_zotero and _ZOTERO_OK:
         try:
             zotero_results = await _zotero_search(rich_q, limit=5)
-        except Exception as _ze:
+        except (ValueError, KeyError, TypeError) as _ze:
             log.debug("Zotero search failed: %s", _ze)
 
     # Save a message to session
@@ -580,7 +580,7 @@ async def upload_paper(
     file: UploadFile = File(...),
     tags: str = Form(default=""),
     session_id: int = Form(default=0),
-):
+) -> Any:
     """
     Upload a PDF paper for ingestion into the knowledge base.
     Extracts text + figures, embeds, stores in DB.
@@ -610,7 +610,7 @@ async def upload_paper(
                     title = first_lines[0][:200]
     except ImportError:
         log.info("pdfplumber not installed, using filename as title")
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         log.warning("PDF text extraction failed: %s", e)
 
     # Ingest text
@@ -640,14 +640,14 @@ async def upload_paper(
 
 
 @router.post("/chat/knowledge/daily")
-async def trigger_daily_update(request: Request):
+async def trigger_daily_update(request: Request) -> Dict[str, Any]:
     """Manually trigger the daily literature update."""
     asyncio.create_task(run_daily_update(trigger="manual"))
     return JSONResponse({"ok": True, "message": "Daily update started in background."})
 
 
 @router.get("/chat/knowledge/status")
-async def knowledge_status():
+async def knowledge_status() -> Dict[str, Any]:
     """Return knowledge-base statistics."""
     if not _DB_OK or AsyncSessionLocal is None:
         return JSONResponse({"ok": False, "error": "DB not available"})

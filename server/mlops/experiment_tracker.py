@@ -34,7 +34,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 log = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ class ExperimentRun:
         if not self.run_id:
             self.run_id = str(uuid.uuid4())[:12]
         if not self.started_at:
-            self.started_at = datetime.utcnow().isoformat() + "Z"
+            self.started_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     def log_param(self, key: str, value: Any):
         self.params[key] = value
@@ -109,7 +109,7 @@ class ExperimentRun:
                          output_tokens * cost_per_1k_output) / 1000.0
 
     def end(self, status: str = "completed", error: str = ""):
-        self.ended_at = datetime.utcnow().isoformat() + "Z"
+        self.ended_at = datetime.now(timezone.utc).isoformat() + "Z"
         self.status = status
         self.error_msg = error
         if self.started_at:

@@ -8,7 +8,7 @@ import os, shlex, re, subprocess
 try:
     from .settings import settings, get_server  # get_server 可选
     HAS_SETTINGS = True
-except Exception:
+except ImportError:
     HAS_SETTINGS = False
 
 

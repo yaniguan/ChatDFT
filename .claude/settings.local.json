@@ -36,7 +36,23 @@
       "Bash(xargs ls:*)",
       "Bash(grep -n \"json.loads\\\\|json.dumps\\\\|subprocess\\\\|shell=True\" /Users/yaniguan/Documents/04_vibecode/ChatDFT/server/**/*.py)",
       "Bash(grep -n \"import \\\\*\\\\|from.*import \\\\*\" /Users/yaniguan/Documents/04_vibecode/ChatDFT/server/**/*.py)",
-      "Bash(jupyter nbconvert:*)"
+      "Bash(jupyter nbconvert:*)",
+      "Bash(ls -la notebooks/benchmark_*.png)",
+      "Bash(grep -v \"except:$\")",
+      "Bash(pytest tests/ -v --tb=short)",
+      "Bash(pytest tests/test_science.py tests/test_ml_system.py tests/test_server_agents.py -v --tb=short)",
+      "Bash(pytest tests/test_science.py tests/test_ml_system.py tests/test_server_agents.py --tb=short -q)",
+      "Bash(ls figures/*.pdf)",
+      "Bash(xargs -I{} echo \" {} PDF figures generated\")",
+      "Bash(pytest tests/test_science.py tests/test_ml_system.py tests/test_server_agents.py -q --tb=short)",
+      "Bash(ls figures/*.png)",
+      "Bash(xargs -I{} echo \" {} PNG figures\")",
+      "Bash(xargs -I{} echo \"  {} PDF figures\")",
+      "Bash(ls -1 figures/*.png)",
+      "Bash(read f:*)",
+      "Bash(ls:*)",
+      "Bash(grep -n \"= [0-9.]\\\\{2,\\\\}\" /Users/yaniguan/Documents/04_vibecode/ChatDFT/science/optimization/bayesian_params.py)",
+      "Bash(grep assert True:*)"
     ]
   }
 }

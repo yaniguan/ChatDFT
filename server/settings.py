@@ -19,9 +19,9 @@ CANDIDATES = [
 ENV_FILE = next((p for p in CANDIDATES if p.is_file()), None)
 
 if ENV_FILE is None:
-    print("[settings] .env NOT FOUND. Will rely on exported environment variables.", file=sys.stderr)
+    _log.info(".env not found — using exported environment variables")
 else:
-    print(f"[settings] loading .env: {ENV_FILE}", file=sys.stderr)
+    _log.info("Loading .env: %s", ENV_FILE)
 
 class Settings(BaseSettings):
     # REQUIRED
@@ -47,7 +47,7 @@ settings = Settings()
 
 # debug print (DATABASE_URL omitted for brevity)
 _printable = {k: v for k, v in settings.model_dump().items() if k != "DATABASE_URL"}
-print("[settings] loaded keys:", _printable, file=sys.stderr)
+_log.info("Settings loaded: %s", _printable)
 
 import yaml, pathlib
 SERVERS = {}

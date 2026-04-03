@@ -1,0 +1,112 @@
+{
+  "surface_sites": {
+    "voronoi_sites": [
+      {
+        "total": 17,
+        "top": 9,
+        "hollow_hcp": 8
+      },
+      {
+        "total": 17,
+        "top": 9,
+        "hollow_hcp": 8
+      },
+      {
+        "total": 17,
+        "top": 9,
+        "hollow_fcc": 4,
+        "hollow_hcp": 4
+      },
+      {
+        "total": 34,
+        "top": 16,
+        "hollow_fcc": 9,
+        "hollow_hcp": 9
+      },
+      {
+        "total": 17,
+        "top": 9,
+        "hollow_fcc": 4,
+        "hollow_hcp": 4
+      },
+      {
+        "total": 17,
+        "top": 9,
+        "hollow_hcp": 8
+      }
+    ],
+    "baseline_sites": [
+      {
+        "total": 32,
+        "top": 9,
+        "bridge": 16,
+        "hollow": 7
+      },
+      {
+        "total": 28,
+        "top": 9,
+        "bridge": 12,
+        "hollow": 7
+      },
+      {
+        "total": 32,
+        "top": 9,
+        "bridge": 16,
+        "hollow": 7
+      },
+      {
+        "total": 63,
+        "top": 16,
+        "bridge": 33,
+        "hollow": 14
+      },
+      {
+        "total": 32,
+        "top": 9,
+        "bridge": 16,
+        "hollow": 7
+      },
+      {
+        "total": 32,
+        "top": 9,
+        "bridge": 16,
+        "hollow": 7
+      }
+    ],
+    "voronoi_distinguishes_fcc_hcp": true,
+    "baseline_distinguishes_fcc_hcp": false,
+    "improvement": "4-class vs 3-class classification"
+  },
+  "structure_gen": {
+    "zpe_sigma_A": 0.22156508645052916,
+    "mass_ratio_H_Pt": 13.911711407505345,
+    "improvement": "Mass-weighted + ZPE (\u03c3_ZPE=0.222 A)"
+  },
+  "hypothesis": {
+    "auc_grounder": 1.0,
+    "auc_keyword": 0.4266666666666667,
+    "separation_grounder": 0.2504006196767403,
+    "separation_keyword": 0.015381154792919502,
+    "improvement": "AUC 1.00 vs 0.43"
+  },
+  "scf_prediction": {
+    "our_sloshing_accuracy": 1.0,
+    "baseline_sloshing_accuracy": 0.5,
+    "our_step_mae": 3.6333333333333333,
+    "baseline_step_mae": 7.411764705882353,
+    "n_test_trajectories": 60,
+    "improvement": "Sloshing: 100% vs 50%"
+  },
+  "parameter_search": {
+    "grid_evals": 56,
+    "bo_mean_evals": 15.0,
+    "savings_pct": 73.21428571428571,
+    "grid_error": 0.00016881101608924432,
+    "bo_mean_error": 0.00016881101608924432,
+    "improvement": "73% fewer evaluations"
+  },
+  "golden_dataset": {
+    "n_reactions": 25,
+    "n_domains": 5
+  }
+}

@@ -71,13 +71,13 @@ async def _save_to_library(result: dict, session_id: Optional[int] = None) -> No
             )
             db.add(row)
             await db.commit()
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         pass  # non-fatal
 
 # ============================ 事件（可选） ============================
 try:
     from server.execution.utils.events import post_event  # 如果没有就用兜底
-except Exception:
+except ImportError:
     async def post_event(_payload):  # 不阻塞主流程
         return
 
@@ -142,7 +142,7 @@ def _extract_engine(task: Dict[str, Any], fallback: str = "vasp") -> str:
 def _ensure_json(path: Path, obj: Any):
     try:
         path.write_text(json.dumps(obj, indent=2, ensure_ascii=False))
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         pass
 
 # POSCAR 轻量预览（不依赖 pymatgen/ase）
@@ -162,7 +162,7 @@ def _poscar_preview(p: Path) -> dict:
         nums  = [int(x) for x in t[6].split() if x]
         natom = sum(nums) if nums else None
         return {"ok": True, "title": title, "scale": scale, "lattice": lat, "elements": elems, "counts": nums, "n_atoms": natom}
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         return {"ok": False, "error": str(e)}
 
 def _make_sge_job_sh(script_filename: str, ntasks: int = 32,
@@ -256,7 +256,7 @@ async def _run_knowledge_local(task: Dict[str, Any], job_dir: Path) -> Dict[str,
             r = await client.post(f"{base}/chat/knowledge", json=payload)
             r.raise_for_status()
             kb = r.json()
-    except Exception as e:
+    except (json.JSONDecodeError, ValueError) as e:
         _ensure_json(job_dir / "knowledge_error.json", {"error": str(e), "payload": payload})
         return {"ok": False, "error": f"knowledge.search failed: {e}"}
 
@@ -485,7 +485,7 @@ async def agent_post_analysis(request: Request):
             post = PostAnalysisAgent()
             meta = post.analyze(Path(body["job_dir"]))
             return _ok("Post analysis finished.", {"post": meta})
-        except Exception as e:
+        except (ValueError, KeyError, TypeError) as e:
             return _fail(f"post-analysis failed: {e}", 200)
     task = body.get("task") or {}
     ok, res = await _pipeline("post.analysis", task, body)
@@ -825,7 +825,7 @@ async def agent_generate_script(request: Request):
         script   = generate_script(calc_type, system, params)
         filename = script_filename(calc_type)
         return _ok("Script generated.", {"script": script, "filename": filename, "calc_type": calc_type})
-    except Exception as e:
+    except ImportError as e:
         return _fail(f"Script generation failed: {e}", 200)
 
 
@@ -882,7 +882,7 @@ async def agent_htp_generate(request: Request):
             f"Generated {result['n_generated']} structures (strategy={body.get('strategy','rattle')}).",
             result,
         )
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         return _fail(f"HTP generate error: {e}", 200)
 
 
@@ -899,7 +899,7 @@ async def agent_htp_stats(request: Request):
         dataset = HTPDataset(db_path=db_path)
         stats = dataset.stats()
         return _ok("HTP dataset stats.", {"stats": stats, "db_path": db_path})
-    except Exception as e:
+    except ImportError as e:
         return _fail(f"HTP stats error: {e}", 200)
 
 
@@ -919,7 +919,7 @@ async def agent_htp_export(request: Request):
         n = dataset.export_extxyz(output_path, only_done=only_done)
         return _ok(f"Exported {n} structures to {output_path}.",
                    {"n_exported": n, "output_path": output_path})
-    except Exception as e:
+    except ImportError as e:
         return _fail(f"HTP export error: {e}", 200)
 
 
@@ -943,7 +943,7 @@ async def agent_htp_script(request: Request):
         return _ok("HTP batch script generated.", {
             "script": script, "filename": "htp_batch.py"
         })
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         return _fail(f"HTP script error: {e}", 200)
 
 
@@ -971,7 +971,7 @@ async def agent_hpc_fetch(request: Request):
             (k for k, v in _HPC_CONF.items() if cluster_key in v.get("host", "")), "hoffman2"
         )
         cluster_conf = dict(_HPC_CONF.get(resolved_key, {}))
-    except Exception as e:
+    except ImportError as e:
         return _fail(f"Cannot load cluster config: {e}", 200)
 
     if user and cluster_conf.get("host"):
@@ -1009,7 +1009,7 @@ async def agent_hpc_fetch(request: Request):
                         errors[fname] = "not found on remote"
                 else:
                     errors[fname] = proc.stderr.strip() or "rsync failed"
-            except Exception as e:
+            except (ValueError, KeyError, TypeError) as e:
                 errors[fname] = str(e)
 
     if not fetched:
@@ -1086,7 +1086,7 @@ async def agent_hpc_submit(request: Request):
                     resolved_key = k
                     break
         cluster_conf = dict(_HPC_CONF.get(resolved_key, {}))
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         return _fail(f"Cannot load cluster config: {e}", 200)
 
     # Override user in host string if provided
@@ -1193,7 +1193,7 @@ async def agent_hpc_submit(request: Request):
             return _fail("SSH/rsync timed out. Check cluster connectivity.", 200)
         except _sp.CalledProcessError as e:
             return _fail(f"rsync/ssh failed: {e.stderr or str(e)}", 200)
-        except Exception as e:
+        except OSError as e:
             return _fail(f"HPC submit error: {e}", 200)
 
 
@@ -1236,7 +1236,7 @@ async def list_calc_profiles():
     try:
         raw = yaml.safe_load(cfg_path.read_text()) or {}
         names = [k for k in raw if k != "base"]
-    except Exception:
+    except OSError:
         names = []
     return _ok("Profiles listed.", {"profiles": names})
 

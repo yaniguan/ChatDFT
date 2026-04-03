@@ -47,13 +47,13 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 try:
     from server.utils.openai_wrapper import chatgpt_call
-except Exception:
+except ImportError:
     async def chatgpt_call(messages, **kw):  # type: ignore
         return {}
 
 try:
     from server.utils.rag_utils import rag_context, log_agent_call
-except Exception:
+except ImportError:
     async def rag_context(query, **kw):  # type: ignore
         return ""
     async def log_agent_call(*a, **kw):  # type: ignore
@@ -65,7 +65,7 @@ try:
         ReactionSystem, MechanismGraph,
     )
     _DB_OK = True
-except Exception:
+except ImportError:
     _DB_OK = False
     AsyncSessionLocal = None
 
@@ -111,7 +111,7 @@ async def _load_session_context(session_id: int) -> Dict[str, Any]:
                 if msg:
                     try:
                         ctx[msg_type] = json.loads(msg.content)
-                    except Exception:
+                    except (json.JSONDecodeError, ValueError):
                         ctx[msg_type] = msg.content
 
             # DFT results
@@ -253,12 +253,12 @@ def _json_from_response(raw: Any) -> Dict:
 
         content = re.sub(r"```(?:json)?", "", content).strip("` \n")
         return json.loads(content)
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         m = re.search(r"\{.*\}", str(raw), re.DOTALL)
         if m:
             try:
                 return json.loads(m.group(0))
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 pass
     return {}
 
@@ -288,7 +288,7 @@ async def _save_analysis_message(session_id: int, content: str) -> Optional[int]
 # ===========================================================================
 
 @router.post("/chat/analyze")
-async def analyze(request: Request):
+async def analyze(request: Request) -> Dict[str, Any]:
     """
     Main analysis endpoint.
     Loads all available DFT results for the session, runs LLM analysis,
@@ -397,7 +397,7 @@ async def analyze(request: Request):
 
 
 @router.post("/chat/analyze/result")
-async def register_result(request: Request):
+async def register_result(request: Request) -> Dict[str, Any]:
     """
     Register a single DFT result for a session.
     Called by post_analysis_agent after parsing VASP/QE output.
@@ -459,7 +459,7 @@ async def register_result(request: Request):
 
 
 @router.get("/chat/analyze/summary/{session_id}")
-async def get_analysis_summary(session_id: int):
+async def get_analysis_summary(session_id: int) -> Dict[str, Any]:
     """
     Quick summary endpoint: returns the latest analysis message for a session,
     plus a count of converged/failed DFT results.
@@ -497,7 +497,7 @@ async def get_analysis_summary(session_id: int):
         if msg:
             try:
                 analysis = json.loads(msg.content)
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 analysis = {"summary_md": msg.content}
 
         return JSONResponse({
@@ -511,6 +511,6 @@ async def get_analysis_summary(session_id: int):
                 "total": sum(counts.values()),
             },
         })
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         log.error("get_analysis_summary failed: %s", e, exc_info=True)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

@@ -11,10 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ---- 兼容不同项目里 db 依赖注入函数的命名 ----
 try:
     from server.db import get_async_session  # 标准命名
-except Exception:  # pragma: no cover
+except ImportError: # pragma: no cover
     try:
         from server.db import get_session as get_async_session  # type: ignore
-    except Exception:
+    except ImportError:
         from server.db import get_db as get_async_session  # type: ignore
 
 # 你的 ORM 模型
@@ -75,7 +75,7 @@ def _engine_from_payload(p: Dict[str, Any]) -> str:
     # 支持 payload.calc.engine / payload.engine；否则默认 vasp
     try:
         return ((p.get("calc") or {}).get("engine") or p.get("engine") or "vasp").lower()
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return "vasp"
 
 def _build_agent_opts(row: ExecutionTask, *, submit: bool, fetch: bool, wait: bool, poll: int, do_post: bool, job_name: str) -> Dict[str, Any]:
@@ -198,7 +198,7 @@ async def dispatch_tasks(req: ExecDispatchReq, db: AsyncSession = Depends(get_as
             else:
                 out["ok"] = False
                 out["errors"].append({"id": r.id, "title": r.title, "error": res.get("status") or "pipeline failed", "resp": res})
-        except Exception as e:  # pragma: no cover
+        except (ValueError, KeyError, TypeError) as e: # pragma: no cover
             r.status = "failed"
             out["ok"] = False
             out["errors"].append({"id": r.id, "title": r.title, "error": str(e)})

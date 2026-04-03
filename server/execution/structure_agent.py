@@ -365,7 +365,7 @@ def _collect_unique_sites(slab: Atoms, height: float) -> List[Dict]:
             if unique:
                 return sorted(unique.values(),
                               key=lambda s: priority.get(s["type"], 5))
-        except Exception:
+        except (ValueError, KeyError, TypeError):
             pass
 
     # ── ASE fallback: extract top-layer atoms as "top" sites ──────────────────
@@ -497,7 +497,7 @@ def generate_ads_from_poscars(
                         ),
                         "structure_type": "adsorption",
                     })
-                except Exception:
+                except (ValueError, KeyError, TypeError):
                     continue
             if len(results) >= max_configs:
                 break
@@ -586,7 +586,7 @@ def build_surface_ase(
     facet = str(surface_type).strip().replace("(", "").replace(")", "").replace(" ", "")
     try:
         slab = _build_slab_direct(elem, csys, facet, nx, ny, nlayers, vacuum)
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         return {"ok": False, "error": str(e)}
 
     # Fix bottom layer (user's pattern)
@@ -604,7 +604,7 @@ def build_surface_ase(
         poscar = open(fname).read()
     finally:
         try: os.unlink(fname)
-        except Exception: pass
+        except OSError: pass
 
     _label   = f"{elem}({facet})-{nx}x{ny}x{nlayers}"
     _formula = slab.get_chemical_formula()
@@ -653,7 +653,7 @@ def build_molecule_pubchem(
     actual_smiles = _SMILES_MAP.get(smiles, smiles)
     try:
         mol = pubchem_atoms_search(smiles=actual_smiles)
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         return {"ok": False, "error": f"PubChem search failed for SMILES '{actual_smiles}': {e}"}
 
     if mol is None:
@@ -670,7 +670,7 @@ def build_molecule_pubchem(
         poscar = open(fname).read()
     finally:
         try: os.unlink(fname)
-        except Exception: pass
+        except OSError: pass
 
     formula   = mol.get_chemical_formula()
     _label    = label or formula
@@ -705,7 +705,7 @@ def _poscar_to_atoms(poscar: str) -> Atoms:
         return read(fname, format="vasp")
     finally:
         try: os.unlink(fname)
-        except Exception: pass
+        except OSError: pass
 
 
 def _atoms_to_poscar(atoms: Atoms) -> str:
@@ -717,7 +717,7 @@ def _atoms_to_poscar(atoms: Atoms) -> str:
         return open(fname).read()
     finally:
         try: os.unlink(fname)
-        except Exception: pass
+        except OSError: pass
 
 
 def _detect_layers(atoms: Atoms, tol: float = 0.5) -> List[List[int]]:
@@ -815,7 +815,7 @@ def slab_set_vacuum(poscar: str, vacuum: float = 15.0) -> Dict[str, Any]:
         slab.center(vacuum=vacuum / 2, axis=2)
         return _result(slab, label=f"vacuum={vacuum:.0f}Å",
                        vacuum=vacuum, cell_c=float(slab.get_cell()[2, 2]))
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         return {"ok": False, "error": str(e)}
 
 
@@ -1293,7 +1293,7 @@ def write_structure_files(job_dir: Path, atoms: Atoms, name_prefix: str = "slab"
     try:
         write(job_dir / f"{name_prefix}.cif", atoms)
         files.append(f"{name_prefix}.cif")
-    except Exception:
+    except OSError:
         pass
     viz_path = job_dir / f"{name_prefix}_viz.json"
     viz_path.write_text(json.dumps(atoms_to_viz_json(atoms), indent=2))
@@ -1593,7 +1593,7 @@ class StructureAgent:
                     entry["job_dir"] = str(cfg_dir)
                 results.append(entry)
             return {"ok": True, "adsorbate": adsorbate, "n_configs": len(results), "configs": results}
-        except Exception as e:
+        except OSError as e:
             return {"ok": False, "error": str(e), "configs": []}
         finally:
             try: os.unlink(fname)

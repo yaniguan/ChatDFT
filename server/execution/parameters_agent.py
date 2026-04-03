@@ -11,7 +11,7 @@ from pymatgen.core import Structure
 # ========= 事件上报（可选，失败不阻塞） =========
 try:
     from server.execution.utils.events import post_event
-except Exception:
+except ImportError:
     async def post_event(_payload):  # 兜底
         return
 
@@ -19,19 +19,19 @@ try:
     from server.chat.contracts import RunEvent  # 如果没有就用 dict
     def _pack_event(run_id, step_id, phase, payload=None):
         return RunEvent(run_id=run_id, step_id=step_id, phase=phase, payload=payload or {}).model_dump()
-except Exception:
+except ImportError:
     def _pack_event(run_id, step_id, phase, payload=None):
         return {"run_id": run_id, "step_id": step_id, "phase": phase, "payload": payload or {}}
 
 def _now_iso():
-    return datetime.datetime.utcnow().isoformat() + "Z"
+    return datetime.datetime.now(timezone.utc).isoformat() + "Z"
 
 def _append_jsonl(job_dir: Path, name: str, row: Dict[str, Any]):
     try:
         p = Path(job_dir) / name
         with p.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": _now_iso(), **row}, ensure_ascii=False) + "\n")
-    except Exception:
+    except OSError:
         pass
 
 def _emit_sync(run_id, step_id, phase: str, payload: Dict[str, Any] | None = None):

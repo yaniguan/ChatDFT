@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatDFT — Visual Showcase Gallery</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Georgia', serif; background: #fafafa; color: #333; }
+  .header { background: linear-gradient(135deg, #1565C0, #6A1B9A); color: white;
+            padding: 40px 20px; text-align: center; }
+  .header h1 { font-size: 2.2em; margin-bottom: 8px; }
+  .header p { font-size: 1.1em; opacity: 0.9; max-width: 700px; margin: 0 auto; }
+  .stats { display: flex; justify-content: center; gap: 40px; margin-top: 20px; }
+  .stat { text-align: center; }
+  .stat .num { font-size: 2em; font-weight: bold; }
+  .stat .label { font-size: 0.85em; opacity: 0.8; }
+  .nav { background: #333; padding: 12px 20px; text-align: center; position: sticky; top: 0; z-index: 10; }
+  .nav a { color: #aaa; text-decoration: none; margin: 0 15px; font-size: 0.95em; }
+  .nav a:hover { color: white; }
+  .section { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+  .section h2 { font-size: 1.6em; color: #1565C0; border-bottom: 2px solid #1565C0;
+                padding-bottom: 8px; margin-bottom: 20px; }
+  .section h3 { font-size: 1.1em; color: #555; margin: 20px 0 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+          gap: 20px; margin-top: 15px; }
+  .card { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          overflow: hidden; transition: transform 0.2s; }
+  .card:hover { transform: translateY(-3px); box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
+  .card img { width: 100%; display: block; cursor: pointer; }
+  .card .caption { padding: 12px 16px; }
+  .card .caption h4 { font-size: 1em; color: #333; margin-bottom: 4px; }
+  .card .caption p { font-size: 0.85em; color: #777; line-height: 1.4; }
+  .full-width { grid-template-columns: 1fr; }
+  .full-width .card img { max-height: 500px; object-fit: contain; background: white; padding: 10px; }
+  .table-section { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 0.9em; }
+  th { background: #1565C0; color: white; padding: 10px 12px; text-align: left; }
+  td { padding: 8px 12px; border-bottom: 1px solid #eee; }
+  tr:nth-child(even) { background: #f5f5f5; }
+  .highlight { background: #E3F2FD !important; font-weight: bold; }
+  .footer { background: #333; color: #aaa; text-align: center; padding: 20px; margin-top: 40px; }
+  .footer a { color: #90CAF9; }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } .stats { flex-direction: column; gap: 10px; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>ChatDFT</h1>
+  <p>Autonomous Reaction Pathway Discovery via LLM-Guided DFT</p>
+  <div class="stats">
+    <div class="stat"><div class="num">6</div><div class="label">Novel Algorithms</div></div>
+    <div class="stat"><div class="num">25</div><div class="label">Benchmark Reactions</div></div>
+    <div class="stat"><div class="num">155+</div><div class="label">Tests Passing</div></div>
+    <div class="stat"><div class="num">22</div><div class="label">Figures</div></div>
+    <div class="stat"><div class="num">5</div><div class="label">Domains</div></div>
+    <div class="stat"><div class="num">6</div><div class="label">GNN Architectures</div></div>
+  </div>
+</div>
+
+<div class="nav">
+  <a href="#architecture">Architecture</a>
+  <a href="#algorithms">Algorithms</a>
+  <a href="#benchmarks">Benchmarks</a>
+  <a href="#results">Results</a>
+  <a href="#gnn">GNN Models</a>
+  <a href="#functions">All Functions</a>
+</div>
+
+<!-- Architecture Section -->
+<div class="section" id="architecture">
+  <h2>System Architecture & Pipeline</h2>
+  <div class="grid full-width">
+    <div class="card">
+      <img src="showcase_A1_architecture.png" alt="System Architecture">
+      <div class="caption">
+        <h4>Fig A1: Layered System Architecture</h4>
+        <p>5-layer architecture: UI (Streamlit 9 tabs) → API (FastAPI + Science Routes + MLOps) → Agents (Intent, Hypothesis, Plan, Structure, Parameters) → Science (5 novel algorithms) → Infrastructure (PostgreSQL, Redis, HPC, OpenAI, Feature Store)</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="showcase_A2_pipeline.png" alt="Pipeline Flow">
+      <div class="caption">
+        <h4>Fig A2: 8-Stage End-to-End Pipeline</h4>
+        <p>Natural language query → Intent Parsing → Hypothesis Generation → Plan → Structure Building → Parameter Selection → HPC Execution → SCF Diagnosis → Thermodynamic Analysis → Free energy diagram + overpotential + rate-determining step</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Algorithm Section -->
+<div class="section" id="algorithms">
+  <h2>Algorithm Deep Dives</h2>
+
+  <h3>1. Surface Representation — Voronoi Topology Graph</h3>
+  <div class="grid">
+    <div class="card">
+      <img src="fig1_surface_sites.png" alt="Surface Sites Benchmark">
+      <div class="caption">
+        <h4>Fig 1: Site Classification — Voronoi vs Baseline</h4>
+        <p>4-class classification (top, bridge, hollow-fcc, hollow-hcp) with symmetry scoring vs 3-class distance-cutoff baseline. Tested on 6 fcc surfaces.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="showcase_B5_voronoi_heatmap.png" alt="Voronoi Heatmap">
+      <div class="caption">
+        <h4>Fig B5: Node Feature Heatmap Across Surfaces</h4>
+        <p>6-dimensional feature vectors [Z/100, layer, CN/12, V_Vor/20, d_surf/5, angle_var] for Cu, Pt, Ag, Au, Ni(111) across 3 layers. Features are normalised to O(1) for GNN input.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>2. Structure Generation — Einstein Quantum Rattle</h3>
+  <div class="grid">
+    <div class="card">
+      <img src="fig2_structure_generation.png" alt="Structure Generation">
+      <div class="caption">
+        <h4>Fig 2: Mass-Dependent Displacement with ZPE</h4>
+        <p>(a) σ(T) for H, Cu, Pt showing 13.9x mass scaling at 600K. Uniform baseline shown as flat line. (b) Quantum vs classical limit — ZPE gives σ=0.222 A at T→0 vs 0.012 A classical.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>3. Hypothesis Grounding — InfoNCE Cross-Modal Alignment</h3>
+  <div class="grid">
+    <div class="card">
+      <img src="fig3_hypothesis_grounding.png" alt="Hypothesis Grounding">
+      <div class="caption">
+        <h4>Fig 3: Cross-Modal vs Keyword Scoring</h4>
+        <p>(a) Score distributions for correct/wrong pairs. (b) Keyword baseline distributions. (c) ROC curve: AUC=1.00 (trained grounder) vs AUC=0.43 (keyword overlap).</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="showcase_B6_embedding_space.png" alt="Embedding Space">
+      <div class="caption">
+        <h4>Fig B6: Cross-Modal Embedding Space (PCA)</h4>
+        <p>25 reactions from 5 domains projected to 2D via PCA. (a) Text embeddings of hypothesis queries. (b) Graph embeddings of reaction networks. Colour = domain (CO2RR, HER, OER, NRR, ORR).</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>4. SCF Convergence Diagnostics — FFT Sloshing Detection</h3>
+  <div class="grid">
+    <div class="card">
+      <img src="fig4_scf_analysis.png" alt="SCF Analysis">
+      <div class="caption">
+        <h4>Fig 4: SCF Sloshing Detection & Convergence Prediction</h4>
+        <p>(a) Healthy exponential decay with predicted step. (b) Charge sloshing detected. (c) 100% vs 50% accuracy on 60 trajectories. (d) Step prediction MAE: 3.6 vs 7.4.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="showcase_C1_scf_decision_tree.png" alt="SCF Decision Tree">
+      <div class="caption">
+        <h4>Fig C1: SCF Diagnostic Decision Tree</h4>
+        <p>Automated VASP ALGO/AMIX recommendation: FFT analysis → sloshing detection → metal/insulator classification → specific INCAR parameter suggestions (Damped, Fast, All, LDAU).</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>5. Parameter Optimisation — Bayesian GP + Expected Improvement</h3>
+  <div class="grid">
+    <div class="card">
+      <img src="fig5_parameter_search.png" alt="Parameter Search">
+      <div class="caption">
+        <h4>Fig 5: BO vs Grid Search — 73% Savings</h4>
+        <p>(a) 15 vs 56 evaluations for same target. (b) Convergence history — reaches 1 meV/atom in ~8 iterations. (c) Pareto front: accuracy vs computational cost.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="showcase_C2_bo_landscape.png" alt="BO Landscape">
+      <div class="caption">
+        <h4>Fig C2: GP Surrogate & Acquisition Landscape</h4>
+        <p>(a) True energy landscape over (ENCUT, KPPRA). (b) GP mean prediction after 10 evaluations. (c) GP uncertainty with next suggested point (green star).</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Benchmark Section -->
+<div class="section" id="benchmarks">
+  <h2>Benchmark Dataset</h2>
+  <div class="grid">
+    <div class="card">
+      <img src="showcase_B3_free_energy_gallery.png" alt="Free Energy Gallery">
+      <div class="caption">
+        <h4>Fig B3: Free Energy Diagrams — All 5 Domains</h4>
+        <p>Representative reactions: CO2→CO on Cu(111), H+→H2 on Pt(111), H2O→O2 on IrO2(110), N2→NH3 on Ru(0001), O2→H2O on Pt(111). Step-wise ΔG with RDS highlighted.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="showcase_B1_volcano_HER.png" alt="HER Volcano">
+      <div class="caption">
+        <h4>Fig B1: HER Volcano Plot</h4>
+        <p>Hydrogen binding free energy ΔG_H* vs exchange current density for Pt, MoS2, Co, Ni, Fe. Pt and MoS2 near the volcano peak — consistent with Trasatti/Norskov theory.</p>
+      </div>
+    </div>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <img src="showcase_B2_scaling_OER.png" alt="OER Scaling">
+      <div class="caption">
+        <h4>Fig B2: OER Scaling Relation</h4>
+        <p>ΔG_OOH* vs ΔG_OH* for 5 OER catalysts (IrO2, RuO2, Co3O4, NiFeOOH, MnO2). Universal scaling: ΔG_OOH* = ΔG_OH* + 3.2 eV (Man et al. 2011).</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="showcase_B4_mechanism_graph.png" alt="Mechanism Graph">
+      <div class="caption">
+        <h4>Fig B4: CO2RR Mechanism Network Graph</h4>
+        <p>Reaction network for CO2 reduction on Cu(111): CO pathway (2e-) and CH4 pathway (8e-). Nodes: gas phase (blue), adsorbed intermediates (pink), bare site (green).</p>
+      </div>
+    </div>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <img src="showcase_C3_golden_coverage.png" alt="Coverage Map">
+      <div class="caption">
+        <h4>Fig C3: Material Coverage — 15 Catalysts</h4>
+        <p>25 benchmark reactions across 15 unique catalyst materials. Stacked bars by domain. Overpotential ranges annotated per material.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="showcase_B7_radar.png" alt="Radar Chart">
+      <div class="caption">
+        <h4>Fig B7: Algorithm Performance Radar</h4>
+        <p>ChatDFT (blue) vs baselines (grey) across 5 dimensions: site classification, structure physics, hypothesis AUC, sloshing detection, parameter efficiency.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Results Table Section -->
+<div class="section" id="results">
+  <h2>Comprehensive Results</h2>
+  <div class="grid full-width">
+    <div class="card">
+      <img src="showcase_C4_results_table.png" alt="Results Table">
+      <div class="caption">
+        <h4>Fig C4: Full Benchmark Results Summary</h4>
+        <p>8 modules evaluated: Surface Rep., Structure Gen., Hypothesis, SCF Diagnostic, SCF Prediction, Param. Search, Golden Dataset, Test Suite. All metrics show significant improvement over baselines.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-section">
+    <table>
+      <tr><th>Module</th><th>Algorithm</th><th>ChatDFT</th><th>Baseline</th><th>Improvement</th></tr>
+      <tr><td>Surface Representation</td><td>Voronoi topology graph</td><td>4-class + symmetry</td><td>3-class only</td><td class="highlight">+33% granularity</td></tr>
+      <tr><td>Structure Generation</td><td>Einstein quantum rattle</td><td>σ_H/σ_Pt = 13.9x</td><td>σ = 0.1 A fixed</td><td class="highlight">Mass-aware + ZPE</td></tr>
+      <tr><td>Hypothesis Scoring</td><td>InfoNCE cross-modal</td><td>AUC = 1.00</td><td>AUC = 0.43</td><td class="highlight">+0.57 AUC</td></tr>
+      <tr><td>SCF Diagnostic</td><td>FFT + sign-change</td><td>100% accuracy</td><td>50% accuracy</td><td class="highlight">+50% accuracy</td></tr>
+      <tr><td>SCF Prediction</td><td>Exponential OLS fit</td><td>MAE = 3.6 steps</td><td>MAE = 7.4 steps</td><td class="highlight">2.1x better</td></tr>
+      <tr><td>Parameter Search</td><td>GP + EI (Bayesian)</td><td>15 evaluations</td><td>56 evaluations</td><td class="highlight">73% savings</td></tr>
+      <tr><td>Benchmark Dataset</td><td>Literature golden set</td><td>25 reactions, 5 domains</td><td>3 reactions</td><td class="highlight">8.3x coverage</td></tr>
+      <tr><td>Test Suite</td><td>Unit + integration</td><td>143 passing</td><td>-</td><td class="highlight">100% pass rate</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- GNN Architectures Section -->
+<div class="section" id="gnn">
+  <h2>GNN Architectures for Energy Prediction</h2>
+  <p style="margin-bottom:15px;">Module 6: Five graph neural network architectures + MLP baseline, benchmarked on synthetic adsorption energies from the Voronoi topology graph.</p>
+  <div class="grid">
+    <div class="card">
+      <img src="showcase_D1_gnn_architectures.png" alt="GNN Architecture Comparison">
+      <div class="caption">
+        <h4>Fig D1: GNN Architecture Overview</h4>
+        <p>Six models consuming the Voronoi topology graph, ordered by geometric information: MLP (no structure) → MPNN/GAT (topology) → SchNet/DimeNet/SE(3)-Transformer (geometry-aware).</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="showcase_D2_message_passing.png" alt="Message Passing Information Flow">
+      <div class="caption">
+        <h4>Fig D2: Information Flow — Topology to Equivariance</h4>
+        <p>Progressive enrichment: isolated nodes → edge messages → radial filters → angular messages → equivariant scalar+vector features.</p>
+      </div>
+    </div>
+    <div class="card" style="grid-column: 1/-1;">
+      <img src="fig7_gnn_comparison.png" alt="GNN Benchmark Results">
+      <div class="caption">
+        <h4>Fig 7: GNN Benchmark — Prediction Accuracy, Learning Curves, Complexity</h4>
+        <p>SchNet achieves lowest test MAE. Geometry-aware models (blue) outperform topology-only (green) and MLP baseline (red). Accuracy vs parameter count shows SchNet is the most efficient.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Functions List -->
+<div class="section" id="functions">
+  <h2>Complete Function List</h2>
+  <div class="table-section">
+    <table>
+      <tr><th>#</th><th>Function</th><th>Module</th><th>API Endpoint</th><th>UI Tab</th><th>Visual</th></tr>
+      <tr><td>1</td><td>Surface slab building</td><td>structure_agent</td><td>/agent/structure/build_slab</td><td>Structure Lab</td><td>POSCAR</td></tr>
+      <tr><td>2</td><td>Voronoi site classification</td><td>surface_graph</td><td>/science/surface_graph</td><td>Structure Lab &gt; Sites</td><td>Fig 1, B5</td></tr>
+      <tr><td>3</td><td>Adsorbate placement</td><td>structure_agent</td><td>/agent/structure/place_adsorbate</td><td>Structure Lab</td><td>POSCAR</td></tr>
+      <tr><td>4</td><td>Einstein rattle</td><td>informed_sampler</td><td>/science/generate_structures</td><td>-</td><td>Fig 2</td></tr>
+      <tr><td>5</td><td>Normal-mode sampling</td><td>informed_sampler</td><td>/science/generate_structures</td><td>-</td><td>Fig 2</td></tr>
+      <tr><td>6</td><td>Active learning selection</td><td>informed_sampler</td><td>-</td><td>-</td><td>-</td></tr>
+      <tr><td>7</td><td>Strain sampling</td><td>informed_sampler</td><td>/science/generate_structures</td><td>-</td><td>-</td></tr>
+      <tr><td>8</td><td>Intent parsing (NL→JSON)</td><td>intent_agent</td><td>/agent/intent</td><td>Chat Pipeline</td><td>-</td></tr>
+      <tr><td>9</td><td>Hypothesis generation</td><td>hypothesis_agent</td><td>/agent/hypothesis</td><td>Chat Pipeline</td><td>Fig B4</td></tr>
+      <tr><td>10</td><td>Cross-modal scoring</td><td>hypothesis_grounder</td><td>/science/grounder</td><td>-</td><td>Fig 3, B6</td></tr>
+      <tr><td>11</td><td>Plan generation</td><td>plan_agent</td><td>/agent/plan</td><td>Chat Pipeline</td><td>-</td></tr>
+      <tr><td>12</td><td>INCAR/KPOINTS generation</td><td>parameters_agent</td><td>/agent/parameters</td><td>Chat Pipeline</td><td>-</td></tr>
+      <tr><td>13</td><td>Bayesian param search</td><td>bayesian_params</td><td>/science/bo_suggest</td><td>-</td><td>Fig 5, C2</td></tr>
+      <tr><td>14</td><td>HPC job submission</td><td>hpc_agent</td><td>/agent/hpc/submit</td><td>Chat Pipeline</td><td>-</td></tr>
+      <tr><td>15</td><td>SCF sloshing detection</td><td>scf_convergence</td><td>/science/scf_analysis</td><td>QA &amp; Debug</td><td>Fig 4, C1</td></tr>
+      <tr><td>16</td><td>Convergence prediction</td><td>scf_convergence</td><td>/science/scf_analysis</td><td>QA &amp; Debug</td><td>Fig 4</td></tr>
+      <tr><td>17</td><td>ALGO recommendation</td><td>scf_convergence</td><td>/science/scf_analysis</td><td>QA &amp; Debug</td><td>Fig C1</td></tr>
+      <tr><td>18</td><td>Free energy diagram</td><td>thermo_utils</td><td>/agent/thermo</td><td>Thermodynamics</td><td>Fig B3</td></tr>
+      <tr><td>19</td><td>Microkinetic solver</td><td>thermo_utils</td><td>/agent/thermo</td><td>Thermodynamics</td><td>-</td></tr>
+      <tr><td>20</td><td>OUTCAR debugging</td><td>outcar_debugger</td><td>/agent/qa</td><td>QA &amp; Debug</td><td>-</td></tr>
+      <tr><td>21</td><td>Functional recommendation</td><td>outcar_debugger</td><td>/agent/qa</td><td>QA &amp; Debug</td><td>-</td></tr>
+      <tr><td>22</td><td>RAG literature search</td><td>knowledge_agent</td><td>/agent/knowledge</td><td>Knowledge Base</td><td>-</td></tr>
+      <tr><td>23</td><td>NEB image interpolation</td><td>structure_agent</td><td>/agent/structure/neb</td><td>Structure Lab</td><td>-</td></tr>
+      <tr><td>24</td><td>Complex builder</td><td>structure_agent</td><td>/agent/structure/build_complex</td><td>Structure Lab</td><td>-</td></tr>
+      <tr><td>25</td><td>Model registry + A/B test</td><td>model_registry</td><td>/science/mlops/status</td><td>-</td><td>-</td></tr>
+      <tr><td>26</td><td>Experiment tracking</td><td>experiment_tracker</td><td>/science/mlops/status</td><td>-</td><td>-</td></tr>
+      <tr><td>27</td><td>Feature store + lineage</td><td>feature_store</td><td>/science/mlops/status</td><td>-</td><td>-</td></tr>
+      <tr><td>28</td><td>Embedding drift monitor</td><td>monitoring</td><td>/health</td><td>-</td><td>-</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="footer">
+  <p>ChatDFT v0.3.0 | <a href="https://github.com">GitHub</a> | Generated with <code>make figures</code></p>
+  <p style="margin-top:8px; font-size:0.85em;">19 publication-quality figures | 25 benchmark reactions | 143 tests passing</p>
+</div>
+
+</body>
+</html>

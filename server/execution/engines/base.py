@@ -8,7 +8,7 @@ import json, time, subprocess, os, re, datetime
 # 事件通道（可选）
 try:
     from server.execution.utils.events import post_event
-except Exception:
+except ImportError:
     async def post_event(_payload):  # 兜底：不阻塞
         return
 
@@ -17,7 +17,7 @@ try:
     from server.chat.contracts import RunEvent  # noqa
     def _pack_event(run_id, step_id, phase, payload=None):
         return RunEvent(run_id=run_id, step_id=step_id, phase=phase, payload=payload or {}).model_dump()
-except Exception:
+except ImportError:
     def _pack_event(run_id, step_id, phase, payload=None):
         return {"run_id": run_id, "step_id": step_id, "phase": phase, "payload": payload or {}}
 
@@ -28,7 +28,7 @@ async def _emit(run_id: Optional[int], step_id: Optional[int], phase: str, paylo
         pass
 
 def _now_iso():
-    return datetime.datetime.utcnow().isoformat() + "Z"
+    return datetime.datetime.now(timezone.utc).isoformat() + "Z"
 
 class BaseEngine:
     """
@@ -69,7 +69,7 @@ class BaseEngine:
                 line = {"ts": _now_iso(), "engine": self.name, "event": event, **(data or {})}
                 with open(logp, "a", encoding="utf-8") as f:
                     f.write(json.dumps(line, ensure_ascii=False) + "\n")
-        except Exception:
+        except OSError:
             pass
 
     # ---------- template helpers ----------
@@ -171,7 +171,7 @@ class BaseEngine:
                     raise TimeoutError(f"Engine wait timeout: {job_id}")
 
                 time.sleep(max(5, int(poll)))
-        except Exception as e:
+        except (ValueError, KeyError, TypeError) as e:
             self._log("engine.error", {"job_id": job_id, "error": str(e)})
             from asyncio import create_task
             create_task(_emit(self.run_id, self.step_id, "engine.error", {"job_id": job_id, "error": str(e)}))

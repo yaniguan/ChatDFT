@@ -36,7 +36,7 @@ def _slug(s) -> str:
     # 统一到 ASCII，去掉奇异 unicode（比如全角破折号）
     try:
         s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         pass
     # 仅保留字母数字._-，其他都变成连字符
     import re
@@ -376,7 +376,7 @@ class HPCAgent:
                 import json as _json
                 old = _json.loads(meta_path.read_text() or "{}")
                 base.update(old or {})
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             pass
         base.update({k: v for k, v in (extra or {}).items() if v is not None})
         try:

@@ -61,7 +61,7 @@ try:
     from openai import AsyncOpenAI  # type: ignore
     _oa = AsyncOpenAI()
     _OA_OK = True
-except Exception:
+except ImportError:
     _oa = None
     _OA_OK = False
 
@@ -528,7 +528,7 @@ try:
     _CE_MODEL = _CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
     _HAS_CE = True
     log.info("rag_utils: cross-encoder loaded (cross-encoder/ms-marco-MiniLM-L-6-v2)")
-except Exception:
+except ImportError:
     _CE_MODEL = None
     _HAS_CE = False
 

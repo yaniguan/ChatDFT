@@ -45,13 +45,13 @@ log = logging.getLogger(__name__)
 try:
     from server.execution.post_analysis_agent import PostAnalysisAgent
     _HAS_PA = True
-except Exception:
+except ImportError:
     _HAS_PA = False
 
 try:
     from server.execution.utils.task_status import emit_task_status
     _HAS_TS = True
-except Exception:
+except ImportError:
     _HAS_TS = False
     async def emit_task_status(*a, **kw): return False  # type: ignore
 
@@ -59,7 +59,7 @@ try:
     from sqlalchemy import select
     from server.db import AsyncSessionLocal, DFTResult, WorkflowTask
     _DB_OK = True
-except Exception:
+except ImportError:
     _DB_OK = False
     AsyncSessionLocal = None  # type: ignore
 
@@ -113,7 +113,7 @@ async def _post_hypothesis_feedback(
         else:
             log.warning("job_watcher: no HTTP client available for feedback")
             return False
-    except Exception as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         log.warning("_post_hypothesis_feedback failed: %s", exc)
         return False
 
@@ -227,7 +227,7 @@ async def watch_job(
         try:
             status_info = hpc.status(job_id)
             raw_status = (status_info.get("status") or "").upper()
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError) as exc:
             log.warning("watch_job poll error for job %s: %s", job_id, exc)
             continue
 
@@ -265,7 +265,7 @@ async def watch_job(
             if rj.exists():
                 records = json.loads(rj.read_text())
             log.info("watch_job: post-analysis done, %d records (task_id=%d)", len(records), task_id)
-        except Exception as exc:
+        except (json.JSONDecodeError, ValueError) as exc:
             log.warning("watch_job: post_analysis failed for task_id=%d: %s", task_id, exc)
 
     # ── 4. Persist DFTResult rows ─────────────────────────────────────────
@@ -300,7 +300,7 @@ async def watch_job(
                     extra={"label": rec.get("label")},
                 )
                 feedback_sent += int(ok)
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError) as exc:
             log.warning("watch_job: feedback post failed: %s", exc)
 
     # ── 6. Update WorkflowTask ────────────────────────────────────────────

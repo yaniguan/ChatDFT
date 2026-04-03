@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 log = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ try:
     from sqlalchemy import select
     from server.db import AsyncSessionLocal, WorkflowTask
     _DB_OK = True
-except Exception as _e:
+except ImportError as _e:
     log.warning("task_status: DB unavailable (%s) — status transitions disabled", _e)
     _DB_OK = False
     AsyncSessionLocal = None  # type: ignore
@@ -81,7 +81,7 @@ async def emit_task_status(
                 return False
 
             task.status = status
-            task.updated_at = datetime.utcnow()
+            task.updated_at = datetime.now(timezone.utc)
             if output_data is not None:
                 task.output_data = output_data
             if error_msg is not None:

@@ -15,7 +15,7 @@ from server.utils.openai_wrapper import chatgpt_call  # async
 # NEW: 引入机制注册表
 try:
     from server.mechanisms.registry import REGISTRY
-except Exception:
+except ImportError:
     REGISTRY = {}
 
 router = APIRouter()
@@ -63,7 +63,7 @@ def _limit_fewshots(fewshots: List[Dict[str, Any]] | None, max_items: int = 6, m
 def _messages_len_chars(msgs: List[Dict[str, str]]) -> int:
     try:
         return sum(len(m.get("content") or "") for m in msgs)
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return 0
 
 def _hard_trim_messages(msgs: List[Dict[str, str]], budget: int = 16000) -> List[Dict[str, str]]:
@@ -89,7 +89,7 @@ def _json_from_llm_raw(raw: str) -> Dict[str, Any]:
         if start >= 0 and end >= 0 and end > start:
             return json.loads(raw[start:end+1])
         return json.loads(raw)
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return {}
     
 def _strip_code_fences(s: str) -> str:
@@ -121,7 +121,7 @@ def _json_from_llm_raw(raw) -> dict | None:
             block = _first_json_block(s)
             if block:
                 try: return _json.loads(block)
-                except Exception: pass
+                except (json.JSONDecodeError, ValueError): pass
         if "choices" in raw:
             try:
                 s = raw["choices"][0]["message"]["content"]
@@ -129,7 +129,7 @@ def _json_from_llm_raw(raw) -> dict | None:
                 block = _first_json_block(s)
                 if block:
                     return _json.loads(block)
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 pass
         return raw if raw else None
     if isinstance(raw, str):
@@ -137,19 +137,19 @@ def _json_from_llm_raw(raw) -> dict | None:
         block = _first_json_block(s)
         if not block: return None
         try: return _json.loads(block)
-        except Exception: return None
+        except (json.JSONDecodeError, ValueError): return None
     try:
         return _json.loads(str(raw))
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return None
 
-async def _adb():
+async def _adb() -> Any:
     return SessionLocal()
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
-def _safe(obj, default=None):
+def _safe(obj, default=None) -> Any:
     try: return obj if obj is not None else default
     except Exception: return default
 
@@ -190,13 +190,13 @@ def _quick_parse_user_text(t: str) -> dict:
     m = re.search(r"\bph\s*=?\s*([0-9]+(?:\.[0-9]+)?)\b", tl)
     if m:
         try: ph = float(m.group(1))
-        except: ph = None
+        except (ValueError, KeyError, TypeError): ph = None
 
     potential = None
     m = re.search(r"(-?\s*[0-9]+(?:\.[0-9]+)?)\s*v\s*(?:vs\s*)?(?:rhe|she)", tl)
     if m:
         try: potential = float(m.group(1).replace(" ", ""))
-        except: potential = None
+        except (ValueError, KeyError, TypeError): potential = None
 
     solvent = "water" if ("water" in tl or "h2o" in tl) else None
 
@@ -242,7 +242,7 @@ def _quick_parse_user_text(t: str) -> dict:
         "summary": "Parsed minimal electrochemical CO2RR context from query." if is_co2rr else t0[:140]
     }
 
-def _merge_missing(dst: dict, src: dict):
+def _merge_missing(dst: dict, src: dict) -> None:
     for k, v in (src or {}).items():
         if k not in dst or dst[k] in (None, "", [], {}):
             dst[k] = v
@@ -255,7 +255,7 @@ def _merge_missing(dst: dict, src: dict):
 # -----------------------------
 # few-shot 规则检索（IntentPhrase）
 # -----------------------------
-async def _fetch_fewshots(session, stage: str, area: str, task_hint: str, k: int = 6):
+async def _fetch_fewshots(session, stage: str, area: str, task_hint: str, k: int = 6) -> Any:
     stmt = select(IntentPhrase)
     if stage: stmt = stmt.where(IntentPhrase.intent_stage == stage)
     if area:  stmt = stmt.where(IntentPhrase.intent_area == area)
@@ -400,7 +400,7 @@ def _compute_confidence(intent: Dict[str, Any], fewshots: List[Dict[str, Any]], 
 # -----------------------------
 # 将 intent 落库
 # -----------------------------
-async def _persist_intent(session, session_id: int, intent: dict, rag_refs: list):
+async def _persist_intent(session, session_id: int, intent: dict, rag_refs: list) -> None:
     msg = ChatMessage(
         session_id=session_id,
         role="assistant",
@@ -418,7 +418,7 @@ async def _persist_intent(session, session_id: int, intent: dict, rag_refs: list
             "metrics": intent.get("metrics"),
             "constraints": intent.get("constraints"),
         },
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     session.add(msg)
     await session.flush()
@@ -435,7 +435,7 @@ async def _persist_intent(session, session_id: int, intent: dict, rag_refs: list
             confidence=float(intent.get("confidence") or 0.0),
             agent="intent_agent",
             tags=intent.get("tags"),
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         session.add(hyp)
         await session.flush()
@@ -567,7 +567,7 @@ def _expand_mechanism_network(keys: List[str], substrate: Optional[str], facet: 
         steps  += _to_list(base.get("steps"))         + _to_list(v.get("steps"))
         coads  += _to_list(base.get("coads"))         + _to_list(v.get("coads"))
     # 去重（保序）
-    def _uniq(seq):
+    def _uniq(seq) -> Any:
         seen=set(); out=[]
         for x in seq:
             j = json.dumps(x, sort_keys=True) if isinstance(x, (dict,list)) else str(x)
@@ -603,14 +603,14 @@ def _family_domain_from_keys(keys: List[str]) -> tuple[Optional[str], Optional[s
 # -----------------------------
 # 根据 intent 生成默认任务
 # -----------------------------
-async def _expand_workflow_tasks(session, session_id: int, message_id: int, intent: dict):
+async def _expand_workflow_tasks(session, session_id: int, message_id: int, intent: dict) -> None:
     rn = intent.get("reaction_network") or {}
     steps = rn.get("steps") or []
     inters = rn.get("intermediates") or []
     tasks_created = []
     order = 1
 
-    async def _mk(name, agent, input_data):
+    async def _mk(name, agent, input_data) -> None:
         nonlocal order
         t = WorkflowTask(
             session_id=session_id,
@@ -622,7 +622,7 @@ async def _expand_workflow_tasks(session, session_id: int, message_id: int, inte
             engine="VASP",
             status="idle",
             input_data=input_data,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         session.add(t)
         await session.flush()
@@ -661,7 +661,7 @@ async def _expand_workflow_tasks(session, session_id: int, message_id: int, inte
 # -----------------------------
 # LLM 提示词（只输出 JSON）
 # -----------------------------
-def _intent_system_prompt():
+def _intent_system_prompt() -> Any:
     return (
         "You are an AI-for-Science intent parser for computational catalysis. "
         "Return a STRICT JSON object (no code fences, no prose) with EXACT keys:\n"
@@ -717,7 +717,7 @@ def _make_user_prompt(user_text: str, guided: Dict[str, Any], fewshots: List[Dic
 # -----------------------------
 # ==== 替换你的 api_intent ====
 @router.post("/chat/intent")
-async def api_intent(request: Request):
+async def api_intent(request: Request) -> Dict[str, Any]:
     body = await request.json()
     session_id: int = body.get("session_id")
     user_text: str  = body.get("text") or ""
@@ -904,7 +904,7 @@ async def api_intent(request: Request):
                         confidence=0.9,
                         source="intent_agent",
                         lang="en",
-                        created_at=datetime.utcnow(),
+                        created_at=datetime.now(timezone.utc),
                     )
                     s.add(rec)
                 await s.commit()

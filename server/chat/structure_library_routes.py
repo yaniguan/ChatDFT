@@ -81,7 +81,7 @@ def _row_to_dict(r: StructureLibrary) -> Dict[str, Any]:
 async def save_structure(
     body: StructureSaveReq,
     db: AsyncSession = Depends(get_session),
-):
+) -> Any:
     """Insert a new StructureLibrary entry. Always creates a new row (T2S training data)."""
     row = StructureLibrary(
         session_id     = body.session_id,
@@ -105,7 +105,7 @@ async def save_structure(
 async def search_structures(
     body: StructureSearchReq,
     db: AsyncSession = Depends(get_session),
-):
+) -> Any:
     """
     Keyword search over label + description columns (case-insensitive ILIKE).
     For pgvector semantic search add embedding lookup here in the future.
@@ -135,7 +135,7 @@ async def search_structures(
 async def list_structures(
     body: StructureListReq,
     db: AsyncSession = Depends(get_session),
-):
+) -> Any:
     """List all structure entries, optionally filtered."""
     stmt = select(StructureLibrary).order_by(StructureLibrary.created_at.desc())
     if body.structure_type:
@@ -152,7 +152,7 @@ async def list_structures(
 async def get_structure(
     structure_id: int,
     db: AsyncSession = Depends(get_session),
-):
+) -> Any:
     row = (await db.execute(
         select(StructureLibrary).where(StructureLibrary.id == structure_id)
     )).scalars().first()

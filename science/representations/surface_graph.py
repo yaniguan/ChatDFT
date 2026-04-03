@@ -31,13 +31,19 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from scipy.spatial import ConvexHull, Voronoi
+from scipy.spatial import ConvexHull, QhullError, Voronoi
+
+from science.core.constants import BOND_CUTOFFS, DEFAULT_BOND_CUTOFF
+from science.core.errors import InvalidStructure
+from science.core.logging import get_logger
 
 try:
     import networkx as nx
     _HAS_NX = True
 except ImportError:
     _HAS_NX = False
+
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data containers
@@ -104,14 +110,10 @@ class SurfaceTopologyGraph:
         coordination tensor  M_ij = Σ_k (r_k - r_0)_i (r_k - r_0)_j.
     """
 
-    # Coordination-number cutoff per element (empirical, Å)
-    _BOND_CUTOFFS: Dict[str, float] = {
-        "H": 1.2, "C": 1.9, "N": 1.9, "O": 1.9,
-        "Cu": 3.0, "Ag": 3.2, "Au": 3.2, "Pt": 3.0,
-        "Pd": 3.0, "Ni": 2.8, "Fe": 3.0, "Co": 2.9,
-        "Ru": 3.0, "Rh": 3.0, "Ir": 3.0, "Ti": 3.2,
-    }
-    _DEFAULT_CUTOFF = 3.5  # Å
+    # Coordination-number cutoff per element — sourced from core/constants.py
+    # (Cordero et al., Dalton Trans. 2008; Pauling metallic radii)
+    _BOND_CUTOFFS: Dict[str, float] = BOND_CUTOFFS
+    _DEFAULT_CUTOFF = DEFAULT_BOND_CUTOFF
 
     def __init__(
         self,
@@ -120,10 +122,27 @@ class SurfaceTopologyGraph:
         cell: np.ndarray,               # (3, 3) lattice vectors, Å
         surface_normal: Optional[np.ndarray] = None,
     ):
-        assert positions.shape == (len(elements), 3), "positions/elements mismatch"
-        self.positions = np.array(positions, dtype=float)
+        # Input validation
+        positions = np.asarray(positions, dtype=float)
+        cell = np.asarray(cell, dtype=float)
+        if positions.shape != (len(elements), 3):
+            raise InvalidStructure(
+                f"positions shape {positions.shape} != ({len(elements)}, 3)",
+                context={"n_elements": len(elements)},
+            )
+        if np.any(np.isnan(positions)) or np.any(np.isinf(positions)):
+            raise InvalidStructure("positions contain NaN or Inf")
+        if cell.shape != (3, 3):
+            raise InvalidStructure(f"cell shape {cell.shape} != (3, 3)")
+        cell_vol = abs(np.linalg.det(cell))
+        if cell_vol < 1e-6:
+            raise InvalidStructure(
+                "Degenerate cell (volume ≈ 0)",
+                context={"volume": float(cell_vol)},
+            )
+        self.positions = positions
         self.elements  = list(elements)
-        self.cell      = np.array(cell, dtype=float)
+        self.cell      = cell
         self.normal    = np.array(surface_normal or [0.0, 0.0, 1.0])
         self.normal   /= np.linalg.norm(self.normal)
 
@@ -188,8 +207,9 @@ class SurfaceTopologyGraph:
         # --- Voronoi tessellation ----------------------------------------
         try:
             vor = Voronoi(extended_pos)
-        except Exception:
-            # Fallback: simple distance cutoff
+        except (QhullError, ValueError) as e:
+            logger.warning("Voronoi tessellation failed, using distance fallback",
+                           extra={"error": str(e), "n_atoms": N})
             self._build_distance_fallback(layer_map, min_voronoi_area)
             return self
 
@@ -209,7 +229,8 @@ class SurfaceTopologyGraph:
                 try:
                     hull  = ConvexHull(verts)
                     area  = hull.volume        # ConvexHull.volume = surface area in 2D
-                except Exception:
+                except (QhullError, ValueError):
+                    # Degenerate face — estimate area from triangle
                     area = np.linalg.norm(
                         np.cross(verts[1]-verts[0], verts[-1]-verts[0])
                     ) / 2.0
@@ -226,8 +247,8 @@ class SurfaceTopologyGraph:
                 try:
                     hull = ConvexHull(vor.vertices[region_verts])
                     volumes[pt_idx] = hull.volume
-                except Exception:
-                    volumes[pt_idx] = 12.0
+                except (QhullError, ValueError):
+                    volumes[pt_idx] = 12.0  # fallback: typical FCC Voronoi volume
 
         # --- Build node list ---------------------------------------------
         mean_surface_z = np.mean(self.positions[

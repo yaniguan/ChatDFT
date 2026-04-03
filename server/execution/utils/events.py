@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 from typing import Any, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 try:
     from server.db import AsyncSessionLocal, RunEvent as RunEventORM, LLMCall as LLMCallORM
-except Exception:
+except ImportError:
     AsyncSessionLocal = None
     RunEventORM = LLMCallORM = None
 
@@ -20,7 +20,7 @@ async def post_event(evt: Dict[str, Any]) -> None:
             step_id    = evt.get("step_id"),
             phase      = evt.get("phase"),
             payload    = evt.get("payload") or {},
-            created_at = datetime.utcnow(),
+            created_at = datetime.now(timezone.utc),
         ))
         await s.commit()
 
@@ -33,6 +33,6 @@ async def post_llm_call(model: str, prompt: Any, response: Any, meta: Optional[D
             prompt=prompt,
             response=response,
             meta=meta or {},
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         ))
         await s.commit()

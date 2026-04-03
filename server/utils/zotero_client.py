@@ -94,7 +94,7 @@ async def search_library(
             r = await client.get(url, headers=_headers(), params=params)
             r.raise_for_status()
             items = r.json()
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         return [{"key": "", "title": f"Zotero error: {e}", "abstract": str(e),
                  "doi": "", "url": "", "year": "", "journal": "",
                  "authors": [], "tags": [], "source": "zotero"}]
@@ -113,7 +113,7 @@ async def get_item(key: str, timeout: float = 10.0) -> Optional[Dict[str, Any]]:
             r = await client.get(url, headers=_headers(), params={"format": "json"})
             r.raise_for_status()
             return _parse_item(r.json())
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return None
 
 
@@ -133,5 +133,5 @@ async def get_collection_items(
                                  params={"format": "json", "limit": limit})
             r.raise_for_status()
             return [_parse_item(it) for it in r.json()]
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return []

@@ -26,7 +26,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -57,7 +57,7 @@ class ModelVersion:
 
     def __post_init__(self):
         if not self.created_at:
-            self.created_at = datetime.utcnow().isoformat() + "Z"
+            self.created_at = datetime.now(timezone.utc).isoformat() + "Z"
 
     @property
     def key(self) -> str:
@@ -94,7 +94,7 @@ class ABTest:
 
     def __post_init__(self):
         if not self.started_at:
-            self.started_at = datetime.utcnow().isoformat() + "Z"
+            self.started_at = datetime.now(timezone.utc).isoformat() + "Z"
 
 
 class ModelRegistry:
@@ -226,7 +226,7 @@ class ModelRegistry:
         if mv is None:
             raise KeyError(f"Model {key} not found")
         mv.stage = to_stage
-        mv.promoted_at = datetime.utcnow().isoformat() + "Z"
+        mv.promoted_at = datetime.now(timezone.utc).isoformat() + "Z"
         if to_stage == ModelStage.PRODUCTION:
             self._active[name] = version
         log.info("Promoted %s to %s", key, to_stage.value)

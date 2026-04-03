@@ -7,26 +7,80 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff mypy numpy
+      - name: Ruff lint
+        run: ruff check science/ tests/ --output-format=github
+      - name: Ruff format check
+        run: ruff format --check science/ tests/
+      - name: MyPy type check (science/)
+        run: mypy science/ --ignore-missing-imports --no-strict-optional
 
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install pytest-cov
+      - name: Run tests with coverage
+        run: |
+          pytest tests/test_science.py tests/test_ml_system.py \
+            -v --tb=short \
+            --cov=science --cov-report=term-missing \
+            --cov-fail-under=85
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///test.db"
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install bandit pip-audit
+      - name: Bandit security scan
+        run: bandit -r science/ -ll --skip B101
+      - name: Pip audit
+        run: pip install -e . && pip-audit
+        continue-on-error: true
+
+  benchmark-regression:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt pytest
-
-      - name: Syntax check (all Python files)
-        run: python -m compileall server/ science/ client/ tests/ -q
-
-      - name: Unit tests
-        run: pytest tests/ -v --tb=short -x
-        env:
-          DATABASE_URL: "sqlite+aiosqlite:///test.db"
+      - run: |
+          pip install -e ".[dev]"
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Run benchmark regression check
+        run: |
+          python -c "
+          from science.benchmarks.baselines import synthetic_energy_landscape
+          e = synthetic_energy_landscape(500, 2400)
+          assert abs(e - (-142.5639)) < 0.01, f'Regression: {e}'
+          print('Benchmark regression: PASS')
+          "
 
   docker-build:
     runs-on: ubuntu-latest

@@ -327,14 +327,14 @@ class MechanismBuilder:
             try:
                 from server.utils.openai_wrapper import chatgpt_call
                 self._llm_call = chatgpt_call
-            except Exception:
+            except ImportError:
                 self._llm_call = self._llm_stub
 
         if self._rag is None:
             try:
                 from server.utils.rag_utils import hybrid_search
                 self._rag = hybrid_search
-            except Exception:
+            except ImportError:
                 self._rag = self._rag_stub
 
     @staticmethod
@@ -555,7 +555,7 @@ class MechanismBuilder:
         try:
             raw = await self._llm_call(messages, model="gpt-4o", temperature=0.1, max_tokens=2000)  # type: ignore
             parsed = self._extract_json(raw)
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError) as e:
             log.error("MechanismBuilder LLM call failed: %s", e)
             parsed = {}
 
@@ -740,13 +740,13 @@ class MechanismBuilder:
             # Strip markdown code fences if present
             content = re.sub(r"```(?:json)?", "", content).strip("` \n")
             return json.loads(content)
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             # Try to extract the first {...} block
             m = re.search(r"\{.*\}", str(raw), re.DOTALL)
             if m:
                 try:
                     return json.loads(m.group(0))
-                except Exception:
+                except (json.JSONDecodeError, ValueError):
                     pass
             return {}
 

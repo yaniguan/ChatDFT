@@ -21,7 +21,7 @@ try:
     from openai import AsyncOpenAI, RateLimitError, APITimeoutError, APIStatusError
     _client = AsyncOpenAI()
     _OK = True
-except Exception:
+except ImportError:
     _client = None  # type: ignore
     _OK = False
     RateLimitError = Exception

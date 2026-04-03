@@ -21,7 +21,7 @@ try:
     from pymatgen.io.vasp import Vasprun, Outcar
     from pymatgen.core import Structure
     _HAS_PMG = True
-except Exception:
+except ImportError:
     _HAS_PMG = False
 
 # --- 可选：LLM 总结 ---
@@ -31,7 +31,7 @@ try:
     if os.getenv("OPENAI_API_KEY"):
         from server.utils.openai_wrapper import chatgpt_call
         _HAS_LLM = True
-except Exception:
+except ImportError:
     _HAS_LLM = False
 
 # --- 可选：OUTCAR 调试器 + ZPE 提取 ---
@@ -39,7 +39,7 @@ _HAS_DEBUGGER = False
 try:
     from server.utils.outcar_debugger import debug_job, extract_zpe_from_outcar
     _HAS_DEBUGGER = True
-except Exception:
+except ImportError:
     pass
 
 
@@ -110,7 +110,7 @@ class VaspAdapter(EngineAdapter):
                 m = re.search(r"NSW\s*=\s*(\d+)", txt)
                 if m and int(m.group(1)) > 0:
                     return "relax"
-            except Exception:
+            except (ValueError, KeyError, TypeError):
                 pass
             return "scf"
         return "scf"
@@ -130,13 +130,13 @@ class VaspAdapter(EngineAdapter):
                 E = float(getattr(vr, "final_energy", None)) if hasattr(vr, "final_energy") else None
                 try:
                     Ef = float(vr.efermi)
-                except Exception:
+                except (ValueError, KeyError, TypeError):
                     pass
                 try:
                     Eg = float(vr.eigenvalue_band_properties[0])
-                except Exception:
+                except (ValueError, KeyError, TypeError):
                     pass
-            except Exception as e:
+            except (ValueError, KeyError, TypeError) as e:
                 notes.append(f"vasprun: {e}")
 
         if out.exists():
@@ -145,7 +145,7 @@ class VaspAdapter(EngineAdapter):
                 if M is None:
                     try:
                         M = float(oc.total_mag)
-                    except Exception:
+                    except (ValueError, KeyError, TypeError):
                         pass
                 if E is None:
                     try:
@@ -153,9 +153,9 @@ class VaspAdapter(EngineAdapter):
                         m = re.findall(r"free  energy   TOTEN\s*=\s*([-\d\.Ee+]+)", text)
                         if m:
                             E = float(m[-1])
-                    except Exception:
+                    except (ValueError, KeyError, TypeError):
                         pass
-            except Exception as e:
+            except (ValueError, KeyError, TypeError) as e:
                 notes.append(f"outcar: {e}")
 
         return E, Ef, Eg, M, "; ".join(notes)
@@ -174,7 +174,7 @@ class VaspAdapter(EngineAdapter):
                     m = re.findall(r"E0=\s*([-\d\.Ee+]+)", text)
                     if m:
                         E = float(m[-1])
-            except Exception:
+            except (ValueError, KeyError, TypeError):
                 pass
 
         remote = {}
@@ -182,7 +182,7 @@ class VaspAdapter(EngineAdapter):
         if rj.exists():
             try:
                 remote = json.loads(rj.read_text())
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 pass
 
         return JobRecord(
@@ -301,7 +301,7 @@ class QeAdapter(EngineAdapter):
                 m = re.findall(r"band gap\s*=\s*([-\d\.Ee+]+)\s*eV", text, flags=re.I)
                 if m:
                     Eg = float(m[-1])
-            except Exception as e:
+            except (ValueError, KeyError, TypeError) as e:
                 notes.append(f"qe.out parse: {e}")
 
         remote = {}
@@ -309,7 +309,7 @@ class QeAdapter(EngineAdapter):
         if rj.exists():
             try:
                 remote = json.loads(rj.read_text())
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 pass
 
         return JobRecord(
@@ -443,7 +443,7 @@ def _calc_neb_barriers(records: List[JobRecord]) -> None:
                     arr = json.loads(jf.read_text()).get("energies") or []
                     if arr:
                         barrier = float(max(arr) - min(arr))
-                except Exception:
+                except (json.JSONDecodeError, ValueError):
                     pass
             if barrier is None:
                 dat = d / "neb.dat"
@@ -458,7 +458,7 @@ def _calc_neb_barriers(records: List[JobRecord]) -> None:
                                 vals.append(float(parts[1]))
                         if vals:
                             barrier = float(max(vals))
-                    except Exception:
+                    except (ValueError, KeyError, TypeError):
                         pass
             r.barrier_eV = barrier
 
@@ -485,7 +485,7 @@ async def _llm_job_insight(job: JobRecord) -> str:
             model="gpt-4o-mini", temperature=0.2, max_tokens=250
         )
         return txt.strip()
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return ""
 
 async def _llm_overall_summary(records: List[JobRecord]) -> str:
@@ -508,7 +508,7 @@ async def _llm_overall_summary(records: List[JobRecord]) -> str:
             model="gpt-4o-mini", temperature=0.2, max_tokens=350
         )
         return txt.strip()
-    except Exception:
+    except (ValueError, KeyError, TypeError):
         return ""
 
 

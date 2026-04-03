@@ -16,7 +16,10 @@ from server.execution.task_routes import router as exec_tasks_router
 
 # --- 放在 imports 后、routers include 之前 ---
 
+import logging
 from contextlib import asynccontextmanager
+
+_log = logging.getLogger("chatdft")
 
 @asynccontextmanager
 async def lifespan(app):
@@ -27,7 +30,7 @@ async def lifespan(app):
             await conn.run_sync(Base.metadata.create_all)
         import logging
         logging.getLogger("chatdft").info("DB create_all done.")
-    except Exception as e:
+    except ImportError as e:
         import logging
         logging.getLogger("chatdft").warning("DB create_all skipped: %s", e)
 
@@ -40,11 +43,11 @@ async def lifespan(app):
         while True:
             try:
                 from server.chat.knowledge_agent import run_daily_update
-                print("[Literature] Running daily arXiv update...")
+                _log.info("Daily arXiv update starting...")
                 await run_daily_update(trigger="scheduler")
-                print("[Literature] Daily update complete.")
-            except Exception as _e:
-                print("[Literature] Daily update error:", _e)
+                _log.info("Daily arXiv update complete.")
+            except ImportError as _e:
+                _log.warning("Daily update error: %s", _e)
             await _asyncio.sleep(24 * 3600)  # 24 hours
 
     _task = _asyncio.create_task(_daily_literature_loop())
@@ -58,7 +61,12 @@ async def lifespan(app):
             pass
 
 # 用带 lifespan 的 FastAPI 覆盖原来的 app = FastAPI()
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    title="ChatDFT",
+    version="0.3.0",
+    description="Autonomous reaction pathway discovery via LLM-guided DFT",
+)
 _ALLOWED_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:8501,http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
@@ -68,13 +76,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- API v1 routers (all under /v1/ prefix for versioning) ---
+from fastapi import APIRouter
+v1 = APIRouter(prefix="/v1")
+v1.include_router(session_router, tags=["chat"])
+v1.include_router(intent_router, tags=["chat"])
+v1.include_router(hypothesis_router, tags=["chat"])
+v1.include_router(plan_router, tags=["chat"])
+v1.include_router(history_router, tags=["chat"])
+v1.include_router(knowledge_router, tags=["chat"])
+v1.include_router(agent_router, tags=["agents"])
+v1.include_router(exec_tasks_router, tags=["exec"])
+app.include_router(v1)
+
+# Backward-compatible: also mount at root for existing clients
 app.include_router(session_router, tags=["chat"])
 app.include_router(intent_router, tags=["chat"])
 app.include_router(hypothesis_router, tags=["chat"])
-app.include_router(plan_router, tags=["chat"])        # <--- 必须有这行
+app.include_router(plan_router, tags=["chat"])
 app.include_router(history_router, tags=["chat"])
 app.include_router(knowledge_router, tags=["chat"])
-app.include_router(agent_router)  # ← 新增
+app.include_router(agent_router)
 app.include_router(exec_tasks_router, tags=["exec"])
 
 @app.get("/")
@@ -93,26 +115,26 @@ async def health():
         async with AsyncSessionLocal() as s:
             await s.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception as e:
+    except ImportError as e:
         checks["database"] = f"error: {e}"
     # ML monitoring
     try:
         from server.mlops.monitoring import production_monitor
         checks["ml_health"] = production_monitor.health_status()
-    except Exception:
+    except ImportError:
         checks["ml_health"] = "unavailable"
     # Model registry
     try:
         from server.mlops.model_registry import model_registry
         checks["models_registered"] = len(model_registry.list_all())
-    except Exception:
+    except ImportError:
         checks["models_registered"] = 0
     # Feature store
     try:
         from server.feature_store.store import feature_store
         checks["features_registered"] = len(feature_store.list_features())
         checks["features_cached"] = len(feature_store._cache)
-    except Exception:
+    except ImportError:
         checks["features_registered"] = 0
 
     all_ok = checks.get("database") == "ok"
@@ -133,6 +155,9 @@ app.include_router(taskstate_router)
 from server.chat.structure_library_routes import router as strulib_router
 app.include_router(strulib_router)
 
+from server.science_routes import router as science_router
+app.include_router(science_router)
+
 
 
 # ====== Added endpoints and helpers (async-ready, drop-in) ======
@@ -146,14 +171,14 @@ from jinja2 import Template
 # 项目内导入
 try:
     from server.utils.openai_wrapper import LLMAgent  # 如果不存在，也能容错
-except Exception:
+except ImportError:
     LLMAgent = None
 
 from server.db import engine
 try:
     # 你的模型（按你项目结构，若在 server.models 则改这里）
     from server.db import Base, ChatSession, Job, FileAsset, ResultRow
-except Exception:
+except ImportError:
     from server.db import Base, ChatSession, Job, FileAsset, ResultRow  # type: ignore
 
 from server.schema import SessionCreate, JobCreate, JobId
@@ -179,9 +204,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 # DB 信息打印（异步引擎需通过 sync_engine 取 URL）
 try:
-    print("[DB] using:", engine.sync_engine.url)
-except Exception as _e:
-    print("[DB] url print skipped:", _e)
+    _log.info("DB engine: %s", engine.sync_engine.url)
+except (ValueError, KeyError, TypeError) as _e:
+    _log.debug("DB url print skipped: %s", _e)
 # 建表建议交给 Alembic；如必须代码建表，可用：
 # async def _init_models():
 #     async with engine.begin() as conn:
@@ -451,6 +476,6 @@ async def chat_turn(req: ChatTurnReq):
         )
         return ChatTurnResp(assistant_text=text)
     except Exception as e:
-        import traceback; print(traceback.format_exc())
+        _log.exception("Unexpected error in endpoint")
         raise HTTPException(status_code=500, detail=str(e))
 # ====== End patch ======

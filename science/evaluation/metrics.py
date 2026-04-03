@@ -19,57 +19,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
-
-# ---------------------------------------------------------------------------
-# Golden dataset schema
-# ---------------------------------------------------------------------------
-
-@dataclass
-class GoldenExample:
-    """One example in the evaluation dataset."""
-    id: str
-    query: str                         # natural language input
-    expected_intent: Dict[str, Any]    # ground-truth intent fields
-    expected_intermediates: List[str]   # ground-truth mechanism intermediates
-    expected_dG_profile: List[float]   # ground-truth free energy values (eV)
-    expected_overpotential: float      # ground-truth overpotential (V)
-    source: str = "literature"         # literature | expert | computed
-    doi: str = ""
-
-
-# Benchmark dataset for CO2RR, HER, OER, NRR (from literature)
-GOLDEN_SET: List[GoldenExample] = [
-    GoldenExample(
-        id="co2rr_co_cu111",
-        query="CO2 reduction to CO on Cu(111) at -0.5V vs RHE",
-        expected_intent={"stage": "electrocatalysis", "system": {"material": "Cu", "facet": "111"}},
-        expected_intermediates=["*", "CO2(g)", "COOH*", "CO*", "CO(g)", "H2O(g)"],
-        expected_dG_profile=[0.0, 0.22, -0.15, -0.45, -1.10],
-        expected_overpotential=0.61,
-        source="literature",
-        doi="10.1039/C0EE00071J",
-    ),
-    GoldenExample(
-        id="her_pt111",
-        query="Hydrogen evolution on Pt(111)",
-        expected_intent={"stage": "electrocatalysis", "system": {"material": "Pt", "facet": "111"}},
-        expected_intermediates=["*", "H+", "e-", "H*", "H2(g)"],
-        expected_dG_profile=[0.0, -0.09, 0.0],
-        expected_overpotential=0.09,
-        source="literature",
-        doi="10.1021/jp047349j",
-    ),
-    GoldenExample(
-        id="oer_iro2_110",
-        query="Oxygen evolution reaction on IrO2(110)",
-        expected_intent={"stage": "electrocatalysis", "system": {"material": "IrO2", "facet": "110"}},
-        expected_intermediates=["*", "OH*", "O*", "OOH*", "O2(g)", "H2O(g)"],
-        expected_dG_profile=[0.0, 1.60, 3.20, 4.92, 4.92],
-        expected_overpotential=0.56,
-        source="literature",
-        doi="10.1002/cssc.201402846",
-    ),
-]
+# Import the expanded golden dataset (25 reactions, 5 domains)
+from science.evaluation.golden_dataset import (
+    GOLDEN_SET, GOLDEN_BY_DOMAIN, GoldenExample,
+    N_TOTAL, N_DOMAINS, summary as golden_summary,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -353,9 +307,9 @@ def run_full_evaluation(
             all_metrics.extend(
                 IntentParsingMetrics.evaluate(pred_intent, ex.expected_intent)
             )
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, IndexError) as e:
             all_metrics.append(MetricResult(f"intent_error_{ex.id}", 0.0,
-                                            {"error": str(e)}))
+                                            {"error": str(e), "error_type": type(e).__name__}))
 
         # 2. Hypothesis generation
         try:
@@ -366,9 +320,9 @@ def run_full_evaluation(
                     pred_steps, ex.query.split()[0],
                 )
             )
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, IndexError) as e:
             all_metrics.append(MetricResult(f"hypothesis_error_{ex.id}", 0.0,
-                                            {"error": str(e)}))
+                                            {"error": str(e), "error_type": type(e).__name__}))
 
         # 3. Thermodynamics
         try:
@@ -379,9 +333,9 @@ def run_full_evaluation(
                     pred_eta, ex.expected_overpotential,
                 )
             )
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, IndexError) as e:
             all_metrics.append(MetricResult(f"thermo_error_{ex.id}", 0.0,
-                                            {"error": str(e)}))
+                                            {"error": str(e), "error_type": type(e).__name__}))
 
     # Composite score: weighted average of key metrics
     WEIGHTS = {

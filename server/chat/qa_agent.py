@@ -23,14 +23,14 @@ router = APIRouter()
 
 # ── Lazy imports (avoid circular deps) ──────────────────────────────────
 
-def _get_outcar_debugger():
+def _get_outcar_debugger() -> Any:
     from server.utils.outcar_debugger import (
         debug_job, recommend_functional, check_surface_stability,
         FUNCTIONAL_ADVICE, SURFACE_STABILITY,
     )
     return debug_job, recommend_functional, check_surface_stability
 
-def _get_thermo():
+def _get_thermo() -> Any:
     from server.utils.thermo_utils import (
         build_free_energy_diagram, plot_free_energy_diagram,
         run_microkinetics_from_diagram, get_known_pathway,
@@ -41,7 +41,7 @@ def _get_thermo():
             run_microkinetics_from_diagram, get_known_pathway,
             suggest_competing_pathways, KNOWN_PATHWAYS, apply_thermo_corrections)
 
-def _get_llm():
+def _get_llm() -> Any:
     from server.utils.openai_wrapper import chatgpt_call
     return chatgpt_call
 
@@ -323,7 +323,7 @@ async def qa_free_energy(request: Request) -> Dict[str, Any]:
             )
             diagram_objs.append(diag)
             diagrams_data.append(diag.to_dict())
-        except Exception as e:
+        except (ValueError, KeyError, TypeError) as e:
             pass
 
     # --- Load DFT results from DB and build pathway ---

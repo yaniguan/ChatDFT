@@ -76,7 +76,7 @@ async def search(
                                   json=payload, headers=headers)
             r.raise_for_status()
             data = r.json()
-    except Exception as e:
+    except (json.JSONDecodeError, ValueError) as e:
         return [{"title": f"Perplexity error: {e}", "url": "", "snippet": str(e), "source": "perplexity"}]
 
     answer = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")

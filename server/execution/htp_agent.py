@@ -531,7 +531,7 @@ def generate_htp_dataset(
             atoms = _read_vasp(buf)
             atoms.info["label"] = entry.get("label", "")
             parsed.append(atoms)
-        except Exception as exc:
+        except (ValueError, KeyError, TypeError) as exc:
             return {"ok": False, "error": f"Failed to parse POSCAR: {exc}"}
 
     if not parsed:
@@ -651,7 +651,7 @@ def _sync_htp_to_postgres(
     async def _async_sync() -> Optional[int]:
         try:
             from server.db import AsyncSessionLocal, HTPRun, HTPStructure
-        except Exception:
+        except ImportError:
             return None
 
         try:

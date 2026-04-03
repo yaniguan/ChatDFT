@@ -87,7 +87,7 @@ async def _add_message(session_id: int, role: str, content: str, **extra) -> int
 
 # -------------------------- route --------------------------
 @router.post("/chat/history")
-async def history_route(request: Request):
+async def history_route(request: Request) -> Any:
     """
     Input:
       {
@@ -244,7 +244,7 @@ async def history_route(request: Request):
                 .order_by(WorkflowTask.step_order.asc())
             )).scalars().all()
 
-        def _m(m: ChatMessage):
+        def _m(m: ChatMessage) -> Dict[str, Any]:
             return {
                 "id": m.id, "role": m.role, "content": m.content,
                 "msg_type": m.msg_type, "intent_stage": m.intent_stage,
@@ -252,7 +252,7 @@ async def history_route(request: Request):
                 "confidence": m.confidence, "created_at": m.created_at.isoformat() if m.created_at else None,
                 "references": m.references
             }
-        def _t(t: WorkflowTask):
+        def _t(t: WorkflowTask) -> Dict[str, Any]:
             return {
                 "id": t.id, "name": t.name, "agent": t.agent, "status": t.status,
                 "step_order": t.step_order, "created_at": t.created_at.isoformat() if t.created_at else None

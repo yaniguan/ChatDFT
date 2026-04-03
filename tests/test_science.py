@@ -394,3 +394,239 @@ class TestFeatureStore:
                       json.dumps(sample_reaction_network))
         prov = store.trace_provenance("test_prov_001")
         assert "mechanism_graph" in prov["features"]
+
+
+# ─── Golden Dataset Tests ───────────────────────────────────────────────────
+
+class TestGoldenDataset:
+
+    def test_dataset_size(self):
+        from science.evaluation.golden_dataset import GOLDEN_SET, N_TOTAL
+        assert len(GOLDEN_SET) == 25
+        assert N_TOTAL == 25
+
+    def test_five_domains(self):
+        from science.evaluation.golden_dataset import GOLDEN_BY_DOMAIN
+        assert set(GOLDEN_BY_DOMAIN.keys()) == {"co2rr", "her", "oer", "nrr", "orr"}
+
+    def test_domain_counts(self):
+        from science.evaluation.golden_dataset import GOLDEN_BY_DOMAIN
+        assert len(GOLDEN_BY_DOMAIN["co2rr"]) == 8
+        assert len(GOLDEN_BY_DOMAIN["her"]) == 5
+        assert len(GOLDEN_BY_DOMAIN["oer"]) == 5
+        assert len(GOLDEN_BY_DOMAIN["nrr"]) == 4
+        assert len(GOLDEN_BY_DOMAIN["orr"]) == 3
+
+    def test_all_have_doi(self):
+        from science.evaluation.golden_dataset import GOLDEN_SET
+        for ex in GOLDEN_SET:
+            assert ex.doi, f"Missing DOI for {ex.id}"
+
+    def test_overpotentials_positive(self):
+        from science.evaluation.golden_dataset import GOLDEN_SET
+        for ex in GOLDEN_SET:
+            assert ex.expected_overpotential > 0, f"Invalid η for {ex.id}"
+
+    def test_dG_profiles_start_at_zero(self):
+        from science.evaluation.golden_dataset import GOLDEN_SET
+        for ex in GOLDEN_SET:
+            assert ex.expected_dG_profile[0] == 0.0, f"dG[0] != 0 for {ex.id}"
+
+    def test_intermediates_include_bare_site(self):
+        from science.evaluation.golden_dataset import GOLDEN_SET
+        for ex in GOLDEN_SET:
+            assert "*" in ex.expected_intermediates, f"Missing * for {ex.id}"
+
+    def test_unique_ids(self):
+        from science.evaluation.golden_dataset import GOLDEN_SET
+        ids = [ex.id for ex in GOLDEN_SET]
+        assert len(ids) == len(set(ids)), "Duplicate IDs in golden set"
+
+    def test_overpotential_range(self):
+        from science.evaluation.golden_dataset import get_overpotential_range
+        lo, hi = get_overpotential_range("her")
+        assert lo < hi
+        assert lo == pytest.approx(0.08, abs=0.01)
+
+    def test_all_intermediates(self):
+        from science.evaluation.golden_dataset import get_all_intermediates
+        all_int = get_all_intermediates()
+        assert "*" in all_int
+        assert "CO2(g)" in all_int
+        assert "H2O(g)" in all_int
+        assert len(all_int) >= 20
+
+
+# ─── Baseline Comparison Tests ──────────────────────────────────────────────
+
+class TestBaselines:
+
+    def test_baseline_site_finder(self, cu111_positions, cu111_elements):
+        from science.benchmarks.baselines import baseline_distance_cutoff_sites
+        result = baseline_distance_cutoff_sites(cu111_positions, cu111_elements)
+        assert result.n_sites > 0
+        assert "top" in result.site_types
+
+    def test_baseline_keyword_score(self):
+        from science.benchmarks.baselines import baseline_keyword_score
+        score = baseline_keyword_score(
+            "CO2 reduction to CO on Cu(111) via COOH* intermediate",
+            ["*", "CO2(g)", "COOH*", "CO*"],
+        )
+        assert 0.0 <= score <= 1.0
+        assert score > 0.0  # should find overlap
+
+    def test_baseline_linear_extrapolation(self):
+        from science.benchmarks.baselines import baseline_linear_extrapolation
+        dE = list(0.5 * np.exp(-0.3 * np.arange(20)) + 1e-8)
+        step, slosh = baseline_linear_extrapolation(dE)
+        assert step > 0
+        assert slosh is False  # baseline can't detect sloshing
+
+    def test_synthetic_energy_landscape(self):
+        from science.benchmarks.baselines import synthetic_energy_landscape
+        e1 = synthetic_energy_landscape(400, 1600)
+        e2 = synthetic_energy_landscape(600, 3200)
+        # Higher ENCUT/KPPRA should be closer to converged
+        assert abs(e2 - (-142.567)) < abs(e1 - (-142.567))
+
+
+# ─── GNN Models ─────────────────────────────────────────────────────
+
+class TestGNNModels:
+    """Test GNN architectures for adsorption energy prediction."""
+
+    @pytest.fixture
+    def graph_data(self):
+        """Small graph for testing GNN forward passes."""
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("PyTorch not installed")
+        from science.predictions.gnn_models import GraphData
+        rng = np.random.default_rng(42)
+        N, E = 8, 20
+        x = rng.random((N, 6)).astype(np.float32)
+        ei = np.array([rng.integers(0, N, E), rng.integers(0, N, E)], dtype=np.int64)
+        ea = rng.random((E, 3)).astype(np.float32)
+        pos = rng.random((N, 3)).astype(np.float32) * 5
+        return GraphData.from_numpy(x, ei, ea, pos, y=-1.5)
+
+    def test_list_models(self):
+        from science.predictions.gnn_models import list_models
+        models = list_models()
+        assert len(models) == 6
+        assert "mlp" in models
+        assert "se3_transformer" in models
+
+    def test_mlp_forward(self, graph_data):
+        from science.predictions.gnn_models import build_model
+        model = build_model("mlp")
+        out = model(graph_data)
+        assert out.shape == (1,)
+        assert model.num_params > 0
+
+    def test_mpnn_forward(self, graph_data):
+        from science.predictions.gnn_models import build_model
+        model = build_model("mpnn")
+        out = model(graph_data)
+        assert out.shape == (1,)
+
+    def test_gat_forward(self, graph_data):
+        from science.predictions.gnn_models import build_model
+        model = build_model("gat")
+        out = model(graph_data)
+        assert out.shape == (1,)
+
+    def test_schnet_forward(self, graph_data):
+        from science.predictions.gnn_models import build_model
+        model = build_model("schnet")
+        out = model(graph_data)
+        assert out.shape == (1,)
+
+    def test_dimenet_forward(self, graph_data):
+        from science.predictions.gnn_models import build_model
+        model = build_model("dimenet")
+        out = model(graph_data)
+        assert out.shape == (1,)
+
+    def test_se3_transformer_forward(self, graph_data):
+        from science.predictions.gnn_models import build_model
+        model = build_model("se3_transformer")
+        out = model(graph_data)
+        assert out.shape == (1,)
+
+    def test_build_unknown_model(self):
+        from science.predictions.gnn_models import build_model
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("PyTorch not installed")
+        with pytest.raises(ValueError, match="Unknown model"):
+            build_model("nonexistent")
+
+    def test_graph_data_from_numpy(self):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("PyTorch not installed")
+        from science.predictions.gnn_models import GraphData
+        rng = np.random.default_rng(0)
+        g = GraphData.from_numpy(
+            x=rng.random((4, 6)).astype(np.float32),
+            edge_index=np.array([[0, 1, 2], [1, 2, 3]], dtype=np.int64),
+            edge_attr=rng.random((3, 3)).astype(np.float32),
+            pos=rng.random((4, 3)).astype(np.float32),
+            y=-0.5,
+        )
+        assert g.x.shape == (4, 6)
+        assert g.batch.shape == (4,)
+        assert g.y.item() == pytest.approx(-0.5)
+
+    def test_synthetic_dataset(self):
+        from science.predictions.energy_predictor import generate_dataset
+        samples = generate_dataset(n_samples=10, seed=0, n_atoms=8)
+        assert len(samples) == 10
+        # All energies should be finite
+        for s in samples:
+            assert np.isfinite(s.energy)
+            assert len(s.elements) == 8
+
+    def test_collate_graphs(self):
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("PyTorch not installed")
+        from science.predictions.gnn_models import GraphData
+        from science.predictions.energy_predictor import collate_graphs
+        rng = np.random.default_rng(42)
+        graphs = []
+        for i in range(3):
+            N = 4 + i
+            g = GraphData.from_numpy(
+                x=rng.random((N, 6)).astype(np.float32),
+                edge_index=np.array([[0, 1], [1, 2]], dtype=np.int64),
+                edge_attr=rng.random((2, 3)).astype(np.float32),
+                pos=rng.random((N, 3)).astype(np.float32),
+                y=float(i),
+            )
+            graphs.append(g)
+        batch = collate_graphs(graphs)
+        assert batch.x.shape[0] == 4 + 5 + 6  # 15 total nodes
+        assert batch.y.shape == (3,)
+
+    def test_training_reduces_loss(self):
+        """Verify that a short training run reduces loss (model can learn)."""
+        try:
+            import torch
+        except ImportError:
+            pytest.skip("PyTorch not installed")
+        from science.predictions.energy_predictor import (
+            generate_dataset, samples_to_graphs, train_and_evaluate,
+        )
+        samples = generate_dataset(n_samples=30, seed=42, n_atoms=8)
+        graphs = samples_to_graphs(samples)
+        r = train_and_evaluate("mpnn", graphs[:20], graphs[20:25], graphs[25:],
+                               n_epochs=30, batch_size=8)
+        # Loss should decrease from first to last epoch
+        assert r.loss_curve[-1] < r.loss_curve[0]

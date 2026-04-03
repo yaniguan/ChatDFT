@@ -61,7 +61,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -102,7 +102,7 @@ class FeatureValue:
 
     def __post_init__(self):
         if not self.computed_at:
-            self.computed_at = datetime.utcnow().isoformat() + "Z"
+            self.computed_at = datetime.now(timezone.utc).isoformat() + "Z"
 
 
 @dataclass
@@ -119,7 +119,7 @@ class FeatureLineage:
 
     def __post_init__(self):
         if not self.timestamp:
-            self.timestamp = datetime.utcnow().isoformat() + "Z"
+            self.timestamp = datetime.now(timezone.utc).isoformat() + "Z"
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +162,7 @@ def compute_scf_features(raw_input: str) -> np.ndarray:
             float(len(traj.dE)),
             float(traj.is_converged()),
         ], dtype=np.float32)
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         log.warning("SCF feature computation failed: %s", e)
         return np.zeros(9, dtype=np.float32)
 
@@ -191,7 +191,7 @@ def compute_mechanism_features(raw_input: str) -> np.ndarray:
             float(n_ec),
             float(n_ec) / max(len(steps), 1),   # fraction electrochemical
         ], dtype=np.float32)
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         log.warning("Mechanism feature computation failed: %s", e)
         return np.zeros(8, dtype=np.float32)
 
@@ -220,7 +220,7 @@ def compute_thermo_features(raw_input: str) -> np.ndarray:
             float(data.get("overpotential_V", data.get("overpotential", 0))),
             float(data.get("U_limiting_V", data.get("limiting_potential", 0))),
         ], dtype=np.float32)
-    except Exception as e:
+    except (ValueError, KeyError, TypeError) as e:
         log.warning("Thermo feature computation failed: %s", e)
         return np.zeros(7, dtype=np.float32)
 

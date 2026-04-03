@@ -49,7 +49,7 @@ class TaskStateOut(TaskStateSave):
 async def save_task_state(
     body: TaskStateSave,
     db: AsyncSession = Depends(get_session),
-):
+) -> Any:
     """Upsert one task-state row (insert or update on conflict)."""
     # Build the values dict, excluding unset/None to avoid overwriting good data
     vals = body.model_dump(exclude_none=True)
@@ -78,7 +78,7 @@ async def save_task_state(
 async def list_task_states(
     body: Dict[str, Any],
     db: AsyncSession = Depends(get_session),
-):
+) -> Any:
     """Return all task-state rows for a session."""
     session_id = body.get("session_id")
     if not session_id:

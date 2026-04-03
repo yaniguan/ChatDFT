@@ -30,7 +30,7 @@ def _msg_row(m: ChatMessage) -> Dict[str, Any]:
     }
 
 @router.post("/messages")
-async def messages(req: Request):
+async def messages(req: Request) -> Dict[str, Any]:
     """
     前端用它来“回灌”一个会话的历史数据。
     body = { "id": <session_id>, "limit": 500 }
@@ -49,7 +49,7 @@ async def messages(req: Request):
         )).scalars().all()
     return {"ok": True, "messages": [_msg_row(x) for x in rows]}
 @router.post("/create")
-async def create(req: Request):
+async def create(req: Request) -> Dict[str, Any]:
     body = await req.json()
     name = (body.get("name") or "").strip()
     if not name:
@@ -65,7 +65,7 @@ async def create(req: Request):
         return {"ok": True, "session_id": obj.id, "session": _row(obj)}
 
 @router.post("/list")
-async def list_sessions(req: Request):
+async def list_sessions(req: Request) -> Dict[str, Any]:
     body = await req.json() if req.method == "POST" else {}
     limit = int(body.get("limit", 200))
     async with AsyncSessionLocal() as s:
@@ -73,7 +73,7 @@ async def list_sessions(req: Request):
         return {"ok": True, "sessions": [_row(x) for x in rows]}
 
 @router.post("/update")
-async def update_session(req: Request):
+async def update_session(req: Request) -> Dict[str, Any]:
     body = await req.json()
     sid = body.get("id")
     if not sid:
@@ -89,7 +89,7 @@ async def update_session(req: Request):
     return {"ok": True}
 
 @router.post("/delete")
-async def delete_session(req: Request):
+async def delete_session(req: Request) -> Dict[str, Any]:
     body = await req.json()
     sid = body.get("id")
     if not sid:
@@ -104,14 +104,14 @@ async def delete_session(req: Request):
 from sqlalchemy import select, desc
 from server.db import AsyncSessionLocal, ChatMessage
 
-def _pick_latest(rows, mtype):
+def _pick_latest(rows, mtype) -> Optional[Any]:
     for m in rows:
         if m.msg_type == mtype:
             return m
     return None
 
 @router.post("/state")
-async def state(req: Request):
+async def state(req: Request) -> Optional[Any]:
     body = await req.json()
     sid = body.get("id")
     if not sid:
@@ -132,14 +132,14 @@ async def state(req: Request):
     rxn_m      = _pick_latest(rows, "rxn_network")
     wf_m       = _pick_latest(rows, "workflow_summary") or _pick_latest(rows, "records")
 
-    def _parse(m):
+    def _parse(m) -> Optional[Any]:
         if not m: return None
         c = m.content or ""
         # DB content 可能是 JSON 字符串或纯文本
         try:
             import json
             return json.loads(c)
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
             return c
 
     intent        = _parse(intent_m) or {}
