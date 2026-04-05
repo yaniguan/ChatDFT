@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatdft-ui
+  namespace: chatdft
+  labels:
+    app: chatdft-ui
+spec:
+  type: ClusterIP
+  selector:
+    app: chatdft-ui
+  ports:
+    - port: 8501
+      targetPort: 8501
+      protocol: TCP

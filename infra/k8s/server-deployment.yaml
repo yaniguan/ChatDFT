@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatdft-server
+  namespace: chatdft
+  labels:
+    app: chatdft-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chatdft-server
+  template:
+    metadata:
+      labels:
+        app: chatdft-server
+    spec:
+      serviceAccountName: chatdft-server
+      containers:
+        - name: server
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/chatdft-server:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: chatdft-secrets
+          env:
+            - name: CORS_ORIGINS
+              value: "*"  # Restrict to ALB domain in production
+            - name: LOCAL_RUNS
+              value: "/data/runs"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30  # Up to 5 min for model download
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 30
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: runs-data
+              mountPath: /data/runs
+            - name: ssh-key
+              mountPath: /home/chatdft/.ssh
+              readOnly: true
+      volumes:
+        - name: runs-data
+          emptyDir: {}  # For persistent storage, replace with PVC
+        - name: ssh-key
+          secret:
+            secretName: chatdft-ssh-key
+            defaultMode: 0600
+            items:
+              - key: id_rsa
+                path: id_rsa

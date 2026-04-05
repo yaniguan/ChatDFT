@@ -44,14 +44,15 @@ Key references
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
 from science.core.constants import (
-    FFT_AC_RATIO_THRESHOLD, FFT_MIN_FREQ, FFT_MIN_STEPS,
+    FFT_AC_RATIO_THRESHOLD,
+    FFT_MIN_FREQ,
+    FFT_MIN_STEPS,
     FFT_SIGN_CHANGE_THRESHOLD,
 )
 from science.core.logging import get_logger
@@ -62,6 +63,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Data containers
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SCFTrajectory:
@@ -75,15 +77,14 @@ class SCFTrajectory:
     nelm   : max allowed SCF steps (NELM in INCAR)
     ediff  : convergence threshold (EDIFF in INCAR, eV)
     """
-    dE:     List[float]
+
+    dE: List[float]
     rms_dV: Optional[List[float]] = None
-    nelm:   int   = 60
-    ediff:  float = 1e-5
+    nelm: int = 60
+    ediff: float = 1e-5
 
     @classmethod
-    def from_outcar_text(cls, outcar: str,
-                         nelm: int = 60,
-                         ediff: float = 1e-5) -> "SCFTrajectory":
+    def from_outcar_text(cls, outcar: str, nelm: int = 60, ediff: float = 1e-5) -> "SCFTrajectory":
         """
         Parse a VASP OUTCAR string.
 
@@ -92,15 +93,12 @@ class SCFTrajectory:
         and collects the absolute energy change in column 3.
         """
         import re
+
         dE_list, rms_list = [], []
         # VASP DAV line: "  DAV:   N    E_total   dE   RMS"
-        dav_re  = re.compile(
-            r"DAV:\s+\d+\s+[-\d.E+]+\s+([-\d.E+]+)\s+([-\d.E+]+)"
-        )
+        dav_re = re.compile(r"DAV:\s+\d+\s+[-\d.E+]+\s+([-\d.E+]+)\s+([-\d.E+]+)")
         # Alternate: "RMM-DIIS" convergence lines
-        rmm_re  = re.compile(
-            r"RMM:\s+\d+\s+[-\d.E+]+\s+([-\d.E+]+)\s+([-\d.E+]+)"
-        )
+        rmm_re = re.compile(r"RMM:\s+\d+\s+[-\d.E+]+\s+([-\d.E+]+)\s+([-\d.E+]+)")
         for line in outcar.splitlines():
             m = dav_re.search(line) or rmm_re.search(line)
             if m:
@@ -109,8 +107,7 @@ class SCFTrajectory:
                     rms_list.append(abs(float(m.group(2))))
                 except ValueError:
                     pass
-        return cls(dE=dE_list, rms_dV=rms_list or None,
-                   nelm=nelm, ediff=ediff)
+        return cls(dE=dE_list, rms_dV=rms_list or None, nelm=nelm, ediff=ediff)
 
     def is_converged(self) -> bool:
         return bool(self.dE) and self.dE[-1] < self.ediff
@@ -123,13 +120,14 @@ class SCFTrajectory:
 # 1. Charge sloshing detector
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SloshingResult:
     is_sloshing: bool
-    dominant_frequency: float      # cycles per SCF step
-    amplitude: float               # peak FFT magnitude
-    decay_rate: float              # γ in e^{-γn} envelope; >0 = converging
-    confidence: float              # 0–1
+    dominant_frequency: float  # cycles per SCF step
+    amplitude: float  # peak FFT magnitude
+    decay_rate: float  # γ in e^{-γn} envelope; >0 = converging
+    confidence: float  # 0–1
     remedy: str
 
 
@@ -155,19 +153,22 @@ class ChargeSloshingDetector:
         f_low: float = FFT_MIN_FREQ,
         min_steps: int = FFT_MIN_STEPS,
     ):
-        self.dc_ratio  = dc_ratio
-        self.f_low     = f_low
+        self.dc_ratio = dc_ratio
+        self.f_low = f_low
         self.min_steps = min_steps
 
     def detect(self, traj: SCFTrajectory) -> SloshingResult:
         dE = np.array(traj.dE, dtype=np.float64)
-        n  = len(dE)
+        n = len(dE)
 
         if n < self.min_steps:
             return SloshingResult(
-                is_sloshing=False, dominant_frequency=0.0,
-                amplitude=0.0, decay_rate=0.0,
-                confidence=0.0, remedy="Not enough SCF steps to analyse."
+                is_sloshing=False,
+                dominant_frequency=0.0,
+                amplitude=0.0,
+                decay_rate=0.0,
+                confidence=0.0,
+                remedy="Not enough SCF steps to analyse.",
             )
 
         # Log-transform (avoid log(0))
@@ -185,27 +186,30 @@ class ChargeSloshingDetector:
 
         # FFT of detrended signal
         fft_vals = np.fft.rfft(windowed)
-        fft_mag  = np.abs(fft_vals)
-        freqs    = np.fft.rfftfreq(n)
+        fft_mag = np.abs(fft_vals)
+        freqs = np.fft.rfftfreq(n)
 
         # Total signal power (L2 norm of detrended)
-        total_power = float(np.sum(detrended**2)) + 1e-20
-        ac_mask  = freqs > self.f_low
+        float(np.sum(detrended**2)) + 1e-20
+        ac_mask = freqs > self.f_low
         if not np.any(ac_mask):
             return SloshingResult(
-                is_sloshing=False, dominant_frequency=0.0,
-                amplitude=0.0, decay_rate=0.0,
-                confidence=0.0, remedy="No AC component detected."
+                is_sloshing=False,
+                dominant_frequency=0.0,
+                amplitude=0.0,
+                decay_rate=0.0,
+                confidence=0.0,
+                remedy="No AC component detected.",
             )
 
         dom_ac_idx = np.argmax(fft_mag[ac_mask])
-        dom_freq   = float(freqs[ac_mask][dom_ac_idx])
-        dom_amp    = float(fft_mag[ac_mask][dom_ac_idx])
+        dom_freq = float(freqs[ac_mask][dom_ac_idx])
+        dom_amp = float(fft_mag[ac_mask][dom_ac_idx])
 
         # Oscillation ratio: compare dominant AC power to total detrended power
         # For pure exponential decay, detrended ≈ noise → low ratio
         # For sloshing, detrended has strong periodic component → high ratio
-        ac_power = float(np.sum(fft_mag[ac_mask]**2))
+        ac_power = float(np.sum(fft_mag[ac_mask] ** 2))
         total_fft_power = float(np.sum(fft_mag**2)) + 1e-20
         ratio = ac_power / total_fft_power
 
@@ -216,13 +220,13 @@ class ChargeSloshingDetector:
         sign_change_rate = sign_changes / max(n - 2, 1)
 
         # Envelope decay via OLS on log|ΔE|
-        decay_rate = -float(slope)   # positive → converging
+        decay_rate = -float(slope)  # positive → converging
 
         # Sloshing requires BOTH:
         # 1. Strong AC component relative to total (ratio > threshold)
         # 2. Frequent sign changes (oscillatory, not monotone)
         is_sloshing = (ratio > self.dc_ratio) and (sign_change_rate > FFT_SIGN_CHANGE_THRESHOLD)
-        confidence  = float(np.clip(ratio * sign_change_rate * 4, 0, 1))
+        confidence = float(np.clip(ratio * sign_change_rate * 4, 0, 1))
 
         remedy = self._recommend(is_sloshing, decay_rate, dom_freq)
         return SloshingResult(
@@ -237,7 +241,7 @@ class ChargeSloshingDetector:
     def _recommend(self, sloshing: bool, decay: float, freq: float) -> str:
         if not sloshing:
             return "No action needed — convergence appears healthy."
-        if decay < 0:   # diverging
+        if decay < 0:  # diverging
             if freq > 0.3:
                 return (
                     "High-frequency sloshing detected (likely metallic surface "
@@ -250,24 +254,22 @@ class ChargeSloshingDetector:
                     "Recommend: reduce AMIX to 0.1–0.2, increase NELM, "
                     "or switch to ALGO=All."
                 )
-        else:   # oscillating but converging
-            return (
-                "Mild sloshing — converging slowly. "
-                "Consider AMIX=0.2, BMIX=0.01, ALGO=Fast for speedup."
-            )
+        else:  # oscillating but converging
+            return "Mild sloshing — converging slowly. Consider AMIX=0.2, BMIX=0.01, ALGO=Fast for speedup."
 
 
 # ---------------------------------------------------------------------------
 # 2. Convergence rate predictor
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ConvergencePrediction:
-    predicted_step: int            # estimated SCF step to reach EDIFF
-    convergence_rate: float        # λ in exp(-λ·n), steps^{-1}
-    r_squared: float               # goodness of exponential fit
-    will_converge: bool            # False if predicted > NELM
-    confidence: str                # 'high' | 'medium' | 'low'
+    predicted_step: int  # estimated SCF step to reach EDIFF
+    convergence_rate: float  # λ in exp(-λ·n), steps^{-1}
+    r_squared: float  # goodness of exponential fit
+    will_converge: bool  # False if predicted > NELM
+    confidence: str  # 'high' | 'medium' | 'low'
 
 
 class ConvergenceRatePredictor:
@@ -292,45 +294,46 @@ class ConvergenceRatePredictor:
     """
 
     def __init__(self, window: int = 10, min_window: int = 4):
-        self.window     = window
+        self.window = window
         self.min_window = min_window
 
     def predict(self, traj: SCFTrajectory) -> ConvergencePrediction:
-        dE   = np.array(traj.dE, dtype=np.float64)
+        dE = np.array(traj.dE, dtype=np.float64)
         n_obs = min(len(dE), self.window)
 
         if n_obs < self.min_window:
             return ConvergencePrediction(
-                predicted_step=-1, convergence_rate=0.0,
-                r_squared=0.0, will_converge=False, confidence='low'
+                predicted_step=-1, convergence_rate=0.0, r_squared=0.0, will_converge=False, confidence="low"
             )
 
         log_dE = np.log(np.clip(dE[:n_obs], 1e-20, None))
-        steps  = np.arange(n_obs, dtype=float)
+        steps = np.arange(n_obs, dtype=float)
 
         # OLS: log_dE = a + b * steps
         slope, intercept = np.polyfit(steps, log_dE, 1)
-        lam   = -slope
+        lam = -slope
         log_A = intercept
 
         # R² of fit
-        pred  = intercept + slope * steps
-        ss_res = np.sum((log_dE - pred)**2)
-        ss_tot = np.sum((log_dE - log_dE.mean())**2) + 1e-20
-        r2    = float(1.0 - ss_res / ss_tot)
+        pred = intercept + slope * steps
+        ss_res = np.sum((log_dE - pred) ** 2)
+        ss_tot = np.sum((log_dE - log_dE.mean()) ** 2) + 1e-20
+        r2 = float(1.0 - ss_res / ss_tot)
 
         if lam <= 0.0 or not np.isfinite(lam):
             return ConvergencePrediction(
-                predicted_step=-1, convergence_rate=float(lam),
-                r_squared=max(r2, 0.0), will_converge=False, confidence='low'
+                predicted_step=-1,
+                convergence_rate=float(lam),
+                r_squared=max(r2, 0.0),
+                will_converge=False,
+                confidence="low",
             )
 
-        log_target  = np.log(traj.ediff)
-        n_conv      = int(np.ceil((log_A - log_target) / lam))
-        will_conv   = 0 < n_conv <= traj.nelm
+        log_target = np.log(traj.ediff)
+        n_conv = int(np.ceil((log_A - log_target) / lam))
+        will_conv = 0 < n_conv <= traj.nelm
 
-        confidence = ('high' if r2 >= 0.9 else
-                      'medium' if r2 >= 0.7 else 'low')
+        confidence = "high" if r2 >= 0.9 else "medium" if r2 >= 0.7 else "low"
 
         return ConvergencePrediction(
             predicted_step=n_conv,
@@ -347,23 +350,18 @@ class ConvergenceRatePredictor:
 
 _ALGO_RULES: List[Tuple[str, str]] = [
     # (condition_description, VASP settings recommendation)
-    ("metal_fast",
-     "ALGO=Fast; ISMEAR=1; SIGMA=0.2; AMIX=0.4; BMIX=1.0"),
-    ("metal_sloshing",
-     "ALGO=Damped; AMIX=0.1; BMIX=0.01; AMIX_MAG=0.2; BMIX_MAG=0.001"),
-    ("insulator_slow",
-     "ALGO=All; ISMEAR=0; SIGMA=0.05; AMIX=0.2; NELM=100"),
-    ("insulator_fast",
-     "ALGO=Fast; ISMEAR=0; SIGMA=0.01; AMIX=0.3"),
-    ("oxide_correlated",
-     "ALGO=All; LDAU=True; LDAUTYPE=2; AMIX=0.2; BMIX=0.0001"),
+    ("metal_fast", "ALGO=Fast; ISMEAR=1; SIGMA=0.2; AMIX=0.4; BMIX=1.0"),
+    ("metal_sloshing", "ALGO=Damped; AMIX=0.1; BMIX=0.01; AMIX_MAG=0.2; BMIX_MAG=0.001"),
+    ("insulator_slow", "ALGO=All; ISMEAR=0; SIGMA=0.05; AMIX=0.2; NELM=100"),
+    ("insulator_fast", "ALGO=Fast; ISMEAR=0; SIGMA=0.01; AMIX=0.3"),
+    ("oxide_correlated", "ALGO=All; LDAU=True; LDAUTYPE=2; AMIX=0.2; BMIX=0.0001"),
 ]
 
 
 @dataclass
 class AlgoRecommendation:
-    algo:      str
-    settings:  str
+    algo: str
+    settings: str
     rationale: str
 
 
@@ -382,9 +380,9 @@ class AlgorithmRecommender:
 
     def recommend(
         self,
-        sloshing:        SloshingResult,
-        prediction:      ConvergencePrediction,
-        is_metal:        bool = True,
+        sloshing: SloshingResult,
+        prediction: ConvergencePrediction,
+        is_metal: bool = True,
         has_d_electrons: bool = False,
     ) -> AlgoRecommendation:
         # Priority: sloshing in metal → Damped
@@ -424,10 +422,7 @@ class AlgorithmRecommender:
         return AlgoRecommendation(
             algo="All",
             settings="ALGO=All; AMIX=0.2; NELM=80",
-            rationale=(
-                "Conservative default: blocked Davidson is robust for "
-                "ambiguous convergence signature."
-            ),
+            rationale=("Conservative default: blocked Davidson is robust for ambiguous convergence signature."),
         )
 
 
@@ -435,12 +430,13 @@ class AlgorithmRecommender:
 # Convenience: full analysis pipeline
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SCFAnalysisReport:
-    sloshing:    SloshingResult
-    prediction:  ConvergencePrediction
-    algo:        AlgoRecommendation
-    summary:     str
+    sloshing: SloshingResult
+    prediction: ConvergencePrediction
+    algo: AlgoRecommendation
+    summary: str
 
     def __str__(self) -> str:
         return self.summary
@@ -459,24 +455,26 @@ def analyse_scf(
     SCFAnalysisReport with sloshing detection, convergence prediction,
     and algorithm recommendation.
     """
-    sloshing   = ChargeSloshingDetector().detect(traj)
+    sloshing = ChargeSloshingDetector().detect(traj)
     prediction = ConvergenceRatePredictor().predict(traj)
-    algo       = AlgorithmRecommender().recommend(
-        sloshing, prediction, is_metal, has_d_electrons
-    )
+    algo = AlgorithmRecommender().recommend(sloshing, prediction, is_metal, has_d_electrons)
 
     n = len(traj.dE)
     last_dE = traj.dE[-1] if traj.dE else float("nan")
-    conv_str = "CONVERGED" if traj.is_converged() else (
-        "HIT NELM (not converged)" if traj.hit_nelm() else "IN PROGRESS"
+    conv_str = (
+        "CONVERGED" if traj.is_converged() else ("HIT NELM (not converged)" if traj.hit_nelm() else "IN PROGRESS")
     )
 
     summary = (
         f"SCF Analysis ({n} steps, status: {conv_str})\n"
         f"  Last |ΔE|         : {last_dE:.2e} eV  (target: {traj.ediff:.0e})\n"
         f"  Sloshing          : {'YES' if sloshing.is_sloshing else 'no'}"
-        + (f" (f={sloshing.dominant_frequency:.3f} cyc/step, "
-           f"decay={sloshing.decay_rate:+.3f})" if sloshing.is_sloshing else "") + "\n"
+        + (
+            f" (f={sloshing.dominant_frequency:.3f} cyc/step, decay={sloshing.decay_rate:+.3f})"
+            if sloshing.is_sloshing
+            else ""
+        )
+        + "\n"
         f"  Convergence rate  : λ = {prediction.convergence_rate:.3f} steps⁻¹"
         f"  (predicted n_conv = {prediction.predicted_step}, "
         f"R²={prediction.r_squared:.2f}, {prediction.confidence} confidence)\n"
@@ -484,14 +482,17 @@ def analyse_scf(
         f"  Rationale         : {algo.rationale}"
     )
     return SCFAnalysisReport(
-        sloshing=sloshing, prediction=prediction,
-        algo=algo, summary=summary,
+        sloshing=sloshing,
+        prediction=prediction,
+        algo=algo,
+        summary=summary,
     )
 
 
 # ---------------------------------------------------------------------------
 # Multi-ionic-step trajectory (track convergence across geometry steps)
 # ---------------------------------------------------------------------------
+
 
 class IonicConvergenceTracker:
     """
@@ -549,7 +550,7 @@ class IonicConvergenceTracker:
         counts = self.scf_step_counts()
         quality = self.convergence_quality_series()
         n_ionic = len(counts)
-        n_conv  = sum(t.is_converged() for t in self._ionic_steps)
+        n_conv = sum(t.is_converged() for t in self._ionic_steps)
         return (
             f"Ionic relaxation: {n_ionic} steps, "
             f"{n_conv}/{n_ionic} SCF-converged\n"
@@ -563,9 +564,11 @@ class IonicConvergenceTracker:
 # Threshold validation via cross-validation
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ThresholdValidationResult:
     """Result of sloshing threshold optimisation."""
+
     best_ac_ratio: float
     best_sign_change: float
     accuracy: float
@@ -610,9 +613,7 @@ def _generate_validation_trajectories(
         decay = rng.uniform(-0.01, 0.05)
         freq = rng.uniform(0.15, 0.45)
         t = np.arange(n)
-        oscillation = A * np.exp(-decay * t) * (
-            0.3 + np.abs(np.sin(2 * np.pi * freq * t))
-        )
+        oscillation = A * np.exp(-decay * t) * (0.3 + np.abs(np.sin(2 * np.pi * freq * t)))
         noise = rng.uniform(0.0001, 0.001)
         dE = oscillation + rng.normal(0, noise, n)
         trajectories.append(np.abs(dE).tolist())
@@ -676,9 +677,10 @@ def validate_thresholds(
                 dE_diff = np.diff(dE)
                 sign_chg = np.sum(np.diff(np.sign(dE_diff)) != 0)
                 sign_chg_rate = sign_chg / max(len(dE) - 2, 1)
-                is_slosh = result.is_sloshing if sc_thresh == 0.3 else (
-                    (result.confidence > 0) and (sign_chg_rate > sc_thresh)
-                    and result.amplitude > 0
+                is_slosh = (
+                    result.is_sloshing
+                    if sc_thresh == 0.3
+                    else ((result.confidence > 0) and (sign_chg_rate > sc_thresh) and result.amplitude > 0)
                 )
                 preds.append(int(is_slosh))
 
@@ -722,9 +724,9 @@ def validate_thresholds(
         tpr = tp / max(tp + fn, 1)
         roc_curve.append((float(fpr), float(tpr), float(ac_thresh)))
 
-    logger.info("Threshold validation complete",
-                extra={"best_ac": best_ac, "best_sc": best_sc,
-                       "f1": best_metrics["f1"]})
+    logger.info(
+        "Threshold validation complete", extra={"best_ac": best_ac, "best_sc": best_sc, "f1": best_metrics["f1"]}
+    )
 
     return ThresholdValidationResult(
         best_ac_ratio=best_ac,

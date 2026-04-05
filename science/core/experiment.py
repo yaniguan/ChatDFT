@@ -29,7 +29,7 @@ import hashlib
 import json
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -42,6 +42,7 @@ from science.core.seeds import experiment_manifest, get_global_seed
 @dataclass
 class ExperimentRun:
     """A single experiment run with full provenance."""
+
     id: str
     name: str
     timestamp: str
@@ -141,7 +142,9 @@ class ExperimentTracker:
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             return result.stdout.strip()[:12] if result.returncode == 0 else None
         except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -151,21 +154,26 @@ class ExperimentTracker:
         """Save experiment manifest to JSON."""
         manifest_path = self._output_dir / f"{self._run_id}.json"
         with open(manifest_path, "w") as f:
-            json.dump({
-                "id": self._run.id,
-                "name": self._run.name,
-                "timestamp": self._run.timestamp,
-                "status": self._run.status,
-                "duration_s": self._run.duration_s,
-                "config": self._run.config,
-                "config_hash": self._run.config_hash,
-                "metrics": self._run.metrics,
-                "artifacts": self._run.artifacts,
-                "environment": self._run.environment,
-                "git_commit": self._run.git_commit,
-                "seed": self._run.seed,
-                "notes": self._run.notes,
-            }, f, indent=2, default=str)
+            json.dump(
+                {
+                    "id": self._run.id,
+                    "name": self._run.name,
+                    "timestamp": self._run.timestamp,
+                    "status": self._run.status,
+                    "duration_s": self._run.duration_s,
+                    "config": self._run.config,
+                    "config_hash": self._run.config_hash,
+                    "metrics": self._run.metrics,
+                    "artifacts": self._run.artifacts,
+                    "environment": self._run.environment,
+                    "git_commit": self._run.git_commit,
+                    "seed": self._run.seed,
+                    "notes": self._run.notes,
+                },
+                f,
+                indent=2,
+                default=str,
+            )
 
     @property
     def run(self) -> ExperimentRun:
@@ -175,6 +183,7 @@ class ExperimentTracker:
 @dataclass
 class TrustworthinessReport:
     """Report from trustworthiness gate checks."""
+
     publishable: bool
     checks: Dict[str, bool]
     warnings: List[str]
@@ -242,18 +251,13 @@ class TrustworthinessGate:
         checks["config_hashed"] = bool(self._run.config_hash)
 
         # 5. Uncertainty
-        has_uncertainty = any(
-            "uncertainty" in k or "std" in k or "unc" in k
-            for k in self._run.metrics.keys()
-        )
+        has_uncertainty = any("uncertainty" in k or "std" in k or "unc" in k for k in self._run.metrics.keys())
         checks["uncertainty_reported"] = has_uncertainty
         if not has_uncertainty:
             warnings.append("No uncertainty metric — add confidence intervals")
 
         # 6. Baseline comparison
-        has_baseline = any(
-            "baseline" in k for k in self._run.metrics.keys()
-        )
+        has_baseline = any("baseline" in k for k in self._run.metrics.keys())
         checks["baseline_compared"] = has_baseline
         if not has_baseline:
             warnings.append("No baseline comparison metric")

@@ -27,24 +27,25 @@ Data sources:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 @dataclass
 class GoldenExample:
     """One benchmark reaction with ground-truth DFT values."""
+
     id: str
     query: str
-    domain: str                         # co2rr | her | oer | nrr | orr
+    domain: str  # co2rr | her | oer | nrr | orr
     expected_intent: Dict[str, Any]
     expected_intermediates: List[str]
-    expected_dG_profile: List[float]    # eV, at U=0 V_RHE
-    expected_overpotential: float       # V (positive)
-    expected_rds_step: int = -1         # index of rate-determining step
+    expected_dG_profile: List[float]  # eV, at U=0 V_RHE
+    expected_overpotential: float  # V (positive)
+    expected_rds_step: int = -1  # index of rate-determining step
     selectivity_notes: str = ""
     source: str = "literature"
     doi: str = ""
-    functional: str = "RPBE"            # DFT functional used
+    functional: str = "RPBE"  # DFT functional used
     tags: List[str] = field(default_factory=list)
 
 
@@ -411,10 +412,10 @@ GOLDEN_SET: list[GoldenExample] = _CO2RR + _HER + _OER + _NRR + _ORR
 
 GOLDEN_BY_DOMAIN: dict[str, list[GoldenExample]] = {
     "co2rr": _CO2RR,
-    "her":   _HER,
-    "oer":   _OER,
-    "nrr":   _NRR,
-    "orr":   _ORR,
+    "her": _HER,
+    "oer": _OER,
+    "nrr": _NRR,
+    "orr": _ORR,
 }
 
 # Quick stats
@@ -448,10 +449,7 @@ def summary() -> str:
     ]
     for domain, examples in GOLDEN_BY_DOMAIN.items():
         etas = [e.expected_overpotential for e in examples]
-        lines.append(
-            f"  {domain.upper():6s}: {len(examples):2d} reactions, "
-            f"η = {min(etas):.2f}–{max(etas):.2f} V"
-        )
+        lines.append(f"  {domain.upper():6s}: {len(examples):2d} reactions, η = {min(etas):.2f}–{max(etas):.2f} V")
     lines.append("")
     lines.append(f"  Total unique intermediates: {len(get_all_intermediates())}")
     lines.append(f"  DOIs cited: {sum(1 for e in GOLDEN_SET if e.doi)}")

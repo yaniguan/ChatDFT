@@ -34,10 +34,27 @@ class _StructuredFormatter(logging.Formatter):
         }
         # Merge extra fields (skip standard LogRecord attributes)
         _SKIP = {
-            "name", "msg", "args", "created", "relativeCreated", "exc_info",
-            "exc_text", "stack_info", "lineno", "funcName", "pathname",
-            "filename", "module", "thread", "threadName", "processName",
-            "process", "message", "levelname", "levelno", "msecs",
+            "name",
+            "msg",
+            "args",
+            "created",
+            "relativeCreated",
+            "exc_info",
+            "exc_text",
+            "stack_info",
+            "lineno",
+            "funcName",
+            "pathname",
+            "filename",
+            "module",
+            "thread",
+            "threadName",
+            "processName",
+            "process",
+            "message",
+            "levelname",
+            "levelno",
+            "msecs",
             "taskName",
         }
         for k, v in record.__dict__.items():
@@ -56,16 +73,30 @@ class _HumanFormatter(logging.Formatter):
         base = f"[{record.levelname:7s}] {record.module}: {record.getMessage()}"
         # Append extra context
         _SKIP = {
-            "name", "msg", "args", "created", "relativeCreated", "exc_info",
-            "exc_text", "stack_info", "lineno", "funcName", "pathname",
-            "filename", "module", "thread", "threadName", "processName",
-            "process", "message", "levelname", "levelno", "msecs",
+            "name",
+            "msg",
+            "args",
+            "created",
+            "relativeCreated",
+            "exc_info",
+            "exc_text",
+            "stack_info",
+            "lineno",
+            "funcName",
+            "pathname",
+            "filename",
+            "module",
+            "thread",
+            "threadName",
+            "processName",
+            "process",
+            "message",
+            "levelname",
+            "levelno",
+            "msecs",
             "taskName",
         }
-        extras = {
-            k: v for k, v in record.__dict__.items()
-            if k not in _SKIP and not k.startswith("_")
-        }
+        extras = {k: v for k, v in record.__dict__.items() if k not in _SKIP and not k.startswith("_")}
         if extras:
             ctx = " ".join(f"{k}={v}" for k, v in extras.items())
             base += f"  ({ctx})"

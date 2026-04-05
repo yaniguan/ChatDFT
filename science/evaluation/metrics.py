@@ -12,23 +12,22 @@ Design principles:
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 
 # Import the expanded golden dataset (25 reactions, 5 domains)
 from science.evaluation.golden_dataset import (
-    GOLDEN_SET, GOLDEN_BY_DOMAIN, GoldenExample,
-    N_TOTAL, N_DOMAINS, summary as golden_summary,
+    GOLDEN_SET,
+    GoldenExample,
 )
-
 
 # ---------------------------------------------------------------------------
 # Component-level metrics
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MetricResult:
@@ -54,26 +53,32 @@ class IntentParsingMetrics:
         # Stage accuracy
         pred_stage = (predicted.get("stage") or "").lower()
         exp_stage = (expected.get("stage") or "").lower()
-        results.append(MetricResult(
-            "intent_stage_accuracy",
-            1.0 if pred_stage == exp_stage else 0.0,
-            {"predicted": pred_stage, "expected": exp_stage},
-        ))
+        results.append(
+            MetricResult(
+                "intent_stage_accuracy",
+                1.0 if pred_stage == exp_stage else 0.0,
+                {"predicted": pred_stage, "expected": exp_stage},
+            )
+        )
         # Material extraction
         pred_mat = (predicted.get("system", {}).get("material") or "").lower()
         exp_mat = (expected.get("system", {}).get("material") or "").lower()
-        results.append(MetricResult(
-            "intent_material_match",
-            1.0 if pred_mat == exp_mat else 0.0,
-            {"predicted": pred_mat, "expected": exp_mat},
-        ))
+        results.append(
+            MetricResult(
+                "intent_material_match",
+                1.0 if pred_mat == exp_mat else 0.0,
+                {"predicted": pred_mat, "expected": exp_mat},
+            )
+        )
         # Facet extraction
         pred_facet = str(predicted.get("system", {}).get("facet", ""))
         exp_facet = str(expected.get("system", {}).get("facet", ""))
-        results.append(MetricResult(
-            "intent_facet_match",
-            1.0 if pred_facet == exp_facet else 0.0,
-        ))
+        results.append(
+            MetricResult(
+                "intent_facet_match",
+                1.0 if pred_facet == exp_facet else 0.0,
+            )
+        )
         return results
 
 
@@ -90,10 +95,12 @@ class HypothesisMetrics:
     """
 
     @staticmethod
-    def evaluate(predicted_intermediates: List[str],
-                 expected_intermediates: List[str],
-                 predicted_steps: List[str] = None,
-                 reactant: str = "") -> List[MetricResult]:
+    def evaluate(
+        predicted_intermediates: List[str],
+        expected_intermediates: List[str],
+        predicted_steps: List[str] = None,
+        reactant: str = "",
+    ) -> List[MetricResult]:
         results = []
         pred_set = set(s.strip().lower() for s in predicted_intermediates)
         exp_set = set(s.strip().lower() for s in expected_intermediates)
@@ -136,17 +143,14 @@ class ThermodynamicsMetrics:
     """
 
     @staticmethod
-    def evaluate(predicted_dG: List[float],
-                 expected_dG: List[float],
-                 predicted_eta: float,
-                 expected_eta: float) -> List[MetricResult]:
+    def evaluate(
+        predicted_dG: List[float], expected_dG: List[float], predicted_eta: float, expected_eta: float
+    ) -> List[MetricResult]:
         results = []
         # Align lengths
         n = min(len(predicted_dG), len(expected_dG))
         if n > 0:
-            mae = float(np.mean(np.abs(
-                np.array(predicted_dG[:n]) - np.array(expected_dG[:n])
-            )))
+            mae = float(np.mean(np.abs(np.array(predicted_dG[:n]) - np.array(expected_dG[:n]))))
             results.append(MetricResult("thermo_dG_mae_eV", mae))
         # Overpotential error
         eta_err = abs(predicted_eta - expected_eta)
@@ -155,11 +159,13 @@ class ThermodynamicsMetrics:
         if n > 1:
             pred_rds = int(np.argmax(np.diff(predicted_dG[:n])))
             exp_rds = int(np.argmax(np.diff(expected_dG[:n])))
-            results.append(MetricResult(
-                "thermo_rds_match",
-                1.0 if pred_rds == exp_rds else 0.0,
-                {"predicted_rds": pred_rds, "expected_rds": exp_rds},
-            ))
+            results.append(
+                MetricResult(
+                    "thermo_rds_match",
+                    1.0 if pred_rds == exp_rds else 0.0,
+                    {"predicted_rds": pred_rds, "expected_rds": exp_rds},
+                )
+            )
         return results
 
 
@@ -184,8 +190,10 @@ class RAGMetrics:
     @staticmethod
     def ndcg_at_k(relevance_scores: List[float], k: int = 5) -> float:
         """NDCG@k."""
+
         def dcg(scores, k):
             return sum(s / np.log2(i + 2) for i, s in enumerate(scores[:k]))
+
         ideal = sorted(relevance_scores, reverse=True)
         idcg = dcg(ideal, k)
         if idcg == 0:
@@ -208,18 +216,23 @@ class SCFPredictionMetrics:
     """
 
     @staticmethod
-    def evaluate(predicted_step: int, actual_step: int,
-                 predicted_sloshing: bool, actual_sloshing: bool) -> List[MetricResult]:
+    def evaluate(
+        predicted_step: int, actual_step: int, predicted_sloshing: bool, actual_sloshing: bool
+    ) -> List[MetricResult]:
         results = []
         if predicted_step > 0 and actual_step > 0:
-            results.append(MetricResult(
-                "scf_step_prediction_mae",
-                float(abs(predicted_step - actual_step)),
-            ))
-        results.append(MetricResult(
-            "scf_sloshing_detection_accuracy",
-            1.0 if predicted_sloshing == actual_sloshing else 0.0,
-        ))
+            results.append(
+                MetricResult(
+                    "scf_step_prediction_mae",
+                    float(abs(predicted_step - actual_step)),
+                )
+            )
+        results.append(
+            MetricResult(
+                "scf_sloshing_detection_accuracy",
+                1.0 if predicted_sloshing == actual_sloshing else 0.0,
+            )
+        )
         return results
 
 
@@ -240,8 +253,7 @@ class GrounderMetrics:
         return float(np.mean((c - y) ** 2))
 
     @staticmethod
-    def calibration_error(confidences: List[float], labels: List[int],
-                          n_bins: int = 10) -> float:
+    def calibration_error(confidences: List[float], labels: List[int], n_bins: int = 10) -> float:
         c = np.array(confidences)
         y = np.array(labels)
         ece = 0.0
@@ -259,6 +271,7 @@ class GrounderMetrics:
 # Composite evaluation runner
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class EvaluationReport:
     timestamp: str
@@ -267,9 +280,7 @@ class EvaluationReport:
     details: Dict[str, Any] = field(default_factory=dict)
 
     def summary(self) -> str:
-        lines = [f"Evaluation Report ({self.timestamp})",
-                 f"Composite Score: {self.composite_score:.3f}",
-                 ""]
+        lines = [f"Evaluation Report ({self.timestamp})", f"Composite Score: {self.composite_score:.3f}", ""]
         for m in sorted(self.metrics, key=lambda x: x.name):
             lines.append(f"  {m.name:<40s} {m.value:.4f}")
         return "\n".join(lines)
@@ -304,38 +315,43 @@ def run_full_evaluation(
         # 1. Intent parsing
         try:
             pred_intent = intent_fn(ex.query)
-            all_metrics.extend(
-                IntentParsingMetrics.evaluate(pred_intent, ex.expected_intent)
-            )
+            all_metrics.extend(IntentParsingMetrics.evaluate(pred_intent, ex.expected_intent))
         except (ValueError, TypeError, KeyError, IndexError) as e:
-            all_metrics.append(MetricResult(f"intent_error_{ex.id}", 0.0,
-                                            {"error": str(e), "error_type": type(e).__name__}))
+            all_metrics.append(
+                MetricResult(f"intent_error_{ex.id}", 0.0, {"error": str(e), "error_type": type(e).__name__})
+            )
 
         # 2. Hypothesis generation
         try:
             pred_intermediates, pred_steps = hypothesis_fn(pred_intent)
             all_metrics.extend(
                 HypothesisMetrics.evaluate(
-                    pred_intermediates, ex.expected_intermediates,
-                    pred_steps, ex.query.split()[0],
+                    pred_intermediates,
+                    ex.expected_intermediates,
+                    pred_steps,
+                    ex.query.split()[0],
                 )
             )
         except (ValueError, TypeError, KeyError, IndexError) as e:
-            all_metrics.append(MetricResult(f"hypothesis_error_{ex.id}", 0.0,
-                                            {"error": str(e), "error_type": type(e).__name__}))
+            all_metrics.append(
+                MetricResult(f"hypothesis_error_{ex.id}", 0.0, {"error": str(e), "error_type": type(e).__name__})
+            )
 
         # 3. Thermodynamics
         try:
             pred_dG, pred_eta = thermo_fn(ex.query)
             all_metrics.extend(
                 ThermodynamicsMetrics.evaluate(
-                    pred_dG, ex.expected_dG_profile,
-                    pred_eta, ex.expected_overpotential,
+                    pred_dG,
+                    ex.expected_dG_profile,
+                    pred_eta,
+                    ex.expected_overpotential,
                 )
             )
         except (ValueError, TypeError, KeyError, IndexError) as e:
-            all_metrics.append(MetricResult(f"thermo_error_{ex.id}", 0.0,
-                                            {"error": str(e), "error_type": type(e).__name__}))
+            all_metrics.append(
+                MetricResult(f"thermo_error_{ex.id}", 0.0, {"error": str(e), "error_type": type(e).__name__})
+            )
 
     # Composite score: weighted average of key metrics
     WEIGHTS = {
@@ -343,7 +359,7 @@ def run_full_evaluation(
         "intent_material_match": 0.10,
         "hypothesis_intermediate_f1": 0.25,
         "hypothesis_forward_direction": 0.10,
-        "thermo_dG_mae_eV": -0.20,          # negative: lower is better
+        "thermo_dG_mae_eV": -0.20,  # negative: lower is better
         "thermo_overpotential_error_V": -0.15,
         "thermo_rds_match": 0.10,
     }

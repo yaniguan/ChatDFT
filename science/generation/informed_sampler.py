@@ -54,14 +54,15 @@ from typing import Callable, List, Optional, Tuple
 import numpy as np
 
 # Constants (SI-based, converted to eV·Å·amu units)
-_KB_EV  = 8.617333e-5      # eV / K
-_HBAR   = 0.06466          # eV · fs  (ħ in eV·fs)
-_AMU_TO_EV_FS2_A2 = 1.0    # internal: energies in eV, distances in Å, mass in amu
+_KB_EV = 8.617333e-5  # eV / K
+_HBAR = 0.06466  # eV · fs  (ħ in eV·fs)
+_AMU_TO_EV_FS2_A2 = 1.0  # internal: energies in eV, distances in Å, mass in amu
 
 
 # ---------------------------------------------------------------------------
 # Minimal atoms container (ASE-compatible interface)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class AtomsLike:
@@ -70,40 +71,66 @@ class AtomsLike:
     If ASE is available, pass actual ase.Atoms objects — this class is
     only used for standalone testing.
     """
-    positions: np.ndarray   # (N, 3) Å
-    numbers:   np.ndarray   # (N,)   atomic numbers
-    cell:      np.ndarray   # (3, 3) Å
-    masses:    np.ndarray   # (N,)   amu
+
+    positions: np.ndarray  # (N, 3) Å
+    numbers: np.ndarray  # (N,)   atomic numbers
+    cell: np.ndarray  # (3, 3) Å
+    masses: np.ndarray  # (N,)   amu
 
     def copy(self) -> "AtomsLike":
         return AtomsLike(
-            positions = self.positions.copy(),
-            numbers   = self.numbers.copy(),
-            cell      = self.cell.copy(),
-            masses    = self.masses.copy(),
+            positions=self.positions.copy(),
+            numbers=self.numbers.copy(),
+            cell=self.cell.copy(),
+            masses=self.masses.copy(),
         )
 
-    def get_positions(self): return self.positions
-    def set_positions(self, p): self.positions = np.array(p)
-    def get_masses(self):    return self.masses
+    def get_positions(self):
+        return self.positions
+
+    def set_positions(self, p):
+        self.positions = np.array(p)
+
+    def get_masses(self):
+        return self.masses
 
 
 # ---------------------------------------------------------------------------
 # Atomic masses (amu) for common elements
 # ---------------------------------------------------------------------------
 _MASSES: dict = {
-    1:1.008, 6:12.011, 7:14.007, 8:15.999,
-    13:26.982, 14:28.086,
-    22:47.867, 23:50.942, 24:51.996, 25:54.938, 26:55.845,
-    27:58.933, 28:58.693, 29:63.546, 30:65.38,
-    44:101.07, 45:102.906, 46:106.42, 47:107.868,
-    74:183.84, 75:186.207, 76:190.23, 77:192.217, 78:195.084, 79:196.967,
+    1: 1.008,
+    6: 12.011,
+    7: 14.007,
+    8: 15.999,
+    13: 26.982,
+    14: 28.086,
+    22: 47.867,
+    23: 50.942,
+    24: 51.996,
+    25: 54.938,
+    26: 55.845,
+    27: 58.933,
+    28: 58.693,
+    29: 63.546,
+    30: 65.38,
+    44: 101.07,
+    45: 102.906,
+    46: 106.42,
+    47: 107.868,
+    74: 183.84,
+    75: 186.207,
+    76: 190.23,
+    77: 192.217,
+    78: 195.084,
+    79: 196.967,
 }
 
 
 # ---------------------------------------------------------------------------
 # 1. Einstein / harmonic rattle
 # ---------------------------------------------------------------------------
+
 
 class EinsteinRattler:
     """
@@ -129,9 +156,9 @@ class EinsteinRattler:
         n_surface_layers: int = 2,
         rng_seed: Optional[int] = None,
     ):
-        self.omega_THz       = omega_THz
-        self.quantum         = quantum
-        self.surface_only    = surface_only
+        self.omega_THz = omega_THz
+        self.quantum = quantum
+        self.surface_only = surface_only
         self.n_surface_layers = n_surface_layers
         self.rng = np.random.default_rng(rng_seed)
 
@@ -146,7 +173,7 @@ class EinsteinRattler:
             return 0.0
 
         kBT = _KB_EV * T_K
-        hw  = _HBAR * omega_rad_per_fs
+        hw = _HBAR * omega_rad_per_fs
 
         if self.quantum:
             # σ² = ħ / (2mω) · coth(ħω / 2kBT)
@@ -168,21 +195,21 @@ class EinsteinRattler:
         T_K   : float — temperature in Kelvin
         """
         rattled = _copy_atoms(atoms)
-        pos     = np.array(rattled.get_positions())
-        masses  = np.array(rattled.get_masses())
-        N       = len(masses)
+        pos = np.array(rattled.get_positions())
+        masses = np.array(rattled.get_masses())
+        N = len(masses)
 
         # Determine which atoms to rattle
         if self.surface_only:
-            z      = pos[:, 2]
+            z = pos[:, 2]
             z_sort = np.sort(np.unique(np.round(z, 1)))[::-1]
-            top_zs = set(z_sort[:self.n_surface_layers])
-            mask   = np.array([round(z[i], 1) in top_zs for i in range(N)])
+            top_zs = set(z_sort[: self.n_surface_layers])
+            mask = np.array([round(z[i], 1) in top_zs for i in range(N)])
         else:
             mask = np.ones(N, dtype=bool)
 
         for i in np.where(mask)[0]:
-            m   = masses[i]
+            m = masses[i]
             sig = self._sigma(m, T_K)
             pos[i] += self.rng.normal(0, sig, size=3)
 
@@ -197,6 +224,7 @@ class EinsteinRattler:
 # ---------------------------------------------------------------------------
 # 2. Normal-mode (phonon) sampling
 # ---------------------------------------------------------------------------
+
 
 class NormalModeSampler:
     """
@@ -220,7 +248,7 @@ class NormalModeSampler:
 
     def __init__(
         self,
-        lambda_acoustic_cutoff: float = 1e-3,    # eV/Å² — below this = acoustic
+        lambda_acoustic_cutoff: float = 1e-3,  # eV/Å² — below this = acoustic
         include_zpe: bool = True,
         rng_seed: Optional[int] = None,
     ):
@@ -229,7 +257,7 @@ class NormalModeSampler:
         self.rng = np.random.default_rng(rng_seed)
         self._eigvals: Optional[np.ndarray] = None
         self._eigvecs: Optional[np.ndarray] = None
-        self._masses:  Optional[np.ndarray] = None
+        self._masses: Optional[np.ndarray] = None
 
     def fit(self, hessian: np.ndarray, masses: np.ndarray) -> "NormalModeSampler":
         """
@@ -240,31 +268,31 @@ class NormalModeSampler:
         hessian : (3N, 3N) ndarray in eV/Å²
         masses  : (N,) ndarray in amu
         """
-        N  = len(masses)
-        assert hessian.shape == (3*N, 3*N), "Hessian must be (3N, 3N)"
+        N = len(masses)
+        assert hessian.shape == (3 * N, 3 * N), "Hessian must be (3N, 3N)"
         self._masses = masses
 
         # Mass-weight: D = M^{-1/2} H M^{-1/2}
-        m_rep   = np.repeat(masses * 0.0103637, 3)   # (3N,) in eV·fs²/Å²
-        m_sqrt  = np.sqrt(m_rep)
-        D       = hessian / np.outer(m_sqrt, m_sqrt)
-        D       = 0.5 * (D + D.T)                     # ensure symmetry
+        m_rep = np.repeat(masses * 0.0103637, 3)  # (3N,) in eV·fs²/Å²
+        m_sqrt = np.sqrt(m_rep)
+        D = hessian / np.outer(m_sqrt, m_sqrt)
+        D = 0.5 * (D + D.T)  # ensure symmetry
 
         eigvals, eigvecs = np.linalg.eigh(D)
         # Remove acoustic modes (should be ≈0 but can be slightly negative)
         optical_mask = eigvals > self.lambda_cut
         self._eigvals = eigvals[optical_mask]
-        self._eigvecs = eigvecs[:, optical_mask]       # (3N, n_optical)
-        self._m_sqrt  = m_sqrt
+        self._eigvecs = eigvecs[:, optical_mask]  # (3N, n_optical)
+        self._m_sqrt = m_sqrt
         return self
 
     def sample(self, atoms, T_K: float) -> object:
         """Generate one configuration by random superposition of phonon modes."""
         assert self._eigvals is not None, "Call fit() first."
         sampled = _copy_atoms(atoms)
-        pos     = np.array(sampled.get_positions())
-        N3      = 3 * len(pos)
-        kBT     = _KB_EV * T_K
+        pos = np.array(sampled.get_positions())
+        N3 = 3 * len(pos)
+        kBT = _KB_EV * T_K
 
         displacement = np.zeros(N3)
         for nu, (lam, phi) in enumerate(zip(self._eigvals, self._eigvecs.T)):
@@ -273,18 +301,18 @@ class NormalModeSampler:
                 # sigma = sqrt( hbar/(2 m_eff sqrt(lam)) coth(...) )
                 # simplified: A = sqrt(kBT / lam) * correction
                 omega = np.sqrt(max(lam, 1e-20))
-                hw    = _HBAR * omega
+                hw = _HBAR * omega
                 if T_K > 1e-6:
-                    x   = hw / (2 * kBT)
+                    x = hw / (2 * kBT)
                     cth = 1.0 / np.tanh(x) if x < 50 else 1.0
-                    A   = np.sqrt(hw / (2 * lam) * cth)
+                    A = np.sqrt(hw / (2 * lam) * cth)
                 else:
-                    A   = np.sqrt(hw / (2 * lam))
+                    A = np.sqrt(hw / (2 * lam))
             else:
                 A = np.sqrt(kBT / max(lam, 1e-20))
 
             sign = self.rng.choice([-1.0, 1.0])
-            displacement += sign * A * phi / self._m_sqrt   # mass-unweighted
+            displacement += sign * A * phi / self._m_sqrt  # mass-unweighted
 
         pos += displacement.reshape(-1, 3)
         sampled.set_positions(pos)
@@ -303,6 +331,7 @@ class NormalModeSampler:
 # ---------------------------------------------------------------------------
 # 3. Active-learning uncertainty sampler
 # ---------------------------------------------------------------------------
+
 
 class CommitteeUncertaintySampler:
     """
@@ -326,7 +355,7 @@ class CommitteeUncertaintySampler:
     def __init__(
         self,
         committee: List[Callable],
-        threshold: float = 0.005,    # eV/atom — typical literature value
+        threshold: float = 0.005,  # eV/atom — typical literature value
     ):
         self.committee = committee
         self.threshold = threshold
@@ -336,13 +365,11 @@ class CommitteeUncertaintySampler:
         Compute per-atom energy uncertainty for a single configuration.
         Returns eV/atom.
         """
-        N   = len(atoms.get_positions())
-        Es  = [m(atoms) for m in self.committee]
+        N = len(atoms.get_positions())
+        Es = [m(atoms) for m in self.committee]
         return float(np.std(Es) / N)
 
-    def select(
-        self, candidates: List, n_query: int = 10, return_scores: bool = False
-    ) -> List:
+    def select(self, candidates: List, n_query: int = 10, return_scores: bool = False) -> List:
         """
         Rank candidates by uncertainty, return top-n_query.
 
@@ -353,7 +380,7 @@ class CommitteeUncertaintySampler:
         return_scores : if True, return (selected, scores) tuple
         """
         scores = np.array([self.uncertainty(a) for a in candidates])
-        idx    = np.argsort(scores)[::-1][:n_query]
+        idx = np.argsort(scores)[::-1][:n_query]
         selected = [candidates[i] for i in idx]
         if return_scores:
             return selected, scores[idx]
@@ -375,9 +402,10 @@ class CommitteeUncertaintySampler:
 # Strain sampling
 # ---------------------------------------------------------------------------
 
-def strain_sample(atoms, strain_max: float = 0.06, n: int = 10,
-                  mode: str = "isotropic",
-                  rng_seed: Optional[int] = None) -> List:
+
+def strain_sample(
+    atoms, strain_max: float = 0.06, n: int = 10, mode: str = "isotropic", rng_seed: Optional[int] = None
+) -> List:
     """
     Generate structures by deforming the cell.
 
@@ -390,32 +418,34 @@ def strain_sample(atoms, strain_max: float = 0.06, n: int = 10,
     The strain tensor for isotropic mode:
         ε_ij = δ_ij · ε    ε ∈ [-strain_max, +strain_max]
     """
-    rng    = np.random.default_rng(rng_seed)
+    rng = np.random.default_rng(rng_seed)
     result = []
     for _ in range(n):
         strained = _copy_atoms(atoms)
-        cell     = np.array(strained.cell if hasattr(strained, "cell")
-                            else strained.cell)
-        pos      = np.array(strained.get_positions())
+        cell = np.array(strained.cell if hasattr(strained, "cell") else strained.cell)
+        pos = np.array(strained.get_positions())
 
         if mode in ("isotropic", "combined"):
-            eps    = rng.uniform(-strain_max, strain_max)
-            F_iso  = (1.0 + eps) * np.eye(3)
+            eps = rng.uniform(-strain_max, strain_max)
+            F_iso = (1.0 + eps) * np.eye(3)
         else:
-            F_iso  = np.eye(3)
+            F_iso = np.eye(3)
 
         if mode in ("deviatoric", "combined"):
-            e      = rng.uniform(-strain_max/2, strain_max/2, 6)
-            F_dev  = np.eye(3)
-            F_dev[0,1] += e[0]; F_dev[0,2] += e[1]
-            F_dev[1,0] += e[2]; F_dev[1,2] += e[3]
-            F_dev[2,0] += e[4]; F_dev[2,1] += e[5]
+            e = rng.uniform(-strain_max / 2, strain_max / 2, 6)
+            F_dev = np.eye(3)
+            F_dev[0, 1] += e[0]
+            F_dev[0, 2] += e[1]
+            F_dev[1, 0] += e[2]
+            F_dev[1, 2] += e[3]
+            F_dev[2, 0] += e[4]
+            F_dev[2, 1] += e[5]
         else:
-            F_dev  = np.eye(3)
+            F_dev = np.eye(3)
 
         F = F_iso @ F_dev
         new_cell = cell @ F.T
-        new_pos  = pos  @ F.T
+        new_pos = pos @ F.T
 
         if hasattr(strained, "set_cell"):
             strained.set_cell(new_cell, scale_atoms=False)
@@ -427,6 +457,7 @@ def strain_sample(atoms, strain_max: float = 0.06, n: int = 10,
 # ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
+
 
 def _copy_atoms(atoms):
     """Deep-copy an ASE Atoms or AtomsLike object."""

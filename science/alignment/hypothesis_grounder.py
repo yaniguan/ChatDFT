@@ -62,6 +62,7 @@ from science.core.logging import get_logger
 # Optional heavy deps — graceful degradation
 try:
     from sentence_transformers import SentenceTransformer
+
     _HAS_ST = True
 except ImportError:
     _HAS_ST = False
@@ -75,13 +76,32 @@ logger = get_logger(__name__)
 
 # One-hot chemical features for common surface/gas species
 _SPECIES_VOCAB: Dict[str, int] = {
-    "*": 0, "H*": 1, "OH*": 2, "O*": 3, "OOH*": 4,
-    "CO*": 5, "COOH*": 6, "CHO*": 7, "CH2O*": 8, "CH3O*": 9,
-    "CO2*": 10, "N*": 11, "NH*": 12, "NH2*": 13, "NH3*": 14,
-    "N2*": 15, "NNH*": 16,
-    "CO2(g)": 17, "H2O(g)": 18, "H2(g)": 19, "CO(g)": 20,
-    "O2(g)": 21, "N2(g)": 22, "NH3(g)": 23,
-    "H+": 24, "e-": 25,
+    "*": 0,
+    "H*": 1,
+    "OH*": 2,
+    "O*": 3,
+    "OOH*": 4,
+    "CO*": 5,
+    "COOH*": 6,
+    "CHO*": 7,
+    "CH2O*": 8,
+    "CH3O*": 9,
+    "CO2*": 10,
+    "N*": 11,
+    "NH*": 12,
+    "NH2*": 13,
+    "NH3*": 14,
+    "N2*": 15,
+    "NNH*": 16,
+    "CO2(g)": 17,
+    "H2O(g)": 18,
+    "H2(g)": 19,
+    "CO(g)": 20,
+    "O2(g)": 21,
+    "N2(g)": 22,
+    "NH3(g)": 23,
+    "H+": 24,
+    "e-": 25,
     "<UNK>": 26,
 }
 _VOCAB_SIZE = len(_SPECIES_VOCAB)
@@ -94,6 +114,7 @@ def _species_idx(name: str) -> int:
 # ---------------------------------------------------------------------------
 # Data containers
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ReactionStep:
@@ -117,18 +138,20 @@ class ReactionNetwork:
     reactant    : e.g. 'CO2'
     product     : e.g. 'CO'
     """
-    steps:         List[ReactionStep]
+
+    steps: List[ReactionStep]
     intermediates: List[str]
-    ts_edges:      List[Tuple[str, str]] = field(default_factory=list)
-    surface:       str = ""
-    reactant:      str = ""
-    product:       str = ""
+    ts_edges: List[Tuple[str, str]] = field(default_factory=list)
+    surface: str = ""
+    reactant: str = ""
+    product: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "ReactionNetwork":
         steps = [
             ReactionStep(
-                lhs=s["lhs"], rhs=s["rhs"],
+                lhs=s["lhs"],
+                rhs=s["rhs"],
                 is_electrochemical=("H+" in s["lhs"] or "e-" in s["lhs"]),
                 n_electrons=s["lhs"].count("e-"),
             )
@@ -137,26 +160,29 @@ class ReactionNetwork:
         return cls(
             steps=steps,
             intermediates=d.get("intermediates", []),
-            ts_edges=[(e[0], e[1]) for e in d.get("ts_edges", [])
-                      if len(e) == 2],
+            ts_edges=[(e[0], e[1]) for e in d.get("ts_edges", []) if len(e) == 2],
             surface=d.get("surface", ""),
             reactant=d.get("reactant", ""),
             product=d.get("product", ""),
         )
 
     def fingerprint(self) -> str:
-        key = json.dumps({
-            "surface": self.surface,
-            "reactant": self.reactant,
-            "product": self.product,
-            "intermediates": sorted(self.intermediates),
-        }, sort_keys=True)
+        key = json.dumps(
+            {
+                "surface": self.surface,
+                "reactant": self.reactant,
+                "product": self.product,
+                "intermediates": sorted(self.intermediates),
+            },
+            sort_keys=True,
+        )
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
 # Modality encoders
 # ---------------------------------------------------------------------------
+
 
 class TextEncoder:
     """
@@ -171,19 +197,20 @@ class TextEncoder:
     def __init__(
         self,
         model_name: str = "all-MiniLM-L6-v2",
-        mode: str = "auto",       # 'sentence_transformer' | 'bow' | 'auto'
+        mode: str = "auto",  # 'sentence_transformer' | 'bow' | 'auto'
         d_out: int = 64,
     ):
         self.d_out = d_out
-        self.mode  = mode
-        self._st   = None
+        self.mode = mode
+        self._st = None
         if mode in ("sentence_transformer", "auto") and _HAS_ST:
             try:
                 self._st = SentenceTransformer(model_name)
                 self.mode = "sentence_transformer"
             except (OSError, RuntimeError, ValueError) as e:
-                logger.warning("SentenceTransformer init failed, falling back to BoW",
-                               extra={"model": model_name, "error": str(e)})
+                logger.warning(
+                    "SentenceTransformer init failed, falling back to BoW", extra={"model": model_name, "error": str(e)}
+                )
                 self.mode = "bow"
         else:
             self.mode = "bow"
@@ -194,8 +221,8 @@ class TextEncoder:
             # Project to d_out with random linear layer (fixed seed)
             if raw.shape[0] != self.d_out:
                 rng = np.random.default_rng(42)
-                W   = rng.standard_normal((raw.shape[0], self.d_out))
-                W  /= np.linalg.norm(W, axis=0, keepdims=True) + 1e-9
+                W = rng.standard_normal((raw.shape[0], self.d_out))
+                W /= np.linalg.norm(W, axis=0, keepdims=True) + 1e-9
                 raw = raw @ W
             return _l2_norm(raw.astype(np.float32))
         else:
@@ -213,13 +240,13 @@ class TextEncoder:
         for species, idx in _SPECIES_VOCAB.items():
             counts[idx] += t.count(species.lower())
         # scalar features
-        n_ec  = t.count("pcet") + t.count("proton") + t.count("electron")
+        n_ec = t.count("pcet") + t.count("proton") + t.count("electron")
         n_ads = t.count("adsorb") + t.count("bind") + t.count("surface")
         extras = np.array([n_ec, n_ads], dtype=np.float32)
         raw = np.concatenate([counts, extras])
         # fixed random projection to d_out
         rng = np.random.default_rng(1234)
-        W   = rng.standard_normal((raw.shape[0], self.d_out)).astype(np.float32)
+        W = rng.standard_normal((raw.shape[0], self.d_out)).astype(np.float32)
         return _l2_norm(raw @ W)
 
 
@@ -236,11 +263,9 @@ class ReactionGraphEncoder:
 
     def __init__(self, d_out: int = 64, rng_seed: int = 42):
         self.d_out = d_out
-        self.rng   = np.random.default_rng(rng_seed)
+        self.rng = np.random.default_rng(rng_seed)
         # Fixed projection matrix: vocab_size → d_out
-        self._W_species = self.rng.standard_normal(
-            (_VOCAB_SIZE, d_out)
-        ).astype(np.float32)
+        self._W_species = self.rng.standard_normal((_VOCAB_SIZE, d_out)).astype(np.float32)
         self._W_species /= np.linalg.norm(self._W_species, axis=0) + 1e-9
 
     def encode(self, network: ReactionNetwork) -> np.ndarray:
@@ -256,21 +281,24 @@ class ReactionGraphEncoder:
 
         # --- Step-level features ------------------------------------------
         n_steps = len(network.steps)
-        n_ec    = sum(s.is_electrochemical for s in network.steps)
-        n_ts    = len(network.ts_edges)
+        n_ec = sum(s.is_electrochemical for s in network.steps)
+        n_ts = len(network.ts_edges)
         n_inter = len(network.intermediates)
 
         # Global features (normalised)
-        global_feat = np.array([
-            n_steps  / max(n_steps, 1),
-            n_ec     / max(n_steps, 1),
-            n_ts     / max(n_steps, 1),
-            n_inter  / max(n_inter, 1),
-            float("*" in network.intermediates),
-        ], dtype=np.float32)
+        global_feat = np.array(
+            [
+                n_steps / max(n_steps, 1),
+                n_ec / max(n_steps, 1),
+                n_ts / max(n_steps, 1),
+                n_inter / max(n_inter, 1),
+                float("*" in network.intermediates),
+            ],
+            dtype=np.float32,
+        )
 
         # Pad/project global to d_out
-        rng2   = np.random.default_rng(99)
+        rng2 = np.random.default_rng(99)
         W_glob = rng2.standard_normal((len(global_feat), self.d_out)).astype(np.float32)
         W_glob /= np.linalg.norm(W_glob, axis=0) + 1e-9
         global_emb = global_feat @ W_glob
@@ -293,24 +321,22 @@ class FreeEnergyEncoder:
 
     # Hand-crafted 1D filters: detect monotone decrease, barrier, plateau
     _FILTERS = [
-        np.array([-1.0,  1.0,  0.0,  0.0], dtype=np.float32),   # rising step
-        np.array([ 1.0, -1.0,  0.0,  0.0], dtype=np.float32),   # falling step
-        np.array([-1.0,  2.0, -1.0,  0.0], dtype=np.float32),   # barrier shape
-        np.array([ 0.0,  0.0,  0.0,  1.0], dtype=np.float32),   # plateau
+        np.array([-1.0, 1.0, 0.0, 0.0], dtype=np.float32),  # rising step
+        np.array([1.0, -1.0, 0.0, 0.0], dtype=np.float32),  # falling step
+        np.array([-1.0, 2.0, -1.0, 0.0], dtype=np.float32),  # barrier shape
+        np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),  # plateau
     ]
 
     def __init__(self, d_out: int = 64, seq_len: int = 16):
-        self.d_out   = d_out
+        self.d_out = d_out
         self.seq_len = seq_len
         rng = np.random.default_rng(77)
         self._W = rng.standard_normal(
-            (seq_len + 6, d_out)     # conv output + 6 scalar features
+            (seq_len + 6, d_out)  # conv output + 6 scalar features
         ).astype(np.float32)
         self._W /= np.linalg.norm(self._W, axis=0) + 1e-9
 
-    def encode(self, dG_profile: List[float],
-               U_limiting: float = 0.0,
-               overpotential: float = 0.0) -> np.ndarray:
+    def encode(self, dG_profile: List[float], U_limiting: float = 0.0, overpotential: float = 0.0) -> np.ndarray:
         """
         Parameters
         ----------
@@ -322,32 +348,38 @@ class FreeEnergyEncoder:
             return np.zeros(self.d_out, dtype=np.float32)
 
         # --- Normalise and pad/truncate to seq_len -----------------------
-        G  = np.array(dG_profile, dtype=np.float32)
-        G  = G - G[0]              # relative to first step
+        G = np.array(dG_profile, dtype=np.float32)
+        G = G - G[0]  # relative to first step
         mu, sig = G.mean(), G.std() + 1e-9
-        G_norm  = (G - mu) / sig
+        G_norm = (G - mu) / sig
 
         seq = np.zeros(self.seq_len, dtype=np.float32)
-        L   = min(len(G_norm), self.seq_len)
+        L = min(len(G_norm), self.seq_len)
         seq[:L] = G_norm[:L]
 
         # --- Conv features (valid convolution, no padding) ---------------
         conv_out = []
         for filt in self._FILTERS:
-            k  = len(filt)
-            cv = [float(np.dot(seq[i:i+k], filt))
-                  for i in range(self.seq_len - k + 1)]
+            k = len(filt)
+            cv = [float(np.dot(seq[i : i + k], filt)) for i in range(self.seq_len - k + 1)]
             conv_out.append(np.max(cv) if cv else 0.0)
 
         # --- Scalar descriptors ------------------------------------------
         rds_idx = int(np.argmax(np.diff(G))) if len(G) > 1 else 0
-        scalars = np.array([
-            float(G.min()), float(G.max()),
-            float(G[rds_idx+1] - G[rds_idx]) if rds_idx < len(G)-1 else 0.0,
-            float(len(dG_profile)),
-            float(U_limiting),
-            float(overpotential),
-        ], dtype=np.float32) / 5.0   # crude normalisation to O(1)
+        scalars = (
+            np.array(
+                [
+                    float(G.min()),
+                    float(G.max()),
+                    float(G[rds_idx + 1] - G[rds_idx]) if rds_idx < len(G) - 1 else 0.0,
+                    float(len(dG_profile)),
+                    float(U_limiting),
+                    float(overpotential),
+                ],
+                dtype=np.float32,
+            )
+            / 5.0
+        )  # crude normalisation to O(1)
 
         raw = np.concatenate([seq, scalars])
         return _l2_norm(raw @ self._W)
@@ -356,6 +388,7 @@ class FreeEnergyEncoder:
 # ---------------------------------------------------------------------------
 # Cross-modal aligner
 # ---------------------------------------------------------------------------
+
 
 class HypothesisGrounder:
     """
@@ -377,11 +410,11 @@ class HypothesisGrounder:
         d_embed: int = 64,
         temperature: float = 0.07,
     ):
-        self.d     = d_embed
-        self.tau   = temperature
-        self.text_enc  = TextEncoder(d_out=d_embed)
+        self.d = d_embed
+        self.tau = temperature
+        self.text_enc = TextEncoder(d_out=d_embed)
         self.graph_enc = ReactionGraphEncoder(d_out=d_embed)
-        self.prop_enc  = FreeEnergyEncoder(d_out=d_embed, seq_len=16)
+        self.prop_enc = FreeEnergyEncoder(d_out=d_embed, seq_len=16)
 
     # ------------------------------------------------------------------
     # Score
@@ -389,10 +422,10 @@ class HypothesisGrounder:
 
     def score(
         self,
-        hypothesis:   str,
-        network:      ReactionNetwork,
-        dG_profile:   Optional[List[float]] = None,
-        U_limiting:   float = 0.0,
+        hypothesis: str,
+        network: ReactionNetwork,
+        dG_profile: Optional[List[float]] = None,
+        U_limiting: float = 0.0,
         overpotential: float = 0.0,
     ) -> float:
         """
@@ -409,14 +442,14 @@ class HypothesisGrounder:
         t_emb = self.text_enc.encode(hypothesis)
         g_emb = self.graph_enc.encode(network)
 
-        sim_tg = float(np.dot(t_emb, g_emb))   # already L2-normalised
+        sim_tg = float(np.dot(t_emb, g_emb))  # already L2-normalised
 
         if dG_profile is not None and len(dG_profile) > 1:
-            p_emb  = self.prop_enc.encode(dG_profile, U_limiting, overpotential)
+            p_emb = self.prop_enc.encode(dG_profile, U_limiting, overpotential)
             sim_tp = float(np.dot(t_emb, p_emb))
-            raw    = 0.6 * sim_tg + 0.4 * sim_tp
+            raw = 0.6 * sim_tg + 0.4 * sim_tp
         else:
-            raw    = sim_tg
+            raw = sim_tg
 
         return float(_sigmoid(raw / self.tau))
 
@@ -427,7 +460,7 @@ class HypothesisGrounder:
     def infonce_loss(
         self,
         hypotheses: List[str],
-        networks:   List[ReactionNetwork],
+        networks: List[ReactionNetwork],
     ) -> float:
         """
         Compute InfoNCE contrastive loss for a batch of (text, graph) pairs.
@@ -442,15 +475,15 @@ class HypothesisGrounder:
         """
         B = len(hypotheses)
         assert B == len(networks), "Batch size mismatch."
-        T = np.stack([self.text_enc.encode(h) for h in hypotheses])   # (B,d)
-        G = np.stack([self.graph_enc.encode(n) for n in networks])     # (B,d)
+        T = np.stack([self.text_enc.encode(h) for h in hypotheses])  # (B,d)
+        G = np.stack([self.graph_enc.encode(n) for n in networks])  # (B,d)
 
         # Cosine similarity matrix (B × B)
-        sim = T @ G.T / self.tau   # already L2-normed
+        sim = T @ G.T / self.tau  # already L2-normed
 
         # Log-softmax over each row, keep diagonal (positive pairs)
-        log_sm = sim - _log_sum_exp_rows(sim)     # (B,B)
-        loss   = -float(np.mean(np.diag(log_sm)))
+        log_sm = sim - _log_sum_exp_rows(sim)  # (B,B)
+        loss = -float(np.mean(np.diag(log_sm)))
         return loss
 
     # ------------------------------------------------------------------
@@ -460,7 +493,7 @@ class HypothesisGrounder:
     def score_breakdown(
         self,
         hypothesis: str,
-        network:    ReactionNetwork,
+        network: ReactionNetwork,
         dG_profile: Optional[List[float]] = None,
     ) -> Dict[str, float]:
         """
@@ -475,9 +508,9 @@ class HypothesisGrounder:
             "text_graph_confidence": float(_sigmoid(sim_tg / self.tau)),
         }
         if dG_profile is not None and len(dG_profile) > 1:
-            p_emb  = self.prop_enc.encode(dG_profile)
+            p_emb = self.prop_enc.encode(dG_profile)
             sim_tp = float(np.dot(t_emb, p_emb))
-            result["text_property_cosine"]    = sim_tp
+            result["text_property_cosine"] = sim_tp
             result["text_property_confidence"] = float(_sigmoid(sim_tp / self.tau))
             result["combined_confidence"] = self.score(hypothesis, network, dG_profile)
         else:
@@ -489,6 +522,7 @@ class HypothesisGrounder:
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
 
 def _l2_norm(v: np.ndarray, eps: float = 1e-9) -> np.ndarray:
     n = np.linalg.norm(v)
@@ -513,6 +547,7 @@ try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as _F
+
     _HAS_TORCH = True
 except ImportError:
     _HAS_TORCH = False
@@ -552,19 +587,13 @@ class TrainableGrounder:
         self._base_grounder = HypothesisGrounder(d_embed=d_embed, temperature=temperature)
 
         # Learnable projection heads (replace frozen random projections)
-        d_text_in = _VOCAB_SIZE + 5   # BoW features
+        d_text_in = _VOCAB_SIZE + 5  # BoW features
         d_graph_in = _VOCAB_SIZE + 5  # species + global
-        d_energy_in = 16 + 6          # padded dG + scalar features
+        d_energy_in = 16 + 6  # padded dG + scalar features
 
-        self._text_proj = nn.Sequential(
-            nn.Linear(d_text_in, 128), nn.ReLU(), nn.Linear(128, d_embed)
-        )
-        self._graph_proj = nn.Sequential(
-            nn.Linear(d_graph_in, 128), nn.ReLU(), nn.Linear(128, d_embed)
-        )
-        self._energy_proj = nn.Sequential(
-            nn.Linear(d_energy_in, 128), nn.ReLU(), nn.Linear(128, d_embed)
-        )
+        self._text_proj = nn.Sequential(nn.Linear(d_text_in, 128), nn.ReLU(), nn.Linear(128, d_embed))
+        self._graph_proj = nn.Sequential(nn.Linear(d_graph_in, 128), nn.ReLU(), nn.Linear(128, d_embed))
+        self._energy_proj = nn.Sequential(nn.Linear(d_energy_in, 128), nn.ReLU(), nn.Linear(128, d_embed))
         # Learnable temperature
         self._log_tau = nn.Parameter(torch.tensor(math.log(temperature)))
 
@@ -575,17 +604,18 @@ class TrainableGrounder:
         for i, tok in enumerate(_SPECIES_VOCAB):
             if tok.lower() in text_lower:
                 species_oh[i] = 1.0
-        n_surface = sum(1 for v in ["surface", "slab", "facet", "111", "100", "110"]
-                        if v in text_lower)
-        n_pcet = sum(1 for v in ["h+", "e-", "proton", "electron", "pcet"]
-                     if v in text_lower)
-        extras = np.array([
-            float(len(text_lower)) / 500.0,
-            species_oh.sum() / max(_VOCAB_SIZE, 1),
-            float(n_surface) / 6.0,
-            float(n_pcet) / 5.0,
-            float("*" in hypothesis),
-        ], dtype=np.float32)
+        n_surface = sum(1 for v in ["surface", "slab", "facet", "111", "100", "110"] if v in text_lower)
+        n_pcet = sum(1 for v in ["h+", "e-", "proton", "electron", "pcet"] if v in text_lower)
+        extras = np.array(
+            [
+                float(len(text_lower)) / 500.0,
+                species_oh.sum() / max(_VOCAB_SIZE, 1),
+                float(n_surface) / 6.0,
+                float(n_pcet) / 5.0,
+                float("*" in hypothesis),
+            ],
+            dtype=np.float32,
+        )
         return np.concatenate([species_oh, extras])
 
     def _extract_graph_features(self, network: ReactionNetwork) -> np.ndarray:
@@ -597,13 +627,16 @@ class TrainableGrounder:
             species_oh /= len(network.intermediates)
         n_steps = len(network.steps)
         n_ec = sum(s.is_electrochemical for s in network.steps)
-        global_feat = np.array([
-            n_steps / max(n_steps, 1),
-            n_ec / max(n_steps, 1),
-            len(network.ts_edges) / max(n_steps, 1),
-            len(network.intermediates) / max(len(network.intermediates), 1),
-            float("*" in network.intermediates),
-        ], dtype=np.float32)
+        global_feat = np.array(
+            [
+                n_steps / max(n_steps, 1),
+                n_ec / max(n_steps, 1),
+                len(network.ts_edges) / max(n_steps, 1),
+                len(network.intermediates) / max(len(network.intermediates), 1),
+                float("*" in network.intermediates),
+            ],
+            dtype=np.float32,
+        )
         return np.concatenate([species_oh, global_feat])
 
     def _extract_energy_features(self, dG_profile: List[float]) -> np.ndarray:
@@ -613,26 +646,31 @@ class TrainableGrounder:
         # Pad/truncate to seq_len
         if len(arr) < seq_len:
             padded = np.zeros(seq_len, dtype=np.float32)
-            padded[:len(arr)] = arr
+            padded[: len(arr)] = arr
         else:
             padded = arr[:seq_len]
         # Scalar features
-        scalars = np.array([
-            float(np.min(arr)),
-            float(np.max(arr)),
-            float(np.max(np.diff(arr))) if len(arr) > 1 else 0.0,
-            float(np.min(np.diff(arr))) if len(arr) > 1 else 0.0,
-            float(len(arr)) / 20.0,
-            float(arr[-1]) if len(arr) > 0 else 0.0,
-        ], dtype=np.float32)
+        scalars = np.array(
+            [
+                float(np.min(arr)),
+                float(np.max(arr)),
+                float(np.max(np.diff(arr))) if len(arr) > 1 else 0.0,
+                float(np.min(np.diff(arr))) if len(arr) > 1 else 0.0,
+                float(len(arr)) / 20.0,
+                float(arr[-1]) if len(arr) > 0 else 0.0,
+            ],
+            dtype=np.float32,
+        )
         return np.concatenate([padded, scalars])
 
-    def _encode_batch(self, hypotheses: List[str],
-                      networks: List[ReactionNetwork],
-                      dG_profiles: Optional[List[List[float]]] = None,
-                      ) -> tuple:
+    def _encode_batch(
+        self,
+        hypotheses: List[str],
+        networks: List[ReactionNetwork],
+        dG_profiles: Optional[List[List[float]]] = None,
+    ) -> tuple:
         """Encode a batch through learnable projections."""
-        B = len(hypotheses)
+        len(hypotheses)
         t_raw = torch.tensor(
             np.stack([self._extract_text_features(h) for h in hypotheses]),
             dtype=torch.float32,
@@ -685,10 +723,10 @@ class TrainableGrounder:
             Loss curve (one value per epoch).
         """
         params = (
-            list(self._text_proj.parameters()) +
-            list(self._graph_proj.parameters()) +
-            list(self._energy_proj.parameters()) +
-            [self._log_tau]
+            list(self._text_proj.parameters())
+            + list(self._graph_proj.parameters())
+            + list(self._energy_proj.parameters())
+            + [self._log_tau]
         )
         optimizer = torch.optim.Adam(params, lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
@@ -701,7 +739,7 @@ class TrainableGrounder:
             n_batches = 0
 
             for start in range(0, len(pairs), batch_size):
-                batch_idx = indices[start:start + batch_size]
+                batch_idx = indices[start : start + batch_size]
                 if len(batch_idx) < 2:
                     continue
 
@@ -709,9 +747,7 @@ class TrainableGrounder:
                 networks = [pairs[i][1] for i in batch_idx]
                 dG_profiles = [pairs[i][2] for i in batch_idx]
 
-                t_emb, g_emb, p_emb = self._encode_batch(
-                    hypotheses, networks, dG_profiles
-                )
+                t_emb, g_emb, p_emb = self._encode_batch(hypotheses, networks, dG_profiles)
 
                 # InfoNCE loss: text → graph
                 tau = self._log_tau.exp()
@@ -748,7 +784,8 @@ class TrainableGrounder:
     ) -> float:
         """Score using trained projections."""
         t_emb, g_emb, p_emb = self._encode_batch(
-            [hypothesis], [network],
+            [hypothesis],
+            [network],
             [dG_profile] if dG_profile is not None else None,
         )
         with torch.no_grad():
@@ -781,8 +818,8 @@ class TrainableGrounder:
         scores_pos = [self.score(h, n, dg) for h, n, dg in pairs]
         scores_neg = [self.score(h, n, dg) for h, n, dg in mismatched_pairs]
 
-        all_scores = scores_pos + scores_neg
-        all_labels = [1] * len(scores_pos) + [0] * len(scores_neg)
+        scores_pos + scores_neg
+        [1] * len(scores_pos) + [0] * len(scores_neg)
 
         # Simple AUC computation
         n_pos = len(scores_pos)

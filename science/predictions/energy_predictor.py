@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -38,24 +38,28 @@ try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
+
     _HAS_TORCH = True
 except ImportError:
     _HAS_TORCH = False
 
 from science.core.constants import (
-    D_BAND_CENTRES, ADSORBATE_OFFSETS, CN_BINDING_SLOPE,
-    D_BAND_COUPLING, FCC_LATTICE_CONSTANTS,
+    ADSORBATE_OFFSETS,
+    CN_BINDING_SLOPE,
+    D_BAND_CENTRES,
+    D_BAND_COUPLING,
+    FCC_LATTICE_CONSTANTS,
 )
 from science.core.logging import get_logger
-from science.core.seeds import get_rng
 
 logger = get_logger(__name__)
-from science.representations.surface_graph import SurfaceTopologyGraph
-from science.predictions.gnn_models import (
-    GraphData, build_model, list_models, _check_torch,
-    _scatter_mean,
+from science.predictions.gnn_models import (  # noqa: E402
+    GraphData,
+    _check_torch,
+    build_model,
+    list_models,
 )
-
+from science.representations.surface_graph import SurfaceTopologyGraph  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Synthetic adsorption energy dataset
@@ -67,8 +71,9 @@ _ADS_OFFSET = ADSORBATE_OFFSETS
 _CN_SLOPE = CN_BINDING_SLOPE
 
 
-def _generate_slab(element: str, n_atoms: int = 8,
-                   rng: np.random.Generator = None) -> Tuple[np.ndarray, list, np.ndarray]:
+def _generate_slab(
+    element: str, n_atoms: int = 8, rng: np.random.Generator = None
+) -> Tuple[np.ndarray, list, np.ndarray]:
     """
     Generate a synthetic slab with realistic lattice parameters.
     Returns (positions, elements, cell).
@@ -98,11 +103,14 @@ def _generate_slab(element: str, n_atoms: int = 8,
 
     positions = np.array(positions[:n_atoms], dtype=np.float64)
     elements = [element] * n_atoms
-    cell = np.array([
-        [nx_atoms * d, 0, 0],
-        [d / 2, ny_atoms * d * np.sqrt(3) / 2, 0],
-        [0, 0, 25.0],
-    ], dtype=np.float64)
+    cell = np.array(
+        [
+            [nx_atoms * d, 0, 0],
+            [d / 2, ny_atoms * d * np.sqrt(3) / 2, 0],
+            [0, 0, 25.0],
+        ],
+        dtype=np.float64,
+    )
 
     return positions, elements, cell
 
@@ -149,13 +157,14 @@ def synthetic_adsorption_energy(
 @dataclass
 class AdsorptionSample:
     """Single training/test sample."""
+
     element: str
     adsorbate: str
-    positions: np.ndarray      # (N, 3)
-    elements: list              # [str] * N
-    cell: np.ndarray           # (3, 3)
-    energy: float              # eV
-    cn_mean: float             # average coordination number
+    positions: np.ndarray  # (N, 3)
+    elements: list  # [str] * N
+    cell: np.ndarray  # (3, 3)
+    energy: float  # eV
+    cn_mean: float  # average coordination number
 
 
 def generate_dataset(
@@ -191,11 +200,17 @@ def generate_dataset(
 
         energy = synthetic_adsorption_energy(elem, ads, cn_mean, rng=rng)
 
-        samples.append(AdsorptionSample(
-            element=elem, adsorbate=ads,
-            positions=pos, elements=elems, cell=cell,
-            energy=energy, cn_mean=cn_mean,
-        ))
+        samples.append(
+            AdsorptionSample(
+                element=elem,
+                adsorbate=ads,
+                positions=pos,
+                elements=elems,
+                cell=cell,
+                energy=energy,
+                cn_mean=cn_mean,
+            )
+        )
     return samples
 
 
@@ -218,6 +233,7 @@ def samples_to_graphs(
 # ---------------------------------------------------------------------------
 # Batching utility
 # ---------------------------------------------------------------------------
+
 
 def collate_graphs(graphs: list[GraphData]) -> GraphData:
     """Collate a list of single-graph GraphData into a batched GraphData."""
@@ -248,14 +264,16 @@ def collate_graphs(graphs: list[GraphData]) -> GraphData:
 # Training & evaluation
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TrainResult:
     """Result of a single model training run."""
+
     model_name: str
-    train_mae: float          # eV
-    val_mae: float            # eV
-    test_mae: float           # eV
-    train_time_s: float       # seconds
+    train_mae: float  # eV
+    val_mae: float  # eV
+    test_mae: float  # eV
+    train_time_s: float  # seconds
     n_params: int
     loss_curve: list[float] = field(default_factory=list)
 
@@ -296,9 +314,7 @@ def train_and_evaluate(
 
     model = build_model(model_name, **model_kwargs)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=15, factor=0.5
-    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=15, factor=0.5)
 
     loss_curve = []
     t0 = time.time()
@@ -311,11 +327,11 @@ def train_and_evaluate(
         n_batches = 0
 
         for start in range(0, len(train_graphs), batch_size):
-            batch_idx = indices[start:start + batch_size]
+            batch_idx = indices[start : start + batch_size]
             batch = collate_graphs([train_graphs[i] for i in batch_idx])
 
             pred = model(batch)
-            loss = F.l1_loss(pred, batch.y) if hasattr(F, 'l1_loss') else (pred - batch.y).abs().mean()
+            loss = F.l1_loss(pred, batch.y) if hasattr(F, "l1_loss") else (pred - batch.y).abs().mean()
 
             optimizer.zero_grad()
             loss.backward()
@@ -333,8 +349,7 @@ def train_and_evaluate(
             val_mae = _evaluate_mae(model, val_graphs, batch_size)
             scheduler.step(val_mae)
             if verbose and epoch % 20 == 0:
-                print(f"  [{model_name}] epoch {epoch:3d}  "
-                      f"train_loss={avg_loss:.4f}  val_mae={val_mae:.4f}")
+                print(f"  [{model_name}] epoch {epoch:3d}  train_loss={avg_loss:.4f}  val_mae={val_mae:.4f}")
 
     train_time = time.time() - t0
 
@@ -353,15 +368,14 @@ def train_and_evaluate(
     )
 
 
-def _evaluate_mae(model: nn.Module, graphs: list[GraphData],
-                  batch_size: int = 16) -> float:
+def _evaluate_mae(model: nn.Module, graphs: list[GraphData], batch_size: int = 16) -> float:
     """Compute MAE over a set of graphs."""
     model.eval()
     total_ae = 0.0
     n = 0
     with torch.no_grad():
         for start in range(0, len(graphs), batch_size):
-            batch = collate_graphs(graphs[start:start + batch_size])
+            batch = collate_graphs(graphs[start : start + batch_size])
             pred = model(batch)
             total_ae += (pred - batch.y).abs().sum().item()
             n += pred.shape[0]
@@ -371,6 +385,7 @@ def _evaluate_mae(model: nn.Module, graphs: list[GraphData],
 # ---------------------------------------------------------------------------
 # Full benchmark comparison
 # ---------------------------------------------------------------------------
+
 
 def benchmark_all_models(
     n_samples: int = 200,
@@ -395,11 +410,10 @@ def benchmark_all_models(
     n_val = int(0.15 * len(samples))
 
     train_samples = [samples[i] for i in idx[:n_train]]
-    val_samples = [samples[i] for i in idx[n_train:n_train + n_val]]
-    test_samples = [samples[i] for i in idx[n_train + n_val:]]
+    val_samples = [samples[i] for i in idx[n_train : n_train + n_val]]
+    test_samples = [samples[i] for i in idx[n_train + n_val :]]
 
-    print(f"  Train: {len(train_samples)}, Val: {len(val_samples)}, "
-          f"Test: {len(test_samples)}")
+    print(f"  Train: {len(train_samples)}, Val: {len(val_samples)}, Test: {len(test_samples)}")
 
     print("Converting to graph data...")
     train_graphs = samples_to_graphs(train_samples)
@@ -411,13 +425,16 @@ def benchmark_all_models(
         print(f"\nTraining {name}...")
         try:
             r = train_and_evaluate(
-                name, train_graphs, val_graphs, test_graphs,
-                n_epochs=n_epochs, verbose=verbose,
+                name,
+                train_graphs,
+                val_graphs,
+                test_graphs,
+                n_epochs=n_epochs,
+                verbose=verbose,
             )
-            print(f"  {name}: test_mae={r.test_mae:.4f} eV, "
-                  f"params={r.n_params:,}, time={r.train_time_s:.1f}s")
+            print(f"  {name}: test_mae={r.test_mae:.4f} eV, params={r.n_params:,}, time={r.train_time_s:.1f}s")
             results.append(r)
-        except (RuntimeError, ValueError, torch.cuda.OutOfMemoryError if hasattr(torch, 'cuda') else RuntimeError) as e:
+        except (RuntimeError, ValueError, torch.cuda.OutOfMemoryError if hasattr(torch, "cuda") else RuntimeError) as e:
             print(f"  {name} FAILED: {type(e).__name__}: {e}")
 
     results.sort(key=lambda r: r.test_mae)
@@ -432,7 +449,6 @@ def format_results_table(results: list[TrainResult]) -> str:
     ]
     for r in results:
         lines.append(
-            f"| {r.model_name:16s} | {r.test_mae:.4f} | {r.val_mae:.4f} "
-            f"| {r.n_params:>7,} | {r.train_time_s:>6.1f}s |"
+            f"| {r.model_name:16s} | {r.test_mae:.4f} | {r.val_mae:.4f} | {r.n_params:>7,} | {r.train_time_s:>6.1f}s |"
         )
     return "\n".join(lines)

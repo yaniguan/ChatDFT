@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatdft-server
+  namespace: chatdft
+  labels:
+    app: chatdft-server
+spec:
+  type: ClusterIP
+  selector:
+    app: chatdft-server
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+
+---
+# Service account for IRSA (Secrets Manager access)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chatdft-server
+  namespace: chatdft
+  annotations:
+    # Replace with actual ARN from: terraform output secrets_role_arn
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/chatdft-secrets-access"

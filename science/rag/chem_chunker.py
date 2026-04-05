@@ -43,12 +43,12 @@ On 50 DFT papers, chemistry-aware chunking produces chunks where 94% contain
 a complete semantic unit (vs 61% for word-count chunking), and retrieval
 recall@5 improves from 0.52 to 0.78 on VASP-tag queries.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Chemical entity patterns
@@ -56,86 +56,175 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 # VASP/QE input tags — the most common ones in DFT literature
 VASP_TAGS = {
-    "ENCUT", "EDIFF", "EDIFFG", "ISMEAR", "SIGMA", "ISPIN", "MAGMOM",
-    "IBRION", "NSW", "POTIM", "ISIF", "PREC", "ALGO", "LREAL", "NCORE",
-    "KPAR", "NBAND", "NBANDS", "LORBIT", "NEDOS", "ICHARG", "ISTART",
-    "LWAVE", "LCHARG", "LDIPOL", "IDIPOL", "IVDW", "LSOL", "EB_K",
-    "GGA", "METAGGA", "LASPH", "LMAXMIX", "LDAU", "LDAUL", "LDAUU",
-    "LDAUJ", "LELF", "LVHAR", "LAECHG", "ISYM", "SYMPREC", "ADDGRID",
-    "IMAGES", "SPRING", "LCLIMB", "IOPT",  # NEB
-    "LEPSILON", "LCALCPOL",  # dielectric
-    "NELM", "NELMIN", "AMIX", "BMIX", "AMIX_MAG", "BMIX_MAG",  # SCF mixing
+    "ENCUT",
+    "EDIFF",
+    "EDIFFG",
+    "ISMEAR",
+    "SIGMA",
+    "ISPIN",
+    "MAGMOM",
+    "IBRION",
+    "NSW",
+    "POTIM",
+    "ISIF",
+    "PREC",
+    "ALGO",
+    "LREAL",
+    "NCORE",
+    "KPAR",
+    "NBAND",
+    "NBANDS",
+    "LORBIT",
+    "NEDOS",
+    "ICHARG",
+    "ISTART",
+    "LWAVE",
+    "LCHARG",
+    "LDIPOL",
+    "IDIPOL",
+    "IVDW",
+    "LSOL",
+    "EB_K",
+    "GGA",
+    "METAGGA",
+    "LASPH",
+    "LMAXMIX",
+    "LDAU",
+    "LDAUL",
+    "LDAUU",
+    "LDAUJ",
+    "LELF",
+    "LVHAR",
+    "LAECHG",
+    "ISYM",
+    "SYMPREC",
+    "ADDGRID",
+    "IMAGES",
+    "SPRING",
+    "LCLIMB",
+    "IOPT",  # NEB
+    "LEPSILON",
+    "LCALCPOL",  # dielectric
+    "NELM",
+    "NELMIN",
+    "AMIX",
+    "BMIX",
+    "AMIX_MAG",
+    "BMIX_MAG",  # SCF mixing
 }
 
 QE_TAGS = {
-    "ecutwfc", "ecutrho", "occupations", "smearing", "degauss",
-    "conv_thr", "mixing_beta", "mixing_mode", "electron_maxstep",
-    "nstep", "forc_conv_thr", "press_conv_thr", "cell_dofree",
-    "vdw_corr", "london_s6",
+    "ecutwfc",
+    "ecutrho",
+    "occupations",
+    "smearing",
+    "degauss",
+    "conv_thr",
+    "mixing_beta",
+    "mixing_mode",
+    "electron_maxstep",
+    "nstep",
+    "forc_conv_thr",
+    "press_conv_thr",
+    "cell_dofree",
+    "vdw_corr",
+    "london_s6",
 }
 
 ALL_DFT_TAGS = VASP_TAGS | QE_TAGS
 
 # Regex patterns
 _RE_VASP_TAG = re.compile(
-    r'\b(' + '|'.join(re.escape(t) for t in sorted(ALL_DFT_TAGS, key=len, reverse=True)) + r')\b',
+    r"\b(" + "|".join(re.escape(t) for t in sorted(ALL_DFT_TAGS, key=len, reverse=True)) + r")\b",
     re.IGNORECASE,
 )
 
 _RE_CHEMICAL_FORMULA = re.compile(
-    r'\b([A-Z][a-z]?(?:\d+)?(?:[A-Z][a-z]?(?:\d+)?)*'  # e.g., CO2, CH3OH, Pt3Ni
-    r'(?:\([a-z]+\))?'                                     # e.g., (g), (aq), (s)
-    r'(?:\*)?)\b'                                           # e.g., CO*, H*
+    r"\b([A-Z][a-z]?(?:\d+)?(?:[A-Z][a-z]?(?:\d+)?)*"  # e.g., CO2, CH3OH, Pt3Ni
+    r"(?:\([a-z]+\))?"  # e.g., (g), (aq), (s)
+    r"(?:\*)?)\b"  # e.g., CO*, H*
 )
 
 _RE_SURFACE_NOTATION = re.compile(
-    r'\b([A-Z][a-z]?(?:\d*[A-Z][a-z]?)*)'   # element(s)
-    r'\((\d{3})\)'                            # Miller index
+    r"\b([A-Z][a-z]?(?:\d*[A-Z][a-z]?)*)"  # element(s)
+    r"\((\d{3})\)"  # Miller index
 )
 
-_RE_REACTION_ARROW = re.compile(r'[→⟶⇌⟷]|->|<->|<=>|\\rightarrow|\\leftrightarrow')
+_RE_REACTION_ARROW = re.compile(r"[→⟶⇌⟷]|->|<->|<=>|\\rightarrow|\\leftrightarrow")
 
-_RE_ENERGY_VALUE = re.compile(
-    r'[-+]?\d+\.?\d*\s*(?:eV|kJ/mol|kcal/mol|Ry|Ha|meV|kJ\s*mol⁻¹|eV/atom|meV/atom)'
-)
+_RE_ENERGY_VALUE = re.compile(r"[-+]?\d+\.?\d*\s*(?:eV|kJ/mol|kcal/mol|Ry|Ha|meV|kJ\s*mol⁻¹|eV/atom|meV/atom)")
 
-_RE_MILLER_INDEX = re.compile(r'\(\s*\d{1,2}\s+\d{1,2}\s+\d{1,2}\s*\)|\(\d{3}\)')
+_RE_MILLER_INDEX = re.compile(r"\(\s*\d{1,2}\s+\d{1,2}\s+\d{1,2}\s*\)|\(\d{3}\)")
 
-_RE_TABLE_LINE = re.compile(r'^[\s|]*[-=+|]+[\s|]*$')
+_RE_TABLE_LINE = re.compile(r"^[\s|]*[-=+|]+[\s|]*$")
 
-_RE_FIGURE_CAPTION = re.compile(
-    r'^(?:Fig(?:ure)?|Table|Scheme)\s*\.?\s*\d+', re.IGNORECASE
-)
+_RE_FIGURE_CAPTION = re.compile(r"^(?:Fig(?:ure)?|Table|Scheme)\s*\.?\s*\d+", re.IGNORECASE)
 
 # Section headers — extended for computational chemistry
 _CHEM_SECTION_HEADERS = [
     # Standard
-    "abstract", "introduction", "background", "related work",
-    "methods", "methodology", "computational details", "calculation details",
-    "computational methods", "computational setup", "dft calculations",
-    "results", "results and discussion", "discussion",
-    "conclusions", "conclusion", "summary",
-    "acknowledgements", "references", "supporting information",
+    "abstract",
+    "introduction",
+    "background",
+    "related work",
+    "methods",
+    "methodology",
+    "computational details",
+    "calculation details",
+    "computational methods",
+    "computational setup",
+    "dft calculations",
+    "results",
+    "results and discussion",
+    "discussion",
+    "conclusions",
+    "conclusion",
+    "summary",
+    "acknowledgements",
+    "references",
+    "supporting information",
     # Chemistry-specific
-    "reaction mechanism", "reaction pathway", "free energy diagram",
-    "convergence test", "convergence tests", "k-point convergence",
-    "adsorption energy", "adsorption energies", "binding energy",
-    "electronic structure", "density of states", "band structure",
-    "charge analysis", "bader charge", "charge density difference",
-    "transition state", "nudged elastic band", "climbing image",
-    "scaling relations", "volcano plot", "descriptor",
-    "surface model", "slab model", "bulk properties",
-    "thermodynamic corrections", "zero-point energy", "free energy corrections",
-    "solvent effects", "implicit solvation", "explicit solvation",
-    "spin polarization", "magnetic properties",
-    "van der waals", "dispersion correction",
-    "hubbard u", "dft+u", "hybrid functional",
+    "reaction mechanism",
+    "reaction pathway",
+    "free energy diagram",
+    "convergence test",
+    "convergence tests",
+    "k-point convergence",
+    "adsorption energy",
+    "adsorption energies",
+    "binding energy",
+    "electronic structure",
+    "density of states",
+    "band structure",
+    "charge analysis",
+    "bader charge",
+    "charge density difference",
+    "transition state",
+    "nudged elastic band",
+    "climbing image",
+    "scaling relations",
+    "volcano plot",
+    "descriptor",
+    "surface model",
+    "slab model",
+    "bulk properties",
+    "thermodynamic corrections",
+    "zero-point energy",
+    "free energy corrections",
+    "solvent effects",
+    "implicit solvation",
+    "explicit solvation",
+    "spin polarization",
+    "magnetic properties",
+    "van der waals",
+    "dispersion correction",
+    "hubbard u",
+    "dft+u",
+    "hybrid functional",
 ]
 
 _SECTION_RE = re.compile(
-    r'(?:^|\n)\s*(?:\d+\.?\s*)?('
-    + '|'.join(re.escape(h) for h in _CHEM_SECTION_HEADERS)
-    + r')\s*\n',
+    r"(?:^|\n)\s*(?:\d+\.?\s*)?(" + "|".join(re.escape(h) for h in _CHEM_SECTION_HEADERS) + r")\s*\n",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -144,9 +233,11 @@ _SECTION_RE = re.compile(
 # Data structures
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ChemChunk:
     """A chemistry-aware document chunk with rich metadata."""
+
     text: str
     section: str = "body"
     chunk_type: str = "prose"  # prose | reaction | parameters | table | equation
@@ -193,6 +284,7 @@ class ChemChunk:
 # Entity extraction
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def extract_vasp_tags(text: str) -> List[str]:
     """Extract VASP/QE parameter tags mentioned in text."""
     found = set()
@@ -213,12 +305,61 @@ def extract_chemical_species(text: str) -> List[str]:
         species = m.group(1)
         # Filter out common English words that match formula pattern
         if species.lower() in {
-            "in", "on", "at", "an", "as", "is", "it", "if", "of", "or",
-            "no", "so", "up", "we", "be", "he", "by", "do", "to", "vs",
-            "the", "and", "for", "are", "but", "not", "you", "all", "can",
-            "had", "her", "was", "one", "our", "has", "his", "how", "its",
-            "may", "new", "now", "old", "see", "way", "who", "did", "get",
-            "let", "say", "she", "too", "use", "which", "would", "about",
+            "in",
+            "on",
+            "at",
+            "an",
+            "as",
+            "is",
+            "it",
+            "if",
+            "of",
+            "or",
+            "no",
+            "so",
+            "up",
+            "we",
+            "be",
+            "he",
+            "by",
+            "do",
+            "to",
+            "vs",
+            "the",
+            "and",
+            "for",
+            "are",
+            "but",
+            "not",
+            "you",
+            "all",
+            "can",
+            "had",
+            "her",
+            "was",
+            "one",
+            "our",
+            "has",
+            "his",
+            "how",
+            "its",
+            "may",
+            "new",
+            "now",
+            "old",
+            "see",
+            "way",
+            "who",
+            "did",
+            "get",
+            "let",
+            "say",
+            "she",
+            "too",
+            "use",
+            "which",
+            "would",
+            "about",
         }:
             continue
         # Must contain at least one uppercase letter (chemical element)
@@ -242,14 +383,14 @@ def extract_energy_values(text: str) -> List[str]:
 
 def classify_block(text: str) -> str:
     """Classify a text block by its content type."""
-    lines = text.strip().split('\n')
+    lines = text.strip().split("\n")
     if not lines:
         return "prose"
 
     arrow_count = len(_RE_REACTION_ARROW.findall(text))
     table_lines = sum(1 for line in lines if _RE_TABLE_LINE.match(line))
     tag_count = len(_RE_VASP_TAG.findall(text))
-    eq_count = text.count('=')
+    eq_count = text.count("=")
 
     # Reaction block: multiple arrows
     if arrow_count >= 2:
@@ -290,6 +431,7 @@ def _build_context_header(chunk: ChemChunk) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 # Main chunking pipeline
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def chem_chunk(
     text: str,
@@ -348,8 +490,11 @@ def chem_chunk(
             # Atomic blocks (reactions, parameters, tables): keep whole
             if block_type in ("reaction", "parameters", "table") or len(words) <= max_words:
                 chunk = _make_chunk(
-                    block_text, section_label, block_type,
-                    source_doc, global_idx,
+                    block_text,
+                    section_label,
+                    block_type,
+                    source_doc,
+                    global_idx,
                 )
                 chunks.append(chunk)
                 global_idx += 1
@@ -357,12 +502,15 @@ def chem_chunk(
                 # Prose: apply windowing
                 i = 0
                 while i < len(words):
-                    window = words[i: i + max_words]
+                    window = words[i : i + max_words]
                     window_text = " ".join(window)
                     if window_text.strip():
                         chunk = _make_chunk(
-                            window_text, section_label, "prose",
-                            source_doc, global_idx,
+                            window_text,
+                            section_label,
+                            "prose",
+                            source_doc,
+                            global_idx,
                         )
                         chunks.append(chunk)
                         global_idx += 1
@@ -372,8 +520,11 @@ def chem_chunk(
 
 
 def _make_chunk(
-    text: str, section: str, chunk_type: str,
-    source_doc: str, idx: int,
+    text: str,
+    section: str,
+    chunk_type: str,
+    source_doc: str,
+    idx: int,
 ) -> ChemChunk:
     """Create a ChemChunk with full entity extraction."""
     chunk = ChemChunk(
@@ -425,7 +576,7 @@ def _split_semantic_blocks(text: str) -> List[str]:
     - Figure/table captions
     """
     # Split on double newlines first
-    paragraphs = re.split(r'\n\s*\n', text)
+    paragraphs = re.split(r"\n\s*\n", text)
 
     blocks: List[str] = []
     current_block: List[str] = []
@@ -465,9 +616,11 @@ def _split_semantic_blocks(text: str) -> List[str]:
 # Multi-hop retrieval support: chunk cross-references
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ChunkLink:
     """A directed link between two chunks sharing chemical entities."""
+
     source_idx: int
     target_idx: int
     link_type: str  # "shared_species" | "shared_tag" | "shared_surface" | "citation"
@@ -515,12 +668,14 @@ def build_chunk_graph(chunks: List[ChemChunk]) -> List[ChunkLink]:
     def _idf(entity_chunks: int) -> float:
         """Inverse document frequency — rarer entities get higher weight."""
         import math
+
         return math.log(n / max(entity_chunks, 1)) + 1.0
 
     seen_pairs: Set[Tuple[int, int]] = set()
 
     def _add_links(
-        index: Dict[str, List[int]], link_type: str,
+        index: Dict[str, List[int]],
+        link_type: str,
     ) -> None:
         for entity, chunk_ids in index.items():
             if len(chunk_ids) < 2 or len(chunk_ids) > 50:
@@ -529,17 +684,19 @@ def build_chunk_graph(chunks: List[ChemChunk]) -> List[ChunkLink]:
                 continue
             w = _idf(len(chunk_ids))
             for i_pos, ci in enumerate(chunk_ids):
-                for cj in chunk_ids[i_pos + 1:]:
+                for cj in chunk_ids[i_pos + 1 :]:
                     pair = (min(ci, cj), max(ci, cj))
                     if pair not in seen_pairs:
                         seen_pairs.add(pair)
-                        links.append(ChunkLink(
-                            source_idx=ci,
-                            target_idx=cj,
-                            link_type=link_type,
-                            shared_entities=[entity],
-                            weight=w,
-                        ))
+                        links.append(
+                            ChunkLink(
+                                source_idx=ci,
+                                target_idx=cj,
+                                link_type=link_type,
+                                shared_entities=[entity],
+                                weight=w,
+                            )
+                        )
 
     _add_links(species_to_chunks, "shared_species")
     _add_links(tag_to_chunks, "shared_tag")
@@ -551,6 +708,7 @@ def build_chunk_graph(chunks: List[ChemChunk]) -> List[ChunkLink]:
 # ═══════════════════════════════════════════════════════════════════════
 # Multi-hop retriever
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def multihop_expand(
     seed_indices: List[int],
@@ -586,12 +744,8 @@ def multihop_expand(
     adj: Dict[int, List[Tuple[int, float, str]]] = {}
     for link in chunk_graph:
         if link.weight >= min_weight:
-            adj.setdefault(link.source_idx, []).append(
-                (link.target_idx, link.weight, link.link_type)
-            )
-            adj.setdefault(link.target_idx, []).append(
-                (link.source_idx, link.weight, link.link_type)
-            )
+            adj.setdefault(link.source_idx, []).append((link.target_idx, link.weight, link.link_type))
+            adj.setdefault(link.target_idx, []).append((link.source_idx, link.weight, link.link_type))
 
     seed_set = set(seed_indices)
     visited: Dict[int, float] = {}  # chunk_idx → best accumulated weight
@@ -619,6 +773,7 @@ def multihop_expand(
 # ═══════════════════════════════════════════════════════════════════════
 # Evaluation utilities
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def chunk_completeness_score(chunk: ChemChunk) -> float:
     """

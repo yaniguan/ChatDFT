@@ -49,6 +49,7 @@ def set_global_seed(seed: int = 42, deterministic: bool = True) -> None:
     if deterministic:
         try:
             import torch
+
             torch.manual_seed(seed)
             torch.use_deterministic_algorithms(True, warn_only=True)
             if torch.cuda.is_available():
@@ -108,12 +109,14 @@ def experiment_manifest() -> dict:
     }
     try:
         import torch
+
         manifest["torch_version"] = torch.__version__
         manifest["cuda_available"] = torch.cuda.is_available()
     except ImportError:
         manifest["torch_version"] = None
     try:
         import scipy
+
         manifest["scipy_version"] = scipy.__version__
     except ImportError:
         pass

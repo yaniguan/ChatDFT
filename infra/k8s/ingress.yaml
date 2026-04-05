@@ -1,0 +1,71 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chatdft-ingress
+  namespace: chatdft
+  annotations:
+    # AWS ALB Ingress Controller
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # Uncomment for HTTPS:
+    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:REGION:ACCOUNT_ID:certificate/CERT_ID
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/group.name: chatdft
+spec:
+  rules:
+    - http:
+        paths:
+          # API routes → FastAPI server
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: chatdft-server
+                port:
+                  number: 8000
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: chatdft-server
+                port:
+                  number: 8000
+          - path: /session
+            pathType: Prefix
+            backend:
+              service:
+                name: chatdft-server
+                port:
+                  number: 8000
+          - path: /job
+            pathType: Prefix
+            backend:
+              service:
+                name: chatdft-server
+                port:
+                  number: 8000
+          - path: /batch
+            pathType: Prefix
+            backend:
+              service:
+                name: chatdft-server
+                port:
+                  number: 8000
+          - path: /chat
+            pathType: Prefix
+            backend:
+              service:
+                name: chatdft-server
+                port:
+                  number: 8000
+          # Everything else → Streamlit UI
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: chatdft-ui
+                port:
+                  number: 8501

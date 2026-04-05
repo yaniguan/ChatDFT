@@ -27,28 +27,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # ─── Matplotlib config (match publication style) ──────────────────────
 import matplotlib
+
 matplotlib.use("Agg")
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
-import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from matplotlib.patches import FancyBboxPatch
 
-rcParams.update({
-    "font.family": "serif",
-    "font.size": 11,
-    "axes.labelsize": 12,
-    "axes.titlesize": 13,
-    "xtick.labelsize": 10,
-    "ytick.labelsize": 10,
-    "legend.fontsize": 9,
-    "figure.dpi": 150,
-    "savefig.dpi": 300,
-    "savefig.bbox": "tight",
-    "axes.grid": True,
-    "grid.alpha": 0.3,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-})
+rcParams.update(
+    {
+        "font.family": "serif",
+        "font.size": 11,
+        "axes.labelsize": 12,
+        "axes.titlesize": 13,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 9,
+        "figure.dpi": 150,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "axes.grid": True,
+        "grid.alpha": 0.3,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    }
+)
 
 FIG_DIR = Path(__file__).resolve().parents[2] / "figures"
 FIG_DIR.mkdir(exist_ok=True)
@@ -57,22 +60,22 @@ FIG_DIR.mkdir(exist_ok=True)
 # =====================================================================
 # Color palette (consistent with existing figures)
 # =====================================================================
-C_OURS = "#2196F3"       # ChatDFT blue
-C_BASELINE = "#9E9E9E"   # Manual grey
-C_ACCENT = "#FF9800"     # Orange accent
+C_OURS = "#2196F3"  # ChatDFT blue
+C_BASELINE = "#9E9E9E"  # Manual grey
+C_ACCENT = "#FF9800"  # Orange accent
 C_GREEN = "#4CAF50"
 C_RED = "#F44336"
 C_PURPLE = "#9C27B0"
 
 AGENT_COLORS = {
-    "Intent\nParsing":      "#E53935",
-    "Hypothesis\nGeneration":"#FF9800",
-    "Plan\nGeneration":     "#FDD835",
-    "Structure\nBuilding":  "#43A047",
+    "Intent\nParsing": "#E53935",
+    "Hypothesis\nGeneration": "#FF9800",
+    "Plan\nGeneration": "#FDD835",
+    "Structure\nBuilding": "#43A047",
     "Parameter\nSelection": "#00ACC1",
-    "HPC\nSubmission":      "#1E88E5",
-    "SCF\nDiagnosis":       "#8E24AA",
-    "Thermo\nAnalysis":     "#6D4C41",
+    "HPC\nSubmission": "#1E88E5",
+    "SCF\nDiagnosis": "#8E24AA",
+    "Thermo\nAnalysis": "#6D4C41",
 }
 
 
@@ -86,6 +89,7 @@ def _save(fig, name):
 # ═════════════════════════════════════════════════════════════════════
 # Figure 1: Time Efficiency — ChatDFT Agent vs Manual Workflow
 # ═════════════════════════════════════════════════════════════════════
+
 
 def fig_time_efficiency():
     """
@@ -115,20 +119,24 @@ def fig_time_efficiency():
     x = np.arange(len(steps))
     w = 0.35
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5.5),
-                             gridspec_kw={"width_ratios": [3, 1.2, 1.2]})
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5.5), gridspec_kw={"width_ratios": [3, 1.2, 1.2]})
 
     # --- Panel (a): Step-by-step comparison ---
     ax = axes[0]
-    bars1 = ax.bar(x - w/2, manual, w, label="Manual Workflow",
-                   color=C_BASELINE, edgecolor="white", linewidth=0.5)
-    bars2 = ax.bar(x + w/2, chatdft, w, label="ChatDFT Agent",
-                   color=C_OURS, edgecolor="white", linewidth=0.5)
+    bars1 = ax.bar(x - w / 2, manual, w, label="Manual Workflow", color=C_BASELINE, edgecolor="white", linewidth=0.5)
+    ax.bar(x + w / 2, chatdft, w, label="ChatDFT Agent", color=C_OURS, edgecolor="white", linewidth=0.5)
 
     # Add time labels on manual bars
     for bar, val in zip(bars1, manual):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1.5,
-                f"{val:.0f}m", ha="center", va="bottom", fontsize=8, color="#555")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 1.5,
+            f"{val:.0f}m",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            color="#555",
+        )
 
     ax.set_xticks(x)
     ax.set_xticklabels(steps, fontsize=9)
@@ -141,23 +149,37 @@ def fig_time_efficiency():
     ax2 = axes[1]
     total_manual = manual.sum()
     total_chatdft = chatdft.sum()
-    bars = ax2.bar(["Manual", "ChatDFT"], [total_manual, total_chatdft],
-                   color=[C_BASELINE, C_OURS], edgecolor="white", width=0.6)
-    ax2.text(0, total_manual + 5, f"{total_manual:.0f} min\n({total_manual/60:.1f} h)",
-             ha="center", fontsize=11, fontweight="bold", color="#555")
-    ax2.text(1, total_chatdft + 5, f"{total_chatdft:.1f} min",
-             ha="center", fontsize=11, fontweight="bold", color=C_OURS)
+    ax2.bar(
+        ["Manual", "ChatDFT"], [total_manual, total_chatdft], color=[C_BASELINE, C_OURS], edgecolor="white", width=0.6
+    )
+    ax2.text(
+        0,
+        total_manual + 5,
+        f"{total_manual:.0f} min\n({total_manual / 60:.1f} h)",
+        ha="center",
+        fontsize=11,
+        fontweight="bold",
+        color="#555",
+    )
+    ax2.text(
+        1, total_chatdft + 5, f"{total_chatdft:.1f} min", ha="center", fontsize=11, fontweight="bold", color=C_OURS
+    )
     ax2.set_ylabel("Total Time (minutes)")
     ax2.set_title("(b) Total Pipeline Time", fontweight="bold")
     ax2.set_ylim(0, 340)
 
     # Speedup annotation
     speedup = total_manual / total_chatdft
-    ax2.annotate(f"{speedup:.0f}× faster",
-                 xy=(1, total_chatdft + 2), xytext=(0.5, 180),
-                 fontsize=14, fontweight="bold", color=C_OURS,
-                 arrowprops=dict(arrowstyle="->", color=C_OURS, lw=2),
-                 ha="center")
+    ax2.annotate(
+        f"{speedup:.0f}× faster",
+        xy=(1, total_chatdft + 2),
+        xytext=(0.5, 180),
+        fontsize=14,
+        fontweight="bold",
+        color=C_OURS,
+        arrowprops=dict(arrowstyle="->", color=C_OURS, lw=2),
+        ha="center",
+    )
 
     # --- Panel (c): Cumulative time for N reactions ---
     ax3 = axes[2]
@@ -167,11 +189,9 @@ def fig_time_efficiency():
     cum_chatdft = (total_chatdft + (n_reactions - 1) * 1.5) / 60  # hours
 
     ax3.fill_between(n_reactions, cum_manual, alpha=0.15, color=C_BASELINE)
-    ax3.plot(n_reactions, cum_manual, "-o", color=C_BASELINE, markersize=3,
-             label="Manual", linewidth=2)
+    ax3.plot(n_reactions, cum_manual, "-o", color=C_BASELINE, markersize=3, label="Manual", linewidth=2)
     ax3.fill_between(n_reactions, cum_chatdft, alpha=0.15, color=C_OURS)
-    ax3.plot(n_reactions, cum_chatdft, "-s", color=C_OURS, markersize=3,
-             label="ChatDFT", linewidth=2)
+    ax3.plot(n_reactions, cum_chatdft, "-s", color=C_OURS, markersize=3, label="ChatDFT", linewidth=2)
 
     ax3.set_xlabel("Number of Reactions")
     ax3.set_ylabel("Cumulative Time (hours)")
@@ -182,13 +202,10 @@ def fig_time_efficiency():
     # Highlight the gap at 25 reactions
     gap_manual = cum_manual[-1]
     gap_chatdft = cum_chatdft[-1]
-    ax3.annotate(f"{gap_manual:.0f}h", xy=(25, gap_manual), fontsize=9,
-                 ha="left", va="bottom", color=C_BASELINE)
-    ax3.annotate(f"{gap_chatdft:.1f}h", xy=(25, gap_chatdft), fontsize=9,
-                 ha="left", va="top", color=C_OURS)
+    ax3.annotate(f"{gap_manual:.0f}h", xy=(25, gap_manual), fontsize=9, ha="left", va="bottom", color=C_BASELINE)
+    ax3.annotate(f"{gap_chatdft:.1f}h", xy=(25, gap_chatdft), fontsize=9, ha="left", va="top", color=C_OURS)
 
-    fig.suptitle("Time Efficiency: ChatDFT Agent vs Manual DFT Workflow",
-                 fontsize=14, fontweight="bold", y=1.02)
+    fig.suptitle("Time Efficiency: ChatDFT Agent vs Manual DFT Workflow", fontsize=14, fontweight="bold", y=1.02)
     fig.tight_layout()
     _save(fig, "eng_1_time_efficiency")
 
@@ -196,6 +213,7 @@ def fig_time_efficiency():
 # ═════════════════════════════════════════════════════════════════════
 # Figure 2: Agent Communication Latency Breakdown (Waterfall)
 # ═════════════════════════════════════════════════════════════════════
+
 
 def fig_agent_latency_waterfall():
     """
@@ -217,33 +235,48 @@ def fig_agent_latency_waterfall():
     ]
 
     # Latency breakdown (seconds): [LLM inference, local compute, I/O wait]
-    llm_time    = np.array([1.8, 0.5, 3.2, 2.5, 0.8, 1.5, 0.3, 1.2])
-    compute_time= np.array([0.1, 0.3, 0.2, 0.3, 1.8, 0.5, 1.2, 0.8])
-    io_time     = np.array([0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2])
+    llm_time = np.array([1.8, 0.5, 3.2, 2.5, 0.8, 1.5, 0.3, 1.2])
+    compute_time = np.array([0.1, 0.3, 0.2, 0.3, 1.8, 0.5, 1.2, 0.8])
+    io_time = np.array([0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2])
 
     total = llm_time + compute_time + io_time
     cumulative = np.cumsum(total)
     starts = np.concatenate([[0], cumulative[:-1]])
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5),
-                             gridspec_kw={"width_ratios": [2.5, 1]})
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5), gridspec_kw={"width_ratios": [2.5, 1]})
 
     # --- Panel (a): Waterfall ---
     ax = axes[0]
     y = np.arange(len(agents))
 
     # Stacked horizontal bars starting at cumulative position
-    b1 = ax.barh(y, llm_time, left=starts, height=0.6,
-                 color="#2196F3", label="LLM Inference", edgecolor="white", linewidth=0.5)
-    b2 = ax.barh(y, compute_time, left=starts + llm_time, height=0.6,
-                 color="#4CAF50", label="Local Compute", edgecolor="white", linewidth=0.5)
-    b3 = ax.barh(y, io_time, left=starts + llm_time + compute_time, height=0.6,
-                 color="#FF9800", label="I/O (RAG/DB)", edgecolor="white", linewidth=0.5)
+    ax.barh(
+        y, llm_time, left=starts, height=0.6, color="#2196F3", label="LLM Inference", edgecolor="white", linewidth=0.5
+    )
+    ax.barh(
+        y,
+        compute_time,
+        left=starts + llm_time,
+        height=0.6,
+        color="#4CAF50",
+        label="Local Compute",
+        edgecolor="white",
+        linewidth=0.5,
+    )
+    ax.barh(
+        y,
+        io_time,
+        left=starts + llm_time + compute_time,
+        height=0.6,
+        color="#FF9800",
+        label="I/O (RAG/DB)",
+        edgecolor="white",
+        linewidth=0.5,
+    )
 
     # Connecting lines between stages
     for i in range(len(agents) - 1):
-        ax.plot([cumulative[i], cumulative[i]],
-                [i + 0.3, i + 0.7], "--", color="#BBB", linewidth=1)
+        ax.plot([cumulative[i], cumulative[i]], [i + 0.3, i + 0.7], "--", color="#BBB", linewidth=1)
 
     # Time labels
     for i, (s, t) in enumerate(zip(starts, total)):
@@ -259,9 +292,15 @@ def fig_agent_latency_waterfall():
 
     # Total annotation
     ax.axvline(cumulative[-1], color=C_RED, linestyle="--", alpha=0.5)
-    ax.text(cumulative[-1] + 0.3, len(agents) - 0.5,
-            f"Total: {cumulative[-1]:.1f}s", fontsize=11,
-            fontweight="bold", color=C_RED, va="top")
+    ax.text(
+        cumulative[-1] + 0.3,
+        len(agents) - 0.5,
+        f"Total: {cumulative[-1]:.1f}s",
+        fontsize=11,
+        fontweight="bold",
+        color=C_RED,
+        va="top",
+    )
 
     # --- Panel (b): Pie chart of time distribution ---
     ax2 = axes[1]
@@ -269,16 +308,16 @@ def fig_agent_latency_waterfall():
     total_compute = compute_time.sum()
     total_io = io_time.sum()
     sizes = [total_llm, total_compute, total_io]
-    labels = [f"LLM Inference\n{total_llm:.1f}s ({100*total_llm/sum(sizes):.0f}%)",
-              f"Local Compute\n{total_compute:.1f}s ({100*total_compute/sum(sizes):.0f}%)",
-              f"I/O (RAG/DB)\n{total_io:.1f}s ({100*total_io/sum(sizes):.0f}%)"]
+    labels = [
+        f"LLM Inference\n{total_llm:.1f}s ({100 * total_llm / sum(sizes):.0f}%)",
+        f"Local Compute\n{total_compute:.1f}s ({100 * total_compute / sum(sizes):.0f}%)",
+        f"I/O (RAG/DB)\n{total_io:.1f}s ({100 * total_io / sum(sizes):.0f}%)",
+    ]
     colors = ["#2196F3", "#4CAF50", "#FF9800"]
-    wedges, texts = ax2.pie(sizes, labels=labels, colors=colors,
-                            startangle=90, textprops={"fontsize": 9})
+    wedges, texts = ax2.pie(sizes, labels=labels, colors=colors, startangle=90, textprops={"fontsize": 9})
     ax2.set_title("(b) Time Distribution", fontweight="bold")
 
-    fig.suptitle("Agent Communication Latency Breakdown",
-                 fontsize=14, fontweight="bold", y=1.02)
+    fig.suptitle("Agent Communication Latency Breakdown", fontsize=14, fontweight="bold", y=1.02)
     fig.tight_layout()
     _save(fig, "eng_2_agent_latency")
 
@@ -286,6 +325,7 @@ def fig_agent_latency_waterfall():
 # ═════════════════════════════════════════════════════════════════════
 # Figure 3: End-to-End Throughput & Scalability
 # ═════════════════════════════════════════════════════════════════════
+
 
 def fig_throughput_scalability():
     """
@@ -300,17 +340,23 @@ def fig_throughput_scalability():
     # --- Panel (a): Throughput per domain ---
     ax = axes[0]
     domains = ["CO₂RR\n(8)", "HER\n(5)", "OER\n(5)", "NRR\n(4)", "ORR\n(3)"]
-    n_reactions = [8, 5, 5, 4, 3]
     # Avg agent time per reaction (seconds) with small per-domain variation
     avg_time = [16.2, 12.8, 14.5, 18.3, 13.1]
     std_time = [2.1, 1.5, 1.8, 3.2, 1.2]
     domain_colors = ["#2196F3", "#4CAF50", "#FF9800", "#F44336", "#9C27B0"]
 
-    bars = ax.bar(domains, avg_time, yerr=std_time, capsize=4,
-                  color=domain_colors, edgecolor="white", linewidth=0.5, alpha=0.85)
+    bars = ax.bar(
+        domains, avg_time, yerr=std_time, capsize=4, color=domain_colors, edgecolor="white", linewidth=0.5, alpha=0.85
+    )
     for bar, val in zip(bars, avg_time):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
-                f"{val:.1f}s", ha="center", fontsize=9, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.5,
+            f"{val:.1f}s",
+            ha="center",
+            fontsize=9,
+            fontweight="bold",
+        )
 
     ax.set_ylabel("Avg. Agent Time per Reaction (s)")
     ax.set_title("(a) Latency by Domain", fontweight="bold")
@@ -334,11 +380,16 @@ def fig_throughput_scalability():
     colors_sr = [C_GREEN if s >= 95 else C_ACCENT if s >= 90 else C_RED for s in success_rates]
     colors_sr[-1] = C_OURS  # E2E gets special color
 
-    bars2 = ax2.barh(components, success_rates, color=colors_sr,
-                     edgecolor="white", linewidth=0.5, height=0.6)
+    bars2 = ax2.barh(components, success_rates, color=colors_sr, edgecolor="white", linewidth=0.5, height=0.6)
     for bar, val in zip(bars2, success_rates):
-        ax2.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
-                 f"{val}%", va="center", fontsize=9, fontweight="bold")
+        ax2.text(
+            bar.get_width() + 0.5,
+            bar.get_y() + bar.get_height() / 2,
+            f"{val}%",
+            va="center",
+            fontsize=9,
+            fontweight="bold",
+        )
 
     ax2.set_xlim(80, 105)
     ax2.set_xlabel("Success Rate (%)")
@@ -357,11 +408,20 @@ def fig_throughput_scalability():
     cat_colors = ["#2196F3", "#64B5F6", "#FF9800", "#4CAF50", "#9E9E9E"]
     bottom = 0
     for cat, p, col in zip(cost_categories, pct, cat_colors):
-        ax3.bar(["Per Reaction"], [p], bottom=[bottom], color=col,
-                edgecolor="white", label=f"{cat} ({p:.0f}%)", width=0.5)
+        ax3.bar(
+            ["Per Reaction"], [p], bottom=[bottom], color=col, edgecolor="white", label=f"{cat} ({p:.0f}%)", width=0.5
+        )
         if p > 8:
-            ax3.text(0, bottom + p/2, f"{cat}\n{p:.0f}%",
-                     ha="center", va="center", fontsize=8, color="white", fontweight="bold")
+            ax3.text(
+                0,
+                bottom + p / 2,
+                f"{cat}\n{p:.0f}%",
+                ha="center",
+                va="center",
+                fontsize=8,
+                color="white",
+                fontweight="bold",
+            )
         bottom += p
 
     ax3.set_ylabel("Cost Distribution (%)")
@@ -369,8 +429,9 @@ def fig_throughput_scalability():
     ax3.set_ylim(0, 105)
     ax3.legend(loc="upper right", fontsize=8, bbox_to_anchor=(1.45, 1.0))
 
-    fig.suptitle("End-to-End Throughput on Golden Benchmark (25 Reactions × 5 Domains)",
-                 fontsize=14, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "End-to-End Throughput on Golden Benchmark (25 Reactions × 5 Domains)", fontsize=14, fontweight="bold", y=1.02
+    )
     fig.tight_layout()
     _save(fig, "eng_3_throughput")
 
@@ -378,6 +439,7 @@ def fig_throughput_scalability():
 # ═════════════════════════════════════════════════════════════════════
 # Figure 4: Agent Orchestration Flow + Message Counts
 # ═════════════════════════════════════════════════════════════════════
+
 
 def fig_agent_orchestration():
     """
@@ -387,8 +449,7 @@ def fig_agent_orchestration():
     print("\n[4/4] Agent Orchestration Flow")
     print("─" * 50)
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7),
-                             gridspec_kw={"width_ratios": [1.8, 1]})
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7), gridspec_kw={"width_ratios": [1.8, 1]})
 
     # --- Panel (a): Flow diagram ---
     ax = axes[0]
@@ -412,13 +473,18 @@ def fig_agent_orchestration():
     ]
 
     box_w, box_h = 2.2, 1.0
-    for (cx, cy, label, color) in agents:
-        box = FancyBboxPatch((cx - box_w/2, cy - box_h/2), box_w, box_h,
-                             boxstyle="round,pad=0.1", facecolor=color,
-                             edgecolor="#666", linewidth=1.5)
+    for cx, cy, label, color in agents:
+        box = FancyBboxPatch(
+            (cx - box_w / 2, cy - box_h / 2),
+            box_w,
+            box_h,
+            boxstyle="round,pad=0.1",
+            facecolor=color,
+            edgecolor="#666",
+            linewidth=1.5,
+        )
         ax.add_patch(box)
-        ax.text(cx, cy, label, ha="center", va="center",
-                fontsize=9, fontweight="bold")
+        ax.text(cx, cy, label, ha="center", va="center", fontsize=9, fontweight="bold")
 
     # Arrows with message info: (from_xy, to_xy, label)
     arrows = [
@@ -436,17 +502,26 @@ def fig_agent_orchestration():
     ]
 
     for (x1, y1), (x2, y2), label in arrows:
-        ax.annotate("", xy=(x2, y2), xytext=(x1, y1),
-                    arrowprops=dict(arrowstyle="-|>", color="#555",
-                                    lw=1.5, connectionstyle="arc3,rad=0.0"))
+        ax.annotate(
+            "",
+            xy=(x2, y2),
+            xytext=(x1, y1),
+            arrowprops=dict(arrowstyle="-|>", color="#555", lw=1.5, connectionstyle="arc3,rad=0.0"),
+        )
         mx, my = (x1 + x2) / 2, (y1 + y2) / 2
         # Offset labels slightly
         offset_x = 0.15 if x1 == x2 else 0.0
         offset_y = 0.0 if y1 == y2 else 0.15
-        ax.text(mx + offset_x, my + offset_y, label,
-                fontsize=7, color="#333", ha="center", va="center",
-                bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
-                          edgecolor="#DDD", alpha=0.9))
+        ax.text(
+            mx + offset_x,
+            my + offset_y,
+            label,
+            fontsize=7,
+            color="#333",
+            ha="center",
+            va="center",
+            bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="#DDD", alpha=0.9),
+        )
 
     # --- Panel (b): Message statistics ---
     ax2 = axes[1]
@@ -471,12 +546,10 @@ def fig_agent_orchestration():
 
     color_map = [C_OURS if s > 500 else C_GREEN if s > 200 else C_ACCENT for s in msg_sizes]
 
-    bars = ax2.barh(y, msg_sizes, color=color_map, edgecolor="white",
-                    linewidth=0.5, height=0.6, alpha=0.85)
+    bars = ax2.barh(y, msg_sizes, color=color_map, edgecolor="white", linewidth=0.5, height=0.6, alpha=0.85)
 
     for i, (bar, size, lat) in enumerate(zip(bars, msg_sizes, hop_latency)):
-        ax2.text(bar.get_width() + 30, i,
-                 f"{size} tok / {lat}ms", va="center", fontsize=8, color="#555")
+        ax2.text(bar.get_width() + 30, i, f"{size} tok / {lat}ms", va="center", fontsize=8, color="#555")
 
     ax2.set_yticks(y)
     ax2.set_yticklabels(agent_pairs, fontsize=9)
@@ -493,8 +566,7 @@ def fig_agent_orchestration():
     ]
     ax2.legend(handles=legend_elements, loc="lower right", fontsize=8)
 
-    fig.suptitle("Multi-Agent Orchestration: Communication Efficiency",
-                 fontsize=14, fontweight="bold", y=1.02)
+    fig.suptitle("Multi-Agent Orchestration: Communication Efficiency", fontsize=14, fontweight="bold", y=1.02)
     fig.tight_layout()
     _save(fig, "eng_4_orchestration")
 
@@ -502,6 +574,7 @@ def fig_agent_orchestration():
 # ═════════════════════════════════════════════════════════════════════
 # Figure 5 (bonus): Summary metrics dashboard
 # ═════════════════════════════════════════════════════════════════════
+
 
 def fig_metrics_dashboard():
     """
@@ -513,14 +586,10 @@ def fig_metrics_dashboard():
     fig, axes = plt.subplots(1, 4, figsize=(16, 3.5))
 
     metrics = [
-        ("140×", "Speed-up vs\nManual Workflow", C_OURS,
-         "Agent pipeline: ~2 min\nvs manual: ~4.5 hours"),
-        ("14.8s", "Avg. End-to-End\nLatency", C_GREEN,
-         "8 agents × 25 reactions\nGolden Benchmark"),
-        ("88%", "End-to-End\nSuccess Rate", C_ACCENT,
-         "22/25 reactions fully\nautonomous completion"),
-        ("73%", "DFT Compute\nSavings (BO)", C_PURPLE,
-         "15 evaluations vs 56\ngrid search baseline"),
+        ("140×", "Speed-up vs\nManual Workflow", C_OURS, "Agent pipeline: ~2 min\nvs manual: ~4.5 hours"),
+        ("14.8s", "Avg. End-to-End\nLatency", C_GREEN, "8 agents × 25 reactions\nGolden Benchmark"),
+        ("88%", "End-to-End\nSuccess Rate", C_ACCENT, "22/25 reactions fully\nautonomous completion"),
+        ("73%", "DFT Compute\nSavings (BO)", C_PURPLE, "15 evaluations vs 56\ngrid search baseline"),
     ]
 
     for ax, (value, label, color, note) in zip(axes, metrics):
@@ -529,28 +598,25 @@ def fig_metrics_dashboard():
         ax.axis("off")
 
         # Big number
-        ax.text(0.5, 0.65, value, ha="center", va="center",
-                fontsize=36, fontweight="bold", color=color)
+        ax.text(0.5, 0.65, value, ha="center", va="center", fontsize=36, fontweight="bold", color=color)
         # Label
-        ax.text(0.5, 0.32, label, ha="center", va="center",
-                fontsize=12, fontweight="bold", color="#333")
+        ax.text(0.5, 0.32, label, ha="center", va="center", fontsize=12, fontweight="bold", color="#333")
         # Note
-        ax.text(0.5, 0.10, note, ha="center", va="center",
-                fontsize=8, color="#888", style="italic")
+        ax.text(0.5, 0.10, note, ha="center", va="center", fontsize=8, color="#888", style="italic")
 
         # Border
-        rect = plt.Rectangle((0.02, 0.02), 0.96, 0.96, fill=False,
-                              edgecolor=color, linewidth=2.5, linestyle="-",
-                              transform=ax.transAxes)
+        rect = plt.Rectangle(
+            (0.02, 0.02), 0.96, 0.96, fill=False, edgecolor=color, linewidth=2.5, linestyle="-", transform=ax.transAxes
+        )
         ax.add_patch(rect)
 
-    fig.suptitle("ChatDFT Engineering KPIs",
-                 fontsize=14, fontweight="bold", y=1.05)
+    fig.suptitle("ChatDFT Engineering KPIs", fontsize=14, fontweight="bold", y=1.05)
     fig.tight_layout()
     _save(fig, "eng_5_kpi_dashboard")
 
 
 # ═════════════════════════════════════════════════════════════════════
+
 
 def main():
     print("=" * 60)

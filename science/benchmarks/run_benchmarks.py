@@ -18,7 +18,6 @@ on realistic synthetic data, reporting statistical metrics.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -30,26 +29,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # ─── Matplotlib config for publication figures ───────────────────────
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 
-rcParams.update({
-    "font.family": "serif",
-    "font.size": 11,
-    "axes.labelsize": 12,
-    "axes.titlesize": 13,
-    "xtick.labelsize": 10,
-    "ytick.labelsize": 10,
-    "legend.fontsize": 9,
-    "figure.dpi": 150,
-    "savefig.dpi": 300,
-    "savefig.bbox": "tight",
-    "axes.grid": True,
-    "grid.alpha": 0.3,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-})
+rcParams.update(
+    {
+        "font.family": "serif",
+        "font.size": 11,
+        "axes.labelsize": 12,
+        "axes.titlesize": 13,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 9,
+        "figure.dpi": 150,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "axes.grid": True,
+        "grid.alpha": 0.3,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    }
+)
 
 # Output directories
 FIG_DIR = Path(__file__).resolve().parents[2] / "figures"
@@ -62,14 +64,16 @@ RES_DIR.mkdir(exist_ok=True)
 # Benchmark 1: Surface Site Classification
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def benchmark_surface_sites():
     """Compare Voronoi topology graph vs distance-cutoff site finder."""
     print("\n[1/5] Surface Site Classification Benchmark")
     print("─" * 50)
 
-    from ase.build import fcc111, fcc100, bcc110
-    from science.representations.surface_graph import SurfaceTopologyGraph
+    from ase.build import fcc100, fcc111
+
     from science.benchmarks.baselines import baseline_distance_cutoff_sites
+    from science.representations.surface_graph import SurfaceTopologyGraph
 
     # Test on multiple surfaces
     surfaces = {
@@ -101,6 +105,7 @@ def benchmark_surface_sites():
         t_v = (time.perf_counter() - t0) * 1000
 
         from collections import Counter
+
         v_counts = Counter(s.site_type for s in sites)
 
         # Baseline method
@@ -114,8 +119,10 @@ def benchmark_surface_sites():
         runtimes_v.append(t_v)
         runtimes_b.append(t_b)
 
-        print(f"  {name:16s}: Voronoi={len(sites):2d} sites ({t_v:.1f}ms) | "
-              f"Baseline={b_result.n_sites:2d} sites ({t_b:.1f}ms)")
+        print(
+            f"  {name:16s}: Voronoi={len(sites):2d} sites ({t_v:.1f}ms) | "
+            f"Baseline={b_result.n_sites:2d} sites ({t_b:.1f}ms)"
+        )
 
     # ─── Figure: Site type distribution comparison ───
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
@@ -124,7 +131,6 @@ def benchmark_surface_sites():
     ax = axes[0]
     x = np.arange(len(labels))
     width = 0.35
-    site_types_order = ["top", "bridge", "hollow_fcc", "hollow_hcp", "hollow"]
 
     # Stack Voronoi results
     v_top = [r.get("top", 0) for r in voronoi_results]
@@ -132,36 +138,33 @@ def benchmark_surface_sites():
     v_fcc = [r.get("hollow_fcc", 0) for r in voronoi_results]
     v_hcp = [r.get("hollow_hcp", 0) for r in voronoi_results]
 
-    bars1 = ax.bar(x - width/2, v_top, width, label="Top", color="#2196F3")
-    bars2 = ax.bar(x - width/2, v_bridge, width, bottom=v_top,
-                   label="Bridge", color="#4CAF50")
-    v_top_bridge = [a+b for a, b in zip(v_top, v_bridge)]
-    bars3 = ax.bar(x - width/2, v_fcc, width, bottom=v_top_bridge,
-                   label="Hollow-fcc", color="#FF9800")
-    v_tbf = [a+b for a, b in zip(v_top_bridge, v_fcc)]
-    bars4 = ax.bar(x - width/2, v_hcp, width, bottom=v_tbf,
-                   label="Hollow-hcp", color="#F44336")
+    ax.bar(x - width / 2, v_top, width, label="Top", color="#2196F3")
+    ax.bar(x - width / 2, v_bridge, width, bottom=v_top, label="Bridge", color="#4CAF50")
+    v_top_bridge = [a + b for a, b in zip(v_top, v_bridge)]
+    ax.bar(x - width / 2, v_fcc, width, bottom=v_top_bridge, label="Hollow-fcc", color="#FF9800")
+    v_tbf = [a + b for a, b in zip(v_top_bridge, v_fcc)]
+    ax.bar(x - width / 2, v_hcp, width, bottom=v_tbf, label="Hollow-hcp", color="#F44336")
 
     # Baseline totals
     b_totals = [r.get("total", 0) for r in baseline_results]
-    ax.bar(x + width/2, b_totals, width, label="Baseline (all)", color="#9E9E9E", alpha=0.7)
+    ax.bar(x + width / 2, b_totals, width, label="Baseline (all)", color="#9E9E9E", alpha=0.7)
 
     ax.set_xlabel("Surface")
     ax.set_ylabel("Number of Sites")
     ax.set_title("(a) Adsorption Site Classification")
     ax.set_xticks(x)
-    ax.set_xticklabels([l.split()[0] for l in labels], rotation=30, ha="right")
+    ax.set_xticklabels([lbl.split()[0] for lbl in labels], rotation=30, ha="right")
     ax.legend(loc="upper left", framealpha=0.9)
 
     # Panel B: Runtime comparison
     ax = axes[1]
-    ax.bar(x - width/2, runtimes_v, width, label="Voronoi (ours)", color="#2196F3")
-    ax.bar(x + width/2, runtimes_b, width, label="Distance cutoff", color="#9E9E9E")
+    ax.bar(x - width / 2, runtimes_v, width, label="Voronoi (ours)", color="#2196F3")
+    ax.bar(x + width / 2, runtimes_b, width, label="Distance cutoff", color="#9E9E9E")
     ax.set_xlabel("Surface")
     ax.set_ylabel("Runtime (ms)")
     ax.set_title("(b) Computational Cost")
     ax.set_xticks(x)
-    ax.set_xticklabels([l.split()[0] for l in labels], rotation=30, ha="right")
+    ax.set_xticklabels([lbl.split()[0] for lbl in labels], rotation=30, ha="right")
     ax.legend()
 
     plt.tight_layout()
@@ -183,17 +186,18 @@ def benchmark_surface_sites():
 # Benchmark 2: Structure Generation Quality
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def benchmark_structure_generation():
     """Compare Einstein rattle (physics) vs uniform noise (naive)."""
     print("\n[2/5] Structure Generation Benchmark")
     print("─" * 50)
 
-    from science.generation.informed_sampler import EinsteinRattler, AtomsLike
+    from science.generation.informed_sampler import EinsteinRattler
 
     # Create test system: Cu slab with light (H) and heavy (Cu) atoms
     N = 12
-    masses_cu = np.full(N, 63.546)   # Cu
-    masses_mixed = np.array([1.008] * 3 + [63.546] * 9)  # H on Cu
+    np.full(N, 63.546)  # Cu
+    np.array([1.008] * 3 + [63.546] * 9)  # H on Cu
     positions = np.zeros((N, 3))
     for i in range(N):
         positions[i] = [i % 3 * 2.55, (i // 3) * 2.55, (i // 9) * 2.0]
@@ -208,7 +212,7 @@ def benchmark_structure_generation():
 
     for T in temperatures:
         # Uniform baseline
-        rng = np.random.default_rng(42)
+        np.random.default_rng(42)
         sigma_uniform = 0.1  # fixed
         uniform_sigmas.append(sigma_uniform)
 
@@ -228,14 +232,12 @@ def benchmark_structure_generation():
 
     # Panel A: sigma vs temperature (mass dependence)
     ax = axes[0]
-    ax.plot(temperatures, einstein_sigmas_h, "o-", color="#F44336",
-            label="H (m=1.0 amu)", linewidth=2, markersize=6)
-    ax.plot(temperatures, einstein_sigmas_cu, "s-", color="#2196F3",
-            label="Cu (m=63.5 amu)", linewidth=2, markersize=6)
-    ax.plot(temperatures, einstein_sigmas_heavy, "^-", color="#4CAF50",
-            label="Pt (m=195 amu)", linewidth=2, markersize=6)
-    ax.axhline(y=0.1, color="#9E9E9E", linestyle="--", linewidth=1.5,
-               label="Uniform baseline (σ=0.1)", alpha=0.7)
+    ax.plot(temperatures, einstein_sigmas_h, "o-", color="#F44336", label="H (m=1.0 amu)", linewidth=2, markersize=6)
+    ax.plot(temperatures, einstein_sigmas_cu, "s-", color="#2196F3", label="Cu (m=63.5 amu)", linewidth=2, markersize=6)
+    ax.plot(
+        temperatures, einstein_sigmas_heavy, "^-", color="#4CAF50", label="Pt (m=195 amu)", linewidth=2, markersize=6
+    )
+    ax.axhline(y=0.1, color="#9E9E9E", linestyle="--", linewidth=1.5, label="Uniform baseline (σ=0.1)", alpha=0.7)
 
     # Show ZPE region
     ax.axvspan(0, 150, alpha=0.1, color="purple", label="Quantum regime")
@@ -255,15 +257,18 @@ def benchmark_structure_generation():
     sig_c = [rattler_c._sigma(63.546, T) for T in T_fine]
 
     ax.plot(T_fine, sig_q, color="#2196F3", linewidth=2, label="Quantum (with ZPE)")
-    ax.plot(T_fine, sig_c, color="#FF9800", linewidth=2, linestyle="--",
-            label="Classical (no ZPE)")
+    ax.plot(T_fine, sig_c, color="#FF9800", linewidth=2, linestyle="--", label="Classical (no ZPE)")
     ax.fill_between(T_fine, sig_c, sig_q, alpha=0.15, color="#2196F3")
 
     # Annotate ZPE contribution
-    ax.annotate("ZPE\ncontribution", xy=(50, sig_q[0]),
-                xytext=(300, sig_q[0] + 0.01),
-                arrowprops=dict(arrowstyle="->", color="purple"),
-                fontsize=9, color="purple")
+    ax.annotate(
+        "ZPE\ncontribution",
+        xy=(50, sig_q[0]),
+        xytext=(300, sig_q[0] + 0.01),
+        arrowprops=dict(arrowstyle="->", color="purple"),
+        fontsize=9,
+        color="purple",
+    )
 
     ax.set_xlabel("Temperature (K)")
     ax.set_ylabel("Displacement σ (A) [Cu]")
@@ -280,7 +285,7 @@ def benchmark_structure_generation():
     zpe_sigma = rattler_q._sigma(63.546, 0.001)
     classical_at_0 = rattler_c._sigma(63.546, 0.001)
     print(f"  ZPE sigma (Cu, T→0): {zpe_sigma:.4f} A (quantum) vs {classical_at_0:.6f} A (classical)")
-    print(f"  Mass scaling at 600K: σ(H)/σ(Pt) = {einstein_sigmas_h[2]/einstein_sigmas_heavy[2]:.1f}x")
+    print(f"  Mass scaling at 600K: σ(H)/σ(Pt) = {einstein_sigmas_h[2] / einstein_sigmas_heavy[2]:.1f}x")
 
     return {
         "zpe_sigma_A": zpe_sigma,
@@ -293,16 +298,18 @@ def benchmark_structure_generation():
 # Benchmark 3: Hypothesis Grounding (Cross-Modal vs Keyword)
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def benchmark_hypothesis_grounding():
     """Compare cross-modal grounder vs keyword overlap scorer."""
     print("\n[3/5] Hypothesis Grounding Benchmark")
     print("─" * 50)
 
     from science.alignment.hypothesis_grounder import (
-        HypothesisGrounder, ReactionNetwork,
+        HypothesisGrounder,
+        ReactionNetwork,
     )
-    from science.evaluation.golden_dataset import GOLDEN_SET
     from science.benchmarks.baselines import baseline_keyword_score
+    from science.evaluation.golden_dataset import GOLDEN_SET
 
     grounder = HypothesisGrounder()
 
@@ -312,23 +319,27 @@ def benchmark_hypothesis_grounding():
     test_cases = []
     for i, ex in enumerate(GOLDEN_SET[:15]):
         # Correct hypothesis-mechanism pair
-        test_cases.append({
-            "hypothesis": ex.query,
-            "intermediates": ex.expected_intermediates,
-            "dG": ex.expected_dG_profile,
-            "label": 1,
-            "id": ex.id,
-        })
+        test_cases.append(
+            {
+                "hypothesis": ex.query,
+                "intermediates": ex.expected_intermediates,
+                "dG": ex.expected_dG_profile,
+                "label": 1,
+                "id": ex.id,
+            }
+        )
         # Wrong: pair this hypothesis with a DIFFERENT reaction's mechanism
         wrong_idx = (i + 7) % len(GOLDEN_SET)
         wrong_ex = GOLDEN_SET[wrong_idx]
-        test_cases.append({
-            "hypothesis": ex.query,  # same hypothesis text
-            "intermediates": wrong_ex.expected_intermediates,  # wrong mechanism
-            "dG": wrong_ex.expected_dG_profile,  # wrong energetics
-            "label": 0,
-            "id": f"{ex.id}_wrong",
-        })
+        test_cases.append(
+            {
+                "hypothesis": ex.query,  # same hypothesis text
+                "intermediates": wrong_ex.expected_intermediates,  # wrong mechanism
+                "dG": wrong_ex.expected_dG_profile,  # wrong energetics
+                "label": 0,
+                "id": f"{ex.id}_wrong",
+            }
+        )
 
     # Score all test cases with both methods
     grounder_scores = []
@@ -338,8 +349,7 @@ def benchmark_hypothesis_grounding():
     for tc in test_cases:
         # Our grounder
         network_dict = {
-            "reaction_network": [{"lhs": tc["intermediates"][:2],
-                                   "rhs": tc["intermediates"][2:3]}],
+            "reaction_network": [{"lhs": tc["intermediates"][:2], "rhs": tc["intermediates"][2:3]}],
             "intermediates": tc["intermediates"],
         }
         network = ReactionNetwork.from_dict(network_dict)
@@ -394,10 +404,17 @@ def benchmark_hypothesis_grounding():
     # Panel A: Score distributions (trained grounder)
     ax = axes[0]
     bins = np.linspace(0, 1, 15)
-    ax.hist(trained_grounder_scores[labels == 1], bins=bins, alpha=0.7, color="#2196F3",
-            label="Correct (ours)", density=True)
-    ax.hist(trained_grounder_scores[labels == 0], bins=bins, alpha=0.7, color="#F44336",
-            label="Wrong (ours)", density=True)
+    ax.hist(
+        trained_grounder_scores[labels == 1],
+        bins=bins,
+        alpha=0.7,
+        color="#2196F3",
+        label="Correct (ours)",
+        density=True,
+    )
+    ax.hist(
+        trained_grounder_scores[labels == 0], bins=bins, alpha=0.7, color="#F44336", label="Wrong (ours)", density=True
+    )
     ax.set_xlabel("Alignment Score")
     ax.set_ylabel("Density")
     ax.set_title("(a) Cross-Modal Grounder (trained)")
@@ -405,10 +422,8 @@ def benchmark_hypothesis_grounding():
 
     # Panel B: Keyword distributions
     ax = axes[1]
-    ax.hist(keyword_scores[labels == 1], bins=bins, alpha=0.7, color="#4CAF50",
-            label="Correct (keyword)", density=True)
-    ax.hist(keyword_scores[labels == 0], bins=bins, alpha=0.7, color="#FF9800",
-            label="Wrong (keyword)", density=True)
+    ax.hist(keyword_scores[labels == 1], bins=bins, alpha=0.7, color="#4CAF50", label="Correct (keyword)", density=True)
+    ax.hist(keyword_scores[labels == 0], bins=bins, alpha=0.7, color="#FF9800", label="Wrong (keyword)", density=True)
     ax.set_xlabel("Overlap Score")
     ax.set_title("(b) Keyword Baseline")
     ax.legend()
@@ -434,10 +449,8 @@ def benchmark_hypothesis_grounding():
         tpr_k.append(tp / max(tp + fn, 1))
         fpr_k.append(fp / max(fp + tn, 1))
 
-    ax.plot(fpr_g, tpr_g, color="#2196F3", linewidth=2,
-            label=f"Cross-modal (AUC={auc_grounder:.2f})")
-    ax.plot(fpr_k, tpr_k, color="#9E9E9E", linewidth=2, linestyle="--",
-            label=f"Keyword (AUC={auc_keyword:.2f})")
+    ax.plot(fpr_g, tpr_g, color="#2196F3", linewidth=2, label=f"Cross-modal (AUC={auc_grounder:.2f})")
+    ax.plot(fpr_k, tpr_k, color="#9E9E9E", linewidth=2, linestyle="--", label=f"Keyword (AUC={auc_keyword:.2f})")
     ax.plot([0, 1], [0, 1], "k:", linewidth=0.8, alpha=0.5)
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
@@ -463,17 +476,22 @@ def benchmark_hypothesis_grounding():
 # Benchmark 4: SCF Convergence Prediction
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def benchmark_scf_prediction():
     """Compare FFT-based analysis vs linear extrapolation."""
     print("\n[4/5] SCF Convergence Prediction Benchmark")
     print("─" * 50)
 
-    from science.time_series.scf_convergence import (
-        SCFTrajectory, ChargeSloshingDetector, ConvergenceRatePredictor, analyse_scf,
-    )
     from science.benchmarks.baselines import (
-        baseline_linear_extrapolation, synthetic_sloshing_trajectory,
+        baseline_linear_extrapolation,
         synthetic_healthy_trajectory,
+        synthetic_sloshing_trajectory,
+    )
+    from science.time_series.scf_convergence import (
+        ChargeSloshingDetector,
+        ConvergenceRatePredictor,
+        SCFTrajectory,
+        analyse_scf,
     )
 
     # Generate test trajectories
@@ -486,8 +504,7 @@ def benchmark_scf_prediction():
         n = rng.integers(20, 50)
         dE = synthetic_healthy_trajectory(n, rate)
         actual_conv = next((j for j, d in enumerate(dE) if d < 1e-5), len(dE))
-        test_cases.append({"dE": dE, "is_sloshing": False,
-                           "actual_conv": actual_conv, "label": "healthy"})
+        test_cases.append({"dE": dE, "is_sloshing": False, "actual_conv": actual_conv, "label": "healthy"})
 
     # 30 sloshing trajectories
     for i in range(30):
@@ -495,8 +512,7 @@ def benchmark_scf_prediction():
         decay = rng.uniform(-0.05, 0.01)
         n = rng.integers(25, 50)
         dE = synthetic_sloshing_trajectory(n, period, decay)
-        test_cases.append({"dE": dE, "is_sloshing": True,
-                           "actual_conv": -1, "label": "sloshing"})
+        test_cases.append({"dE": dE, "is_sloshing": True, "actual_conv": -1, "label": "sloshing"})
 
     # Evaluate both methods
     our_correct_sloshing = 0
@@ -557,8 +573,13 @@ def benchmark_scf_prediction():
     ax.semilogy(dE_healthy, "o-", color="#2196F3", markersize=4, label="SCF trajectory")
     ax.axhline(y=1e-5, color="red", linestyle="--", linewidth=1, label="EDIFF")
     if report.prediction.predicted_step > 0:
-        ax.axvline(x=report.prediction.predicted_step, color="#4CAF50",
-                   linestyle=":", linewidth=1.5, label=f"Predicted: step {report.prediction.predicted_step}")
+        ax.axvline(
+            x=report.prediction.predicted_step,
+            color="#4CAF50",
+            linestyle=":",
+            linewidth=1.5,
+            label=f"Predicted: step {report.prediction.predicted_step}",
+        )
     ax.set_xlabel("SCF Iteration")
     ax.set_ylabel("|ΔE| (eV)")
     ax.set_title(f"(a) Healthy Convergence (λ={report.prediction.convergence_rate:.2f})")
@@ -587,15 +608,20 @@ def benchmark_scf_prediction():
     ax.set_title("(c) Sloshing Detection (60 trajectories)")
     ax.set_ylim(0, 105)
     for bar, acc in zip(bars, accuracies):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                f"{acc:.0f}%", ha="center", fontsize=11, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 1,
+            f"{acc:.0f}%",
+            ha="center",
+            fontsize=11,
+            fontweight="bold",
+        )
 
     # Panel D: Step prediction error distribution
     ax = axes[1, 1]
     if our_step_errors and baseline_step_errors:
         data = [our_step_errors, baseline_step_errors]
-        bp = ax.boxplot(data, tick_labels=["ChatDFT\n(exp. fit)", "Baseline\n(linear)"],
-                       patch_artist=True)
+        bp = ax.boxplot(data, tick_labels=["ChatDFT\n(exp. fit)", "Baseline\n(linear)"], patch_artist=True)
         bp["boxes"][0].set_facecolor("#2196F3")
         bp["boxes"][0].set_alpha(0.7)
         bp["boxes"][1].set_facecolor("#9E9E9E")
@@ -623,21 +649,25 @@ def benchmark_scf_prediction():
 # Benchmark 5: Bayesian vs Grid Search for DFT Parameters
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def benchmark_parameter_search():
     """Compare Bayesian optimisation vs grid search."""
     print("\n[5/5] Parameter Search Benchmark")
     print("─" * 50)
 
-    from science.optimization.bayesian_params import BayesianParameterOptimizer
     from science.benchmarks.baselines import (
-        baseline_grid_search, synthetic_energy_landscape,
+        baseline_grid_search,
+        synthetic_energy_landscape,
     )
+    from science.optimization.bayesian_params import BayesianParameterOptimizer
 
     # Run grid search
     grid_result = baseline_grid_search(synthetic_energy_landscape, n_atoms=36)
-    print(f"  Grid search: {grid_result.n_evaluations} evals → "
-          f"ENCUT={grid_result.optimal_encut}, KPPRA={grid_result.optimal_kppra}, "
-          f"error={grid_result.best_error:.6f} eV/atom")
+    print(
+        f"  Grid search: {grid_result.n_evaluations} evals → "
+        f"ENCUT={grid_result.optimal_encut}, KPPRA={grid_result.optimal_kppra}, "
+        f"error={grid_result.best_error:.6f} eV/atom"
+    )
 
     # Run Bayesian optimization (multiple trials for statistics)
     bo_evals = []
@@ -660,11 +690,9 @@ def benchmark_parameter_search():
 
     bo_mean_evals = np.mean(bo_evals)
     bo_mean_error = np.mean(bo_errors)
-    savings = ((grid_result.n_evaluations - bo_mean_evals) /
-               grid_result.n_evaluations * 100)
+    savings = (grid_result.n_evaluations - bo_mean_evals) / grid_result.n_evaluations * 100
 
-    print(f"  BO (mean of {n_trials} trials): {bo_mean_evals:.0f} evals → "
-          f"error={bo_mean_error:.6f} eV/atom")
+    print(f"  BO (mean of {n_trials} trials): {bo_mean_evals:.0f} evals → error={bo_mean_error:.6f} eV/atom")
     print(f"  Savings: {savings:.0f}% fewer DFT evaluations")
 
     # ─── Figure: BO vs Grid Search ───
@@ -679,8 +707,14 @@ def benchmark_parameter_search():
     ax.set_ylabel("DFT Evaluations")
     ax.set_title(f"(a) Sample Efficiency ({savings:.0f}% savings)")
     for bar, ev in zip(bars, evals):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
-                f"{ev:.0f}", ha="center", fontsize=11, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.5,
+            f"{ev:.0f}",
+            ha="center",
+            fontsize=11,
+            fontweight="bold",
+        )
 
     # Panel B: Convergence history (one BO run)
     ax = axes[1]
@@ -698,11 +732,15 @@ def benchmark_parameter_search():
         r = opt.result()
         convergence.append(r.predicted_error)
 
-    ax.semilogy(range(1, len(convergence) + 1), convergence, "o-",
-                color="#2196F3", markersize=5, linewidth=2)
+    ax.semilogy(range(1, len(convergence) + 1), convergence, "o-", color="#2196F3", markersize=5, linewidth=2)
     ax.axhline(y=0.001, color="red", linestyle="--", linewidth=1, label="Target (1 meV/atom)")
-    ax.axhline(y=grid_result.best_error, color="#9E9E9E", linestyle=":",
-               linewidth=1, label=f"Grid best ({grid_result.best_error:.4f})")
+    ax.axhline(
+        y=grid_result.best_error,
+        color="#9E9E9E",
+        linestyle=":",
+        linewidth=1,
+        label=f"Grid best ({grid_result.best_error:.4f})",
+    )
     ax.set_xlabel("Evaluation #")
     ax.set_ylabel("Best Error (eV/atom)")
     ax.set_title("(b) BO Convergence History")
@@ -714,11 +752,23 @@ def benchmark_parameter_search():
     all_pts = result.all_points
     pareto_pts = result.pareto_front
 
-    ax.scatter([p.cost for p in all_pts], [p.energy_error for p in all_pts],
-               c="#2196F3", alpha=0.6, s=40, label="BO evaluations")
+    ax.scatter(
+        [p.cost for p in all_pts],
+        [p.energy_error for p in all_pts],
+        c="#2196F3",
+        alpha=0.6,
+        s=40,
+        label="BO evaluations",
+    )
     if pareto_pts:
-        ax.plot([p.cost for p in pareto_pts], [p.energy_error for p in pareto_pts],
-                "r-o", markersize=6, linewidth=2, label="Pareto front")
+        ax.plot(
+            [p.cost for p in pareto_pts],
+            [p.energy_error for p in pareto_pts],
+            "r-o",
+            markersize=6,
+            linewidth=2,
+            label="Pareto front",
+        )
     ax.axhline(y=0.001, color="gray", linestyle="--", linewidth=0.8, alpha=0.5)
     ax.set_xlabel("Relative Cost")
     ax.set_ylabel("Energy Error (eV/atom)")
@@ -745,12 +795,13 @@ def benchmark_parameter_search():
 # Benchmark 6: Golden Dataset Overpotential Volcano
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def benchmark_golden_dataset():
     """Visualise the golden dataset: volcano plots and domain coverage."""
     print("\n[Bonus] Golden Dataset Visualisation")
     print("─" * 50)
 
-    from science.evaluation.golden_dataset import GOLDEN_SET, GOLDEN_BY_DOMAIN
+    from science.evaluation.golden_dataset import GOLDEN_BY_DOMAIN, GOLDEN_SET
 
     # ─── Figure: Overpotential landscape ───
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
@@ -758,12 +809,18 @@ def benchmark_golden_dataset():
     # Panel A: Overpotentials by domain
     ax = axes[0]
     domain_colors = {
-        "co2rr": "#2196F3", "her": "#4CAF50", "oer": "#FF9800",
-        "nrr": "#9C27B0", "orr": "#F44336",
+        "co2rr": "#2196F3",
+        "her": "#4CAF50",
+        "oer": "#FF9800",
+        "nrr": "#9C27B0",
+        "orr": "#F44336",
     }
     domain_labels = {
-        "co2rr": "CO$_2$RR", "her": "HER", "oer": "OER",
-        "nrr": "NRR", "orr": "ORR",
+        "co2rr": "CO$_2$RR",
+        "her": "HER",
+        "oer": "OER",
+        "nrr": "NRR",
+        "orr": "ORR",
     }
 
     all_ids = []
@@ -777,18 +834,17 @@ def benchmark_golden_dataset():
             all_colors.append(domain_colors[domain])
 
     x = np.arange(len(all_ids))
-    bars = ax.bar(x, all_etas, color=all_colors, width=0.7, alpha=0.85)
+    ax.bar(x, all_etas, color=all_colors, width=0.7, alpha=0.85)
     ax.set_xlabel("Catalyst System")
     ax.set_ylabel("Overpotential η (V)")
     ax.set_title("(a) Benchmark Overpotentials (25 reactions)")
     ax.set_xticks(x[::2])
-    ax.set_xticklabels([all_ids[i] for i in range(0, len(all_ids), 2)],
-                       rotation=45, ha="right", fontsize=7)
+    ax.set_xticklabels([all_ids[i] for i in range(0, len(all_ids), 2)], rotation=45, ha="right", fontsize=7)
 
     # Legend for domains
     from matplotlib.patches import Patch
-    legend_patches = [Patch(facecolor=c, label=domain_labels[d])
-                      for d, c in domain_colors.items()]
+
+    legend_patches = [Patch(facecolor=c, label=domain_labels[d]) for d, c in domain_colors.items()]
     ax.legend(handles=legend_patches, loc="upper right", fontsize=8)
 
     # Panel B: Free energy diagram overlay (one example per domain)
@@ -804,9 +860,15 @@ def benchmark_golden_dataset():
         if ex:
             dG = ex.expected_dG_profile
             steps = range(len(dG))
-            ax.plot(steps, dG, "o-", color=domain_colors[domain],
-                    linewidth=2, markersize=5,
-                    label=f"{domain_labels[domain]}: {ex.id}")
+            ax.plot(
+                steps,
+                dG,
+                "o-",
+                color=domain_colors[domain],
+                linewidth=2,
+                markersize=5,
+                label=f"{domain_labels[domain]}: {ex.id}",
+            )
 
     ax.axhline(y=0, color="black", linewidth=0.5, alpha=0.3)
     ax.set_xlabel("Reaction Step")
@@ -829,19 +891,22 @@ def benchmark_golden_dataset():
 # Fig 7: GNN Architecture Comparison
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def benchmark_gnn_models():
     """Compare 6 GNN architectures on synthetic adsorption energy prediction."""
     print("\n[7/7] GNN Architecture Comparison...")
 
     try:
-        import torch
+        import torch  # noqa: F401
     except ImportError:
         print("  ⚠ PyTorch not installed — skipping GNN benchmark")
         return {"skipped": True}
 
     from science.predictions.energy_predictor import (
-        generate_dataset, samples_to_graphs, train_and_evaluate,
         format_results_table,
+        generate_dataset,
+        samples_to_graphs,
+        train_and_evaluate,
     )
     from science.predictions.gnn_models import list_models
 
@@ -853,8 +918,8 @@ def benchmark_gnn_models():
     n_val = int(0.15 * len(samples))
 
     train_samples = [samples[i] for i in idx[:n_train]]
-    val_samples = [samples[i] for i in idx[n_train:n_train + n_val]]
-    test_samples = [samples[i] for i in idx[n_train + n_val:]]
+    val_samples = [samples[i] for i in idx[n_train : n_train + n_val]]
+    test_samples = [samples[i] for i in idx[n_train + n_val :]]
 
     train_g = samples_to_graphs(train_samples)
     val_g = samples_to_graphs(val_samples)
@@ -864,8 +929,7 @@ def benchmark_gnn_models():
     results = []
     for name in list_models():
         try:
-            r = train_and_evaluate(name, train_g, val_g, test_g,
-                                   n_epochs=80, batch_size=16)
+            r = train_and_evaluate(name, train_g, val_g, test_g, n_epochs=80, batch_size=16)
             results.append(r)
             print(f"  {name}: test_mae={r.test_mae:.4f} eV, params={r.n_params:,}")
         except (RuntimeError, ValueError) as e:
@@ -881,8 +945,8 @@ def benchmark_gnn_models():
 
     names = [r.model_name for r in results]
     test_maes = [r.test_mae for r in results]
-    n_params = [r.n_params for r in results]
-    train_times = [r.train_time_s for r in results]
+    [r.n_params for r in results]
+    [r.train_time_s for r in results]
 
     # Colour-code: MLP baseline red, GNNs blue gradient
     colours = []
@@ -903,8 +967,7 @@ def benchmark_gnn_models():
     ax.invert_yaxis()
     # Add value labels
     for bar, val in zip(bars, test_maes):
-        ax.text(bar.get_width() + 0.005, bar.get_y() + bar.get_height() / 2,
-                f"{val:.3f}", va="center", fontsize=9)
+        ax.text(bar.get_width() + 0.005, bar.get_y() + bar.get_height() / 2, f"{val:.3f}", va="center", fontsize=9)
 
     # ── Figure 7b: Training loss curves ──
     ax = axes[1]
@@ -920,31 +983,34 @@ def benchmark_gnn_models():
     ax = axes[2]
     for r, c in zip(results, colours):
         ax.scatter(r.n_params, r.test_mae, c=c, s=80, edgecolors="k", linewidths=0.5, zorder=3)
-        ax.annotate(r.model_name, (r.n_params, r.test_mae),
-                    textcoords="offset points", xytext=(5, 5), fontsize=8)
+        ax.annotate(r.model_name, (r.n_params, r.test_mae), textcoords="offset points", xytext=(5, 5), fontsize=8)
     ax.set_xlabel("Parameters")
     ax.set_ylabel("Test MAE (eV)")
     ax.set_title("(c) Accuracy vs Complexity")
     ax.set_xscale("log")
 
-    fig.suptitle("Fig 7 — GNN Architecture Comparison for Adsorption Energy Prediction",
-                 fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Fig 7 — GNN Architecture Comparison for Adsorption Energy Prediction", fontsize=13, fontweight="bold", y=1.02
+    )
     fig.tight_layout()
     fig.savefig(FIG_DIR / "fig7_gnn_comparison.pdf")
     fig.savefig(FIG_DIR / "fig7_gnn_comparison.png")
     plt.close(fig)
-    print(f"  → fig7_gnn_comparison")
+    print("  → fig7_gnn_comparison")
 
     # Print table
     print(f"\n{format_results_table(results)}")
 
     return {
-        "models": {r.model_name: {
-            "test_mae": round(r.test_mae, 4),
-            "val_mae": round(r.val_mae, 4),
-            "n_params": r.n_params,
-            "train_time_s": round(r.train_time_s, 1),
-        } for r in results},
+        "models": {
+            r.model_name: {
+                "test_mae": round(r.test_mae, 4),
+                "val_mae": round(r.val_mae, 4),
+                "n_params": r.n_params,
+                "train_time_s": round(r.train_time_s, 1),
+            }
+            for r in results
+        },
         "best_model": results[0].model_name,
         "best_test_mae": round(results[0].test_mae, 4),
         "n_samples": len(samples),
@@ -952,6 +1018,7 @@ def benchmark_gnn_models():
 
 
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def main():
     print("=" * 60)
@@ -986,7 +1053,9 @@ def main():
     h = all_results["hypothesis"]
     auc_ours = h["auc_grounder"]
     auc_base = h["auc_keyword"]
-    print(f"{'Hypothesis Grounding':<28s} {'AUC='+str(round(auc_ours,2)):<22s} {'AUC='+str(round(auc_base,2)):<22s}")
+    print(
+        f"{'Hypothesis Grounding':<28s} {'AUC=' + str(round(auc_ours, 2)):<22s} {'AUC=' + str(round(auc_base, 2)):<22s}"
+    )
 
     s = all_results["scf_prediction"]
     our_acc = f"{s['our_sloshing_accuracy']:.0%} accuracy"
@@ -1002,11 +1071,11 @@ def main():
     if not g.get("skipped"):
         best = g.get("best_model", "?")
         best_mae = g.get("best_test_mae", 0)
-        print(f"{'GNN Energy Prediction':<28s} {best+' '+str(best_mae)+' eV':<22s} {'MLP baseline':<22s}")
+        print(f"{'GNN Energy Prediction':<28s} {best + ' ' + str(best_mae) + ' eV':<22s} {'MLP baseline':<22s}")
 
     print("=" * 70)
     print(f"\n  Figures saved to: {FIG_DIR}/")
-    print(f"  7 publication-quality figures (PDF + PNG)")
+    print("  7 publication-quality figures (PDF + PNG)")
 
 
 if __name__ == "__main__":

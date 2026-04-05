@@ -4,10 +4,12 @@ fastapi>=0.104.0
 uvicorn>=0.24.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
+python-multipart>=0.0.6
 
 # Database
 sqlalchemy>=2.0.0
 asyncpg>=0.29.0
+psycopg2-binary>=2.9.0
 alembic>=1.13.0
 pgvector>=0.2.4
 

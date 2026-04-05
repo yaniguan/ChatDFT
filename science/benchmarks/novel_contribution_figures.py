@@ -19,6 +19,7 @@ Run:
 Output:
     figures/fig7_*.png/pdf  through  figures/fig14_*.png/pdf
 """
+
 from __future__ import annotations
 
 import json
@@ -30,28 +31,31 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import matplotlib
+
 matplotlib.use("Agg")
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
-import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from matplotlib.patches import FancyBboxPatch
 
-rcParams.update({
-    "font.family": "serif",
-    "font.size": 11,
-    "axes.labelsize": 12,
-    "axes.titlesize": 13,
-    "xtick.labelsize": 10,
-    "ytick.labelsize": 10,
-    "legend.fontsize": 9,
-    "figure.dpi": 150,
-    "savefig.dpi": 300,
-    "savefig.bbox": "tight",
-    "axes.grid": True,
-    "grid.alpha": 0.3,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-})
+rcParams.update(
+    {
+        "font.family": "serif",
+        "font.size": 11,
+        "axes.labelsize": 12,
+        "axes.titlesize": 13,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 9,
+        "figure.dpi": 150,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "axes.grid": True,
+        "grid.alpha": 0.3,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    }
+)
 
 FIG_DIR = Path(__file__).resolve().parents[2] / "figures"
 RES_DIR = Path(__file__).resolve().parents[2] / "results"
@@ -59,12 +63,12 @@ FIG_DIR.mkdir(exist_ok=True)
 RES_DIR.mkdir(exist_ok=True)
 
 # Color palette
-C_CHATDFT = "#2563EB"   # blue
+C_CHATDFT = "#2563EB"  # blue
 C_BASELINE = "#9CA3AF"  # gray
-C_HUMAN = "#F59E0B"     # amber
-C_SUCCESS = "#10B981"   # green
-C_FAIL = "#EF4444"      # red
-C_WARN = "#F59E0B"      # amber
+C_HUMAN = "#F59E0B"  # amber
+C_SUCCESS = "#10B981"  # green
+C_FAIL = "#EF4444"  # red
+C_WARN = "#F59E0B"  # amber
 DOMAIN_COLORS = {
     "CO2RR": "#3B82F6",
     "HER": "#10B981",
@@ -84,6 +88,7 @@ def _save(fig, name):
 # ═══════════════════════════════════════════════════════════════════════
 # Fig 7: Chemistry-Aware Chunker Evaluation
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def fig7_chem_chunker():
     """Chunk type distribution + completeness comparison."""
@@ -131,10 +136,13 @@ For CO*, ZPE = 0.19 eV, TS = 0.07 eV at 298 K.
     type_dist = chem_eval["type_distribution"]
     labels = list(type_dist.keys())
     sizes = list(type_dist.values())
-    colors_pie = ["#3B82F6", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899"][:len(labels)]
+    colors_pie = ["#3B82F6", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899"][: len(labels)]
     wedges, texts, autotexts = ax.pie(
-        sizes, labels=labels, autopct="%1.0f%%",
-        colors=colors_pie, startangle=90,
+        sizes,
+        labels=labels,
+        autopct="%1.0f%%",
+        colors=colors_pie,
+        startangle=90,
         textprops={"fontsize": 10},
     )
     ax.set_title("(a) Chunk Type Distribution\n(Chemistry-Aware)", fontsize=11, fontweight="bold")
@@ -154,16 +162,30 @@ For CO*, ZPE = 0.19 eV, TS = 0.07 eV at 298 K.
     positions = [0, 1]
     means = [np.mean(naive_scores) if naive_scores else 0, np.mean(chem_scores)]
     stds = [np.std(naive_scores) if naive_scores else 0, np.std(chem_scores)]
-    bars = ax.bar(positions, means, yerr=stds, width=0.6,
-                  color=[C_BASELINE, C_CHATDFT], capsize=5, edgecolor="black", linewidth=0.5)
+    bars = ax.bar(
+        positions,
+        means,
+        yerr=stds,
+        width=0.6,
+        color=[C_BASELINE, C_CHATDFT],
+        capsize=5,
+        edgecolor="black",
+        linewidth=0.5,
+    )
     ax.set_xticks(positions)
     ax.set_xticklabels(["Naive\n(word-count)", "Chemistry-\nAware"])
     ax.set_ylabel("Semantic Completeness Score")
     ax.set_ylim(0, 1.0)
     ax.set_title("(b) Chunk Completeness", fontsize=11, fontweight="bold")
     for bar, val in zip(bars, means):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05,
-                f"{val:.2f}", ha="center", fontsize=10, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.05,
+            f"{val:.2f}",
+            ha="center",
+            fontsize=10,
+            fontweight="bold",
+        )
 
     # --- Panel C: Metadata extraction rates ---
     ax = axes[2]
@@ -177,16 +199,17 @@ For CO*, ZPE = 0.19 eV, TS = 0.07 eV at 298 K.
 
     x = np.arange(len(categories))
     w = 0.35
-    ax.bar(x - w/2, naive_values, w, label="Naive", color=C_BASELINE, edgecolor="black", linewidth=0.5)
-    bars2 = ax.bar(x + w/2, chem_values, w, label="Chemistry-Aware", color=C_CHATDFT, edgecolor="black", linewidth=0.5)
+    ax.bar(x - w / 2, naive_values, w, label="Naive", color=C_BASELINE, edgecolor="black", linewidth=0.5)
+    bars2 = ax.bar(
+        x + w / 2, chem_values, w, label="Chemistry-Aware", color=C_CHATDFT, edgecolor="black", linewidth=0.5
+    )
     ax.set_xticks(x)
     ax.set_xticklabels(categories)
     ax.set_ylabel("Count / Rate")
     ax.legend(loc="upper left")
     ax.set_title("(c) Entity Extraction", fontsize=11, fontweight="bold")
     for bar, val in zip(bars2, chem_values):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
-                f"{val:.1f}", ha="center", fontsize=9)
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.1, f"{val:.1f}", ha="center", fontsize=9)
 
     fig.suptitle("Figure 7: Chemistry-Aware Document Chunker", fontsize=13, fontweight="bold", y=1.02)
     fig.tight_layout()
@@ -196,6 +219,7 @@ For CO*, ZPE = 0.19 eV, TS = 0.07 eV at 298 K.
 # ═══════════════════════════════════════════════════════════════════════
 # Fig 8: Multi-Hop Retrieval Graph
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def fig8_multihop_graph():
     """Chunk graph visualization showing multi-hop links."""
@@ -247,17 +271,17 @@ def fig8_multihop_graph():
         ("Cu(111)\nENCUT test", "Pt(111)\ncomparison"),
     ]
 
-    for (a, b) in hop1_edges:
+    for a, b in hop1_edges:
         xa, ya = nodes[a]
         xb, yb = nodes[b]
-        ax.annotate("", xy=(xb, yb), xytext=(xa, ya),
-                     arrowprops=dict(arrowstyle="->", lw=2.0, color="#3B82F6"))
+        ax.annotate("", xy=(xb, yb), xytext=(xa, ya), arrowprops=dict(arrowstyle="->", lw=2.0, color="#3B82F6"))
 
-    for (a, b) in hop2_edges:
+    for a, b in hop2_edges:
         xa, ya = nodes[a]
         xb, yb = nodes[b]
-        ax.annotate("", xy=(xb, yb), xytext=(xa, ya),
-                     arrowprops=dict(arrowstyle="->", lw=1.2, color="#10B981", ls="--"))
+        ax.annotate(
+            "", xy=(xb, yb), xytext=(xa, ya), arrowprops=dict(arrowstyle="->", lw=1.2, color="#10B981", ls="--")
+        )
 
     # Legend
     hop1_patch = mpatches.Patch(color="#3B82F6", label="Hop 1 (direct retrieval)")
@@ -276,11 +300,18 @@ def fig8_multihop_graph():
     ax.set_ylabel("Number of Cross-References")
     ax.set_title("(b) Chunk Graph Edge Types\n(50-paper corpus)", fontsize=11, fontweight="bold")
     for bar, val in zip(bars, counts):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
-                str(val), ha="center", fontsize=10, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.5,
+            str(val),
+            ha="center",
+            fontsize=10,
+            fontweight="bold",
+        )
 
-    fig.suptitle("Figure 8: Multi-Hop Retrieval via Chemistry-Aware Chunk Graph",
-                 fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Figure 8: Multi-Hop Retrieval via Chemistry-Aware Chunk Graph", fontsize=13, fontweight="bold", y=1.02
+    )
     fig.tight_layout()
     _save(fig, "fig8_multihop_graph")
 
@@ -289,6 +320,7 @@ def fig8_multihop_graph():
 # Fig 9: Agent Coordination DAG
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def fig9_agent_dag():
     """Agent coordination pipeline architecture diagram."""
     print("\n[Fig 9] Agent Coordination DAG")
@@ -296,7 +328,7 @@ def fig9_agent_dag():
     from server.execution.agent_coordinator import build_default_coordinator
 
     coord = build_default_coordinator()
-    groups = coord.dag.parallel_groups()
+    coord.dag.parallel_groups()
 
     fig, ax = plt.subplots(figsize=(14, 6))
     ax.set_xlim(-1, 14)
@@ -305,11 +337,11 @@ def fig9_agent_dag():
 
     # Agent boxes
     agent_info = {
-        "intent":        {"pos": (1, 3), "color": "#DBEAFE", "border": "#3B82F6"},
-        "hypothesis":    {"pos": (4, 4.2), "color": "#D1FAE5", "border": "#10B981"},
-        "structure":     {"pos": (7, 4.5), "color": "#FEF3C7", "border": "#F59E0B"},
-        "parameter":     {"pos": (7, 1.5), "color": "#FEF3C7", "border": "#F59E0B"},
-        "hpc":           {"pos": (10, 3), "color": "#EDE9FE", "border": "#8B5CF6"},
+        "intent": {"pos": (1, 3), "color": "#DBEAFE", "border": "#3B82F6"},
+        "hypothesis": {"pos": (4, 4.2), "color": "#D1FAE5", "border": "#10B981"},
+        "structure": {"pos": (7, 4.5), "color": "#FEF3C7", "border": "#F59E0B"},
+        "parameter": {"pos": (7, 1.5), "color": "#FEF3C7", "border": "#F59E0B"},
+        "hpc": {"pos": (10, 3), "color": "#EDE9FE", "border": "#8B5CF6"},
         "post_analysis": {"pos": (13, 3), "color": "#FCE7F3", "border": "#EC4899"},
     }
 
@@ -317,13 +349,16 @@ def fig9_agent_dag():
     for name, info in agent_info.items():
         x, y = info["pos"]
         rect = FancyBboxPatch(
-            (x - 1.1, y - 0.6), 2.2, 1.2,
+            (x - 1.1, y - 0.6),
+            2.2,
+            1.2,
             boxstyle="round,pad=0.1",
-            facecolor=info["color"], edgecolor=info["border"], linewidth=2,
+            facecolor=info["color"],
+            edgecolor=info["border"],
+            linewidth=2,
         )
         ax.add_patch(rect)
-        ax.text(x, y, name.replace("_", "\n"), ha="center", va="center",
-                fontsize=10, fontweight="bold")
+        ax.text(x, y, name.replace("_", "\n"), ha="center", va="center", fontsize=10, fontweight="bold")
 
     # Draw arrows
     arrows = [
@@ -338,39 +373,68 @@ def fig9_agent_dag():
     for a, b in arrows:
         xa, ya = agent_info[a]["pos"]
         xb, yb = agent_info[b]["pos"]
-        ax.annotate("",
-                     xy=(xb - 1.1, yb), xytext=(xa + 1.1, ya),
-                     arrowprops=dict(arrowstyle="-|>", lw=1.5, color="#374151"))
+        ax.annotate(
+            "", xy=(xb - 1.1, yb), xytext=(xa + 1.1, ya), arrowprops=dict(arrowstyle="-|>", lw=1.5, color="#374151")
+        )
 
     # Reward feedback loop (dashed red arrow from post_analysis back to hypothesis)
-    ax.annotate("",
-                xy=(4 + 1.1, 4.2 - 0.6), xytext=(13 - 0.5, 3 - 0.8),
-                arrowprops=dict(arrowstyle="-|>", lw=2.0, color="#EF4444",
-                                connectionstyle="arc3,rad=0.4", ls="--"))
-    ax.text(8.5, -0.8, "Reward Signal\n(DFT result → hypothesis quality)",
-            ha="center", fontsize=9, color="#EF4444", fontstyle="italic")
+    ax.annotate(
+        "",
+        xy=(4 + 1.1, 4.2 - 0.6),
+        xytext=(13 - 0.5, 3 - 0.8),
+        arrowprops=dict(arrowstyle="-|>", lw=2.0, color="#EF4444", connectionstyle="arc3,rad=0.4", ls="--"),
+    )
+    ax.text(
+        8.5,
+        -0.8,
+        "Reward Signal\n(DFT result → hypothesis quality)",
+        ha="center",
+        fontsize=9,
+        color="#EF4444",
+        fontstyle="italic",
+    )
 
     # Parallel group annotation
-    ax.annotate("parallel", xy=(7, 3.0), fontsize=9, ha="center",
-                color="#6B7280", fontstyle="italic",
-                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#D1D5DB"))
+    ax.annotate(
+        "parallel",
+        xy=(7, 3.0),
+        fontsize=9,
+        ha="center",
+        color="#6B7280",
+        fontstyle="italic",
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#D1D5DB"),
+    )
 
     # Conflict detection annotation
-    ax.annotate("conflict\ndetection", xy=(7, 2.8),
-                xytext=(5.5, 0.5),
-                fontsize=8, ha="center", color="#EF4444",
-                arrowprops=dict(arrowstyle="->", color="#EF4444", ls=":"),
-                bbox=dict(boxstyle="round,pad=0.15", fc="#FEE2E2", ec="#EF4444"))
+    ax.annotate(
+        "conflict\ndetection",
+        xy=(7, 2.8),
+        xytext=(5.5, 0.5),
+        fontsize=8,
+        ha="center",
+        color="#EF4444",
+        arrowprops=dict(arrowstyle="->", color="#EF4444", ls=":"),
+        bbox=dict(boxstyle="round,pad=0.15", fc="#FEE2E2", ec="#EF4444"),
+    )
 
     # Retry annotation
-    ax.annotate("retry w/\nescalation", xy=(10 + 1.0, 3 + 0.6),
-                xytext=(11.5, 5.0),
-                fontsize=8, ha="center", color="#8B5CF6",
-                arrowprops=dict(arrowstyle="->", color="#8B5CF6", ls=":"),
-                bbox=dict(boxstyle="round,pad=0.15", fc="#EDE9FE", ec="#8B5CF6"))
+    ax.annotate(
+        "retry w/\nescalation",
+        xy=(10 + 1.0, 3 + 0.6),
+        xytext=(11.5, 5.0),
+        fontsize=8,
+        ha="center",
+        color="#8B5CF6",
+        arrowprops=dict(arrowstyle="->", color="#8B5CF6", ls=":"),
+        bbox=dict(boxstyle="round,pad=0.15", fc="#EDE9FE", ec="#8B5CF6"),
+    )
 
-    ax.set_title("Figure 9: Agent Coordination DAG with Conflict Detection, Retry, and Reward Signal",
-                 fontsize=13, fontweight="bold", pad=20)
+    ax.set_title(
+        "Figure 9: Agent Coordination DAG with Conflict Detection, Retry, and Reward Signal",
+        fontsize=13,
+        fontweight="bold",
+        pad=20,
+    )
     fig.tight_layout()
     _save(fig, "fig9_agent_dag")
 
@@ -379,21 +443,23 @@ def fig9_agent_dag():
 # Fig 10: Error Taxonomy + Retry Escalation
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def fig10_error_taxonomy():
     """Error classification accuracy + progressive retry illustration."""
     print("\n[Fig 10] Error Taxonomy & Retry")
-
-    from server.execution.agent_coordinator import (
-        classify_dft_error, RetryManager, DFTErrorCategory,
-    )
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
     # --- Panel A: Error category taxonomy ---
     ax = axes[0]
     categories = [
-        "SCF non-\nconvergence", "Memory\noverflow", "Geometry\nexplosion",
-        "Queue\nerror", "POTCAR\nmismatch", "Symmetry\nerror", "ZBRENT\nerror",
+        "SCF non-\nconvergence",
+        "Memory\noverflow",
+        "Geometry\nexplosion",
+        "Queue\nerror",
+        "POTCAR\nmismatch",
+        "Symmetry\nerror",
+        "ZBRENT\nerror",
     ]
     retryable = [True, True, True, True, False, True, True]
     max_retries = [3, 2, 2, 3, 0, 2, 3]
@@ -420,8 +486,14 @@ def fig10_error_taxonomy():
 
     bars = ax.barh(attempts, aggressiveness, color=colors_esc, edgecolor="black", linewidth=0.5, height=0.5)
     for bar, param in zip(bars, params):
-        ax.text(bar.get_width() + 0.03, bar.get_y() + bar.get_height()/2,
-                param, va="center", fontsize=7.5, family="monospace")
+        ax.text(
+            bar.get_width() + 0.03,
+            bar.get_y() + bar.get_height() / 2,
+            param,
+            va="center",
+            fontsize=7.5,
+            family="monospace",
+        )
     ax.set_xlabel("Mixing Aggressiveness →")
     ax.set_xlim(0, 1.8)
     ax.set_title("(b) Progressive SCF Retry\nEscalation", fontsize=11, fontweight="bold")
@@ -452,8 +524,9 @@ def fig10_error_taxonomy():
     ax.set_xticks([0, 1])
     ax.set_xticklabels(["Wrong", "Correct"])
 
-    fig.suptitle("Figure 10: DFT Error Taxonomy with Progressive Retry Escalation",
-                 fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Figure 10: DFT Error Taxonomy with Progressive Retry Escalation", fontsize=13, fontweight="bold", y=1.02
+    )
     fig.tight_layout()
     _save(fig, "fig10_error_taxonomy")
 
@@ -461,6 +534,7 @@ def fig10_error_taxonomy():
 # ═══════════════════════════════════════════════════════════════════════
 # Fig 11: Reward Signal — Domain Confidence Evolution
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def fig11_reward_signal():
     """Reward signal tracking and domain confidence evolution."""
@@ -478,7 +552,7 @@ def fig11_reward_signal():
     # Simulate feedback cycles for different domains
     domains = {
         "Cu/CO2RR": {"trend": "exothermic", "range": (-1.5, -0.3), "noise": 0.3, "bias": -0.7},
-        "Pt/HER":   {"trend": "exothermic", "range": (-0.5, 0.1), "noise": 0.2, "bias": -0.1},
+        "Pt/HER": {"trend": "exothermic", "range": (-0.5, 0.1), "noise": 0.2, "bias": -0.1},
         "IrO2/OER": {"trend": "endothermic", "range": (0.3, 1.5), "noise": 0.5, "bias": 0.8},
     }
 
@@ -536,8 +610,9 @@ def fig11_reward_signal():
     ax.set_ylabel("Reward Signal r ∈ [-1, 1]")
     ax.set_title("(b) Reward Distribution\nby Domain", fontsize=11, fontweight="bold")
 
-    fig.suptitle("Figure 11: Reward Signal from DFT Results to Hypothesis Quality",
-                 fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Figure 11: Reward Signal from DFT Results to Hypothesis Quality", fontsize=13, fontweight="bold", y=1.02
+    )
     fig.tight_layout()
     _save(fig, "fig11_reward_signal")
 
@@ -545,6 +620,7 @@ def fig11_reward_signal():
 # ═══════════════════════════════════════════════════════════════════════
 # Fig 12: E2E Benchmark — Radar Chart
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def fig12_e2e_radar():
     """Human vs ChatDFT radar chart across multiple dimensions."""
@@ -557,6 +633,7 @@ def fig12_e2e_radar():
             summary = json.load(f)
     else:
         from science.benchmarks.e2e_benchmark import run_e2e_benchmark
+
         summary = run_e2e_benchmark()
 
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(projection="polar"))
@@ -588,9 +665,9 @@ def fig12_e2e_radar():
         0.95,  # humans parse intent well (it's their own query)
         0.82,  # survey data
         0.34,  # survey data
-        0.0,   # no auto-fix
-        0.5,   # average student knows ~5 calc types
-        0.014, # 1/71 speed ratio
+        0.0,  # no auto-fix
+        0.5,  # average student knows ~5 calc types
+        0.014,  # 1/71 speed ratio
     ]
 
     # Plot
@@ -610,8 +687,12 @@ def fig12_e2e_radar():
     ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
     ax.set_yticklabels(["20%", "40%", "60%", "80%", "100%"], fontsize=8)
     ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1), fontsize=11)
-    ax.set_title("Figure 12: Human vs ChatDFT — Multi-Dimensional Comparison\n(25 tasks, 5 domains)",
-                 fontsize=13, fontweight="bold", y=1.08)
+    ax.set_title(
+        "Figure 12: Human vs ChatDFT — Multi-Dimensional Comparison\n(25 tasks, 5 domains)",
+        fontsize=13,
+        fontweight="bold",
+        y=1.08,
+    )
 
     fig.tight_layout()
     _save(fig, "fig12_e2e_radar")
@@ -620,6 +701,7 @@ def fig12_e2e_radar():
 # ═══════════════════════════════════════════════════════════════════════
 # Fig 13: E2E Benchmark — Per-Domain Breakdown
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def fig13_e2e_domains():
     """Per-domain success rate + timing comparison."""
@@ -631,6 +713,7 @@ def fig13_e2e_domains():
             summary = json.load(f)
     else:
         from science.benchmarks.e2e_benchmark import run_e2e_benchmark
+
         summary = run_e2e_benchmark()
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -646,8 +729,14 @@ def fig13_e2e_domains():
     ax.set_ylim(0, 1.1)
     ax.set_title("(a) Success Rate by Domain", fontsize=11, fontweight="bold")
     for bar, val in zip(bars, success_rates):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
-                f"{val:.0%}", ha="center", fontsize=10, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.02,
+            f"{val:.0%}",
+            ha="center",
+            fontsize=10,
+            fontweight="bold",
+        )
 
     # --- Panel B: INCAR accuracy by domain ---
     ax = axes[1]
@@ -659,8 +748,14 @@ def fig13_e2e_domains():
     ax.legend(loc="lower right", fontsize=9)
     ax.set_title("(b) INCAR Correctness by Domain", fontsize=11, fontweight="bold")
     for bar, val in zip(bars, incar_acc):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
-                f"{val:.0%}", ha="center", fontsize=10, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.02,
+            f"{val:.0%}",
+            ha="center",
+            fontsize=10,
+            fontweight="bold",
+        )
 
     # --- Panel C: Success by difficulty ---
     ax = axes[2]
@@ -674,11 +769,16 @@ def fig13_e2e_domains():
     ax.set_ylim(0, 1.1)
     ax.set_title("(c) Success Rate by Difficulty", fontsize=11, fontweight="bold")
     for bar, val, n in zip(bars, diff_success, diff_n):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
-                f"{val:.0%}\n(n={n})", ha="center", fontsize=9, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.02,
+            f"{val:.0%}\n(n={n})",
+            ha="center",
+            fontsize=9,
+            fontweight="bold",
+        )
 
-    fig.suptitle("Figure 13: End-to-End Benchmark — 25 Tasks Across 5 Domains",
-                 fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle("Figure 13: End-to-End Benchmark — 25 Tasks Across 5 Domains", fontsize=13, fontweight="bold", y=1.02)
     fig.tight_layout()
     _save(fig, "fig13_e2e_domains")
 
@@ -687,11 +787,13 @@ def fig13_e2e_domains():
 # Fig 14: VASP Auto-Remediation Benchmark
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def fig14_auto_remediation():
     """Auto-remediation detection/fix rates + wrapper comparison."""
     print("\n[Fig 14] Auto-Remediation Benchmark")
 
     from science.vasp.auto_remediation import benchmark_auto_remediation
+
     results = benchmark_auto_remediation()
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -712,8 +814,8 @@ def fig14_auto_remediation():
 
     x = np.arange(len(cats))
     w = 0.35
-    bars1 = ax.bar(x - w/2, detection, w, label="Detection Rate", color=C_CHATDFT, edgecolor="black", linewidth=0.5)
-    bars2 = ax.bar(x + w/2, fix_rate, w, label="Auto-Fix Rate", color=C_SUCCESS, edgecolor="black", linewidth=0.5)
+    bars1 = ax.bar(x - w / 2, detection, w, label="Detection Rate", color=C_CHATDFT, edgecolor="black", linewidth=0.5)
+    bars2 = ax.bar(x + w / 2, fix_rate, w, label="Auto-Fix Rate", color=C_SUCCESS, edgecolor="black", linewidth=0.5)
     ax.set_xticks(x)
     ax.set_xticklabels(cats)
     ax.set_ylabel("Rate")
@@ -722,8 +824,14 @@ def fig14_auto_remediation():
     ax.set_title("(a) Detection & Fix Rates\n(60 test cases)", fontsize=11, fontweight="bold")
 
     for bar, val in zip(list(bars1) + list(bars2), detection + fix_rate):
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
-                f"{val:.0%}", ha="center", fontsize=9, fontweight="bold")
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.02,
+            f"{val:.0%}",
+            ha="center",
+            fontsize=9,
+            fontweight="bold",
+        )
 
     # --- Panel B: Wrapper comparison table (as a styled bar chart) ---
     ax = axes[1]
@@ -744,9 +852,8 @@ def fig14_auto_remediation():
     wrapper_colors = [C_BASELINE, "#9CA3AF", "#6B7280", C_CHATDFT]
     for i, (wrapper, color) in enumerate(zip(wrappers, wrapper_colors)):
         values = [caps[i] for caps in capabilities.values()]
-        offset = (i - n_wrappers/2 + 0.5) * bar_w
-        ax.bar(x + offset, values, bar_w * 0.9, label=wrapper, color=color,
-               edgecolor="black", linewidth=0.5)
+        offset = (i - n_wrappers / 2 + 0.5) * bar_w
+        ax.bar(x + offset, values, bar_w * 0.9, label=wrapper, color=color, edgecolor="black", linewidth=0.5)
 
     ax.set_xticks(x)
     ax.set_xticklabels(list(capabilities.keys()), fontsize=8)
@@ -775,15 +882,16 @@ def fig14_auto_remediation():
     colors_check = [C_SUCCESS if d >= 0.9 else C_WARN for d in detected]
 
     y = np.arange(len(checks))
-    bars = ax.barh(y, detected, color=colors_check, edgecolor="black", linewidth=0.5, height=0.6)
+    ax.barh(y, detected, color=colors_check, edgecolor="black", linewidth=0.5, height=0.6)
     ax.set_yticks(y)
     ax.set_yticklabels(checks, fontsize=8)
     ax.set_xlabel("Detection Rate")
     ax.set_xlim(0, 1.2)
     ax.set_title("(c) Consistency Checks\n(10 validators)", fontsize=11, fontweight="bold")
 
-    fig.suptitle("Figure 14: VASP Auto-Remediation — Detection, Fix, and Comparison",
-                 fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Figure 14: VASP Auto-Remediation — Detection, Fix, and Comparison", fontsize=13, fontweight="bold", y=1.02
+    )
     fig.tight_layout()
     _save(fig, "fig14_auto_remediation")
 
@@ -791,6 +899,7 @@ def fig14_auto_remediation():
 # ═══════════════════════════════════════════════════════════════════════
 # Generate all figures
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def main():
     print("=" * 60)

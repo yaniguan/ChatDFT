@@ -26,8 +26,7 @@ Key references
 from __future__ import annotations
 
 import hashlib
-import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -39,6 +38,7 @@ from science.core.logging import get_logger
 
 try:
     import networkx as nx
+
     _HAS_NX = True
 except ImportError:
     _HAS_NX = False
@@ -49,39 +49,41 @@ logger = get_logger(__name__)
 # Data containers
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AtomNode:
     index: int
     element: str
     atomic_number: int
-    position: np.ndarray            # fractional (a,b,c) in unit cell
-    layer: int                      # 0 = topmost surface layer
-    coordination: int = 0           # Voronoi coordination number
-    voronoi_volume: float = 0.0     # Å³ — proxy for atom size / stress
-    surface_dist: float = 0.0       # Å above the mean surface plane
+    position: np.ndarray  # fractional (a,b,c) in unit cell
+    layer: int  # 0 = topmost surface layer
+    coordination: int = 0  # Voronoi coordination number
+    voronoi_volume: float = 0.0  # Å³ — proxy for atom size / stress
+    surface_dist: float = 0.0  # Å above the mean surface plane
 
 
 @dataclass
 class BondEdge:
     i: int
     j: int
-    length: float                   # Å
-    angle_with_normal: float        # rad, 0 = vertical bond
-    voronoi_area: float             # Å² — shared Voronoi face area
+    length: float  # Å
+    angle_with_normal: float  # rad, 0 = vertical bond
+    voronoi_area: float  # Å² — shared Voronoi face area
 
 
 @dataclass
 class AdsorptionSite:
-    site_type: str                  # 'top' | 'bridge' | 'hollow_fcc' | 'hollow_hcp'
-    position: np.ndarray            # Cartesian, Å
-    coordinating_atoms: List[int]   # node indices in the graph
-    symmetry_rank: float            # higher ⟹ more symmetric environment
-    fingerprint: str                # SHA-256 hash of (type, coord_atoms)
+    site_type: str  # 'top' | 'bridge' | 'hollow_fcc' | 'hollow_hcp'
+    position: np.ndarray  # Cartesian, Å
+    coordinating_atoms: List[int]  # node indices in the graph
+    symmetry_rank: float  # higher ⟹ more symmetric environment
+    fingerprint: str  # SHA-256 hash of (type, coord_atoms)
 
 
 # ---------------------------------------------------------------------------
 # Core class
 # ---------------------------------------------------------------------------
+
 
 class SurfaceTopologyGraph:
     """
@@ -117,9 +119,9 @@ class SurfaceTopologyGraph:
 
     def __init__(
         self,
-        positions: np.ndarray,          # (N, 3) Cartesian, Å
+        positions: np.ndarray,  # (N, 3) Cartesian, Å
         elements: List[str],
-        cell: np.ndarray,               # (3, 3) lattice vectors, Å
+        cell: np.ndarray,  # (3, 3) lattice vectors, Å
         surface_normal: Optional[np.ndarray] = None,
     ):
         # Input validation
@@ -141,26 +143,88 @@ class SurfaceTopologyGraph:
                 context={"volume": float(cell_vol)},
             )
         self.positions = positions
-        self.elements  = list(elements)
-        self.cell      = cell
-        self.normal    = np.array(surface_normal or [0.0, 0.0, 1.0])
-        self.normal   /= np.linalg.norm(self.normal)
+        self.elements = list(elements)
+        self.cell = cell
+        self.normal = np.array(surface_normal or [0.0, 0.0, 1.0])
+        self.normal /= np.linalg.norm(self.normal)
 
         self.nodes: List[AtomNode] = []
         self.edges: List[BondEdge] = []
         self._sites: Optional[List[AdsorptionSite]] = None
-        self._built  = False
+        self._built = False
 
         # atomic numbers (Z) for common elements
-        _Z = {"H":1,"He":2,"Li":3,"Be":4,"B":5,"C":6,"N":7,"O":8,"F":9,
-              "Ne":10,"Na":11,"Mg":12,"Al":13,"Si":14,"P":15,"S":16,"Cl":17,
-              "Ar":18,"K":19,"Ca":20,"Sc":21,"Ti":22,"V":23,"Cr":24,"Mn":25,
-              "Fe":26,"Co":27,"Ni":28,"Cu":29,"Zn":30,"Ga":31,"Ge":32,"As":33,
-              "Se":34,"Br":35,"Kr":36,"Rb":37,"Sr":38,"Y":39,"Zr":40,"Nb":41,
-              "Mo":42,"Tc":43,"Ru":44,"Rh":45,"Pd":46,"Ag":47,"Cd":48,"In":49,
-              "Sn":50,"Sb":51,"Te":52,"I":53,"Xe":54,"Cs":55,"Ba":56,"La":57,
-              "Hf":72,"Ta":73,"W":74,"Re":75,"Os":76,"Ir":77,"Pt":78,"Au":79,
-              "Hg":80,"Tl":81,"Pb":82,"Bi":83}
+        _Z = {
+            "H": 1,
+            "He": 2,
+            "Li": 3,
+            "Be": 4,
+            "B": 5,
+            "C": 6,
+            "N": 7,
+            "O": 8,
+            "F": 9,
+            "Ne": 10,
+            "Na": 11,
+            "Mg": 12,
+            "Al": 13,
+            "Si": 14,
+            "P": 15,
+            "S": 16,
+            "Cl": 17,
+            "Ar": 18,
+            "K": 19,
+            "Ca": 20,
+            "Sc": 21,
+            "Ti": 22,
+            "V": 23,
+            "Cr": 24,
+            "Mn": 25,
+            "Fe": 26,
+            "Co": 27,
+            "Ni": 28,
+            "Cu": 29,
+            "Zn": 30,
+            "Ga": 31,
+            "Ge": 32,
+            "As": 33,
+            "Se": 34,
+            "Br": 35,
+            "Kr": 36,
+            "Rb": 37,
+            "Sr": 38,
+            "Y": 39,
+            "Zr": 40,
+            "Nb": 41,
+            "Mo": 42,
+            "Tc": 43,
+            "Ru": 44,
+            "Rh": 45,
+            "Pd": 46,
+            "Ag": 47,
+            "Cd": 48,
+            "In": 49,
+            "Sn": 50,
+            "Sb": 51,
+            "Te": 52,
+            "I": 53,
+            "Xe": 54,
+            "Cs": 55,
+            "Ba": 56,
+            "La": 57,
+            "Hf": 72,
+            "Ta": 73,
+            "W": 74,
+            "Re": 75,
+            "Os": 76,
+            "Ir": 77,
+            "Pt": 78,
+            "Au": 79,
+            "Hg": 80,
+            "Tl": 81,
+            "Pb": 82,
+            "Bi": 83,
+        }
         self._Z = {e: _Z.get(e, 0) for e in elements}
 
     # ------------------------------------------------------------------
@@ -183,21 +247,17 @@ class SurfaceTopologyGraph:
         # --- Layer assignment via z-coordinate clustering ----------------
         z_sorted = np.sort(np.unique(np.round(z_coords, 1)))
         # find largest gap above midpoint of cell → surface layer boundary
-        diffs = np.diff(z_sorted)
-        surface_z = z_sorted[-1]                     # topmost unique z
+        np.diff(z_sorted)
+        z_sorted[-1]  # topmost unique z
         layer_map: Dict[int, int] = {}
         z_layers = sorted(set(np.round(z_coords, 1)), reverse=True)
         for atom_i, z in enumerate(np.round(z_coords, 1)):
             layer_map[atom_i] = z_layers.index(z)
 
         # --- Periodic images for Voronoi (3×3 supercell) -----------------
-        image_shifts = [
-            i * self.cell[0] + j * self.cell[1]
-            for i in [-1, 0, 1]
-            for j in [-1, 0, 1]
-        ]
-        extended_pos  = []
-        extended_orig = []                            # index in original cell
+        image_shifts = [i * self.cell[0] + j * self.cell[1] for i in [-1, 0, 1] for j in [-1, 0, 1]]
+        extended_pos = []
+        extended_orig = []  # index in original cell
         for shift in image_shifts:
             for idx, pos in enumerate(self.positions):
                 extended_pos.append(pos + shift)
@@ -208,14 +268,15 @@ class SurfaceTopologyGraph:
         try:
             vor = Voronoi(extended_pos)
         except (QhullError, ValueError) as e:
-            logger.warning("Voronoi tessellation failed, using distance fallback",
-                           extra={"error": str(e), "n_atoms": N})
+            logger.warning(
+                "Voronoi tessellation failed, using distance fallback", extra={"error": str(e), "n_atoms": N}
+            )
             self._build_distance_fallback(layer_map, min_voronoi_area)
             return self
 
         # Accumulate Voronoi volumes and shared face areas
-        volumes    = np.zeros(N)
-        face_areas: Dict[Tuple[int,int], float] = {}  # (i,j) → area
+        volumes = np.zeros(N)
+        face_areas: Dict[Tuple[int, int], float] = {}  # (i,j) → area
 
         for ridge_pts, ridge_verts in zip(vor.ridge_points, vor.ridge_vertices):
             orig_i = extended_orig[ridge_pts[0]]
@@ -223,17 +284,15 @@ class SurfaceTopologyGraph:
             if orig_i == orig_j:
                 continue
             if -1 in ridge_verts:
-                area = 0.0          # open ridge (infinite Voronoi vertex)
+                area = 0.0  # open ridge (infinite Voronoi vertex)
             else:
                 verts = vor.vertices[ridge_verts]
                 try:
-                    hull  = ConvexHull(verts)
-                    area  = hull.volume        # ConvexHull.volume = surface area in 2D
+                    hull = ConvexHull(verts)
+                    area = hull.volume  # ConvexHull.volume = surface area in 2D
                 except (QhullError, ValueError):
                     # Degenerate face — estimate area from triangle
-                    area = np.linalg.norm(
-                        np.cross(verts[1]-verts[0], verts[-1]-verts[0])
-                    ) / 2.0
+                    area = np.linalg.norm(np.cross(verts[1] - verts[0], verts[-1] - verts[0])) / 2.0
             key = (min(orig_i, orig_j), max(orig_i, orig_j))
             face_areas[key] = face_areas.get(key, 0.0) + area
 
@@ -242,7 +301,7 @@ class SurfaceTopologyGraph:
             region_idx = vor.point_region[pt_idx]
             region_verts = vor.regions[region_idx]
             if -1 in region_verts or len(region_verts) < 4:
-                volumes[pt_idx] = 12.0       # fallback
+                volumes[pt_idx] = 12.0  # fallback
             else:
                 try:
                     hull = ConvexHull(vor.vertices[region_verts])
@@ -251,20 +310,20 @@ class SurfaceTopologyGraph:
                     volumes[pt_idx] = 12.0  # fallback: typical FCC Voronoi volume
 
         # --- Build node list ---------------------------------------------
-        mean_surface_z = np.mean(self.positions[
-            [i for i,l in layer_map.items() if l == 0], 2
-        ])
+        mean_surface_z = np.mean(self.positions[[i for i, layer_idx in layer_map.items() if layer_idx == 0], 2])
         self.nodes = []
         for i, (elem, pos) in enumerate(zip(self.elements, self.positions)):
-            self.nodes.append(AtomNode(
-                index        = i,
-                element      = elem,
-                atomic_number= self._Z.get(elem, 0),
-                position     = pos.copy(),
-                layer        = layer_map[i],
-                voronoi_volume = volumes[i],
-                surface_dist   = pos[2] - mean_surface_z,
-            ))
+            self.nodes.append(
+                AtomNode(
+                    index=i,
+                    element=elem,
+                    atomic_number=self._Z.get(elem, 0),
+                    position=pos.copy(),
+                    layer=layer_map[i],
+                    voronoi_volume=volumes[i],
+                    surface_dist=pos[2] - mean_surface_z,
+                )
+            )
 
         # --- Build edge list and coordination numbers --------------------
         self.edges = []
@@ -279,15 +338,18 @@ class SurfaceTopologyGraph:
             )
             if dist > cutoff:
                 continue
-            bond_vec  = self.positions[j] - self.positions[i]
+            bond_vec = self.positions[j] - self.positions[i]
             cos_theta = abs(np.dot(bond_vec, self.normal)) / (dist + 1e-12)
-            angle     = np.arccos(np.clip(cos_theta, 0, 1))
-            self.edges.append(BondEdge(
-                i=i, j=j,
-                length=dist,
-                angle_with_normal=angle,
-                voronoi_area=area,
-            ))
+            angle = np.arccos(np.clip(cos_theta, 0, 1))
+            self.edges.append(
+                BondEdge(
+                    i=i,
+                    j=j,
+                    length=dist,
+                    angle_with_normal=angle,
+                    voronoi_area=area,
+                )
+            )
             self.nodes[i].coordination += 1
             self.nodes[j].coordination += 1
             seen_edges.add((i, j))
@@ -298,22 +360,31 @@ class SurfaceTopologyGraph:
     def _build_distance_fallback(self, layer_map, min_voronoi_area):
         """Distance-based fallback when Voronoi fails."""
         for i, elem_i in enumerate(self.elements):
-            self.nodes.append(AtomNode(
-                index=i, element=elem_i, atomic_number=self._Z.get(elem_i,0),
-                position=self.positions[i].copy(), layer=layer_map[i],
-            ))
+            self.nodes.append(
+                AtomNode(
+                    index=i,
+                    element=elem_i,
+                    atomic_number=self._Z.get(elem_i, 0),
+                    position=self.positions[i].copy(),
+                    layer=layer_map[i],
+                )
+            )
         cutoff = self._DEFAULT_CUTOFF
         for i in range(len(self.elements)):
-            for j in range(i+1, len(self.elements)):
-                dist = np.linalg.norm(self.positions[j]-self.positions[i])
+            for j in range(i + 1, len(self.elements)):
+                dist = np.linalg.norm(self.positions[j] - self.positions[i])
                 if dist < cutoff:
-                    bond_vec  = self.positions[j]-self.positions[i]
-                    cos_theta = abs(np.dot(bond_vec, self.normal))/(dist+1e-12)
-                    self.edges.append(BondEdge(
-                        i=i, j=j, length=dist,
-                        angle_with_normal=np.arccos(np.clip(cos_theta,0,1)),
-                        voronoi_area=1.0,
-                    ))
+                    bond_vec = self.positions[j] - self.positions[i]
+                    cos_theta = abs(np.dot(bond_vec, self.normal)) / (dist + 1e-12)
+                    self.edges.append(
+                        BondEdge(
+                            i=i,
+                            j=j,
+                            length=dist,
+                            angle_with_normal=np.arccos(np.clip(cos_theta, 0, 1)),
+                            voronoi_area=1.0,
+                        )
+                    )
                     self.nodes[i].coordination += 1
                     self.nodes[j].coordination += 1
         self._built = True
@@ -322,9 +393,7 @@ class SurfaceTopologyGraph:
     # Site classification
     # ------------------------------------------------------------------
 
-    def classify_adsorption_sites(
-        self, ads_height: float = 1.8
-    ) -> List[AdsorptionSite]:
+    def classify_adsorption_sites(self, ads_height: float = 1.8) -> List[AdsorptionSite]:
         """
         Enumerate and classify adsorption sites on the top surface layer.
 
@@ -350,10 +419,10 @@ class SurfaceTopologyGraph:
         assert self._built, "Call build() first."
 
         surface_idx = [n.index for n in self.nodes if n.layer == 0]
-        sub_idx     = [n.index for n in self.nodes if n.layer == 1]
-        surface_xy  = self.positions[surface_idx, :2]
-        sub_xy      = self.positions[sub_idx,     :2] if sub_idx else np.empty((0,2))
-        surface_z   = np.mean(self.positions[surface_idx, 2])
+        sub_idx = [n.index for n in self.nodes if n.layer == 1]
+        surface_xy = self.positions[surface_idx, :2]
+        sub_xy = self.positions[sub_idx, :2] if sub_idx else np.empty((0, 2))
+        surface_z = np.mean(self.positions[surface_idx, 2])
 
         sites: List[AdsorptionSite] = []
 
@@ -362,34 +431,38 @@ class SurfaceTopologyGraph:
             pos = self.positions[idx].copy()
             pos[2] = surface_z + ads_height
             score = self._symmetry_score(pos[:2], surface_xy)
-            sites.append(AdsorptionSite(
-                site_type="top",
-                position=pos,
-                coordinating_atoms=[idx],
-                symmetry_rank=score,
-                fingerprint=self._fp("top", [idx]),
-            ))
+            sites.append(
+                AdsorptionSite(
+                    site_type="top",
+                    position=pos,
+                    coordinating_atoms=[idx],
+                    symmetry_rank=score,
+                    fingerprint=self._fp("top", [idx]),
+                )
+            )
 
         # ---- Bridge sites -----------------------------------------------
         surface_edge_pairs = [
-            (e.i, e.j) for e in self.edges
-            if self.nodes[e.i].layer == 0 and self.nodes[e.j].layer == 0
+            (e.i, e.j) for e in self.edges if self.nodes[e.i].layer == 0 and self.nodes[e.j].layer == 0
         ]
         for i, j in surface_edge_pairs:
             pos = (self.positions[i] + self.positions[j]) / 2.0
             pos[2] = surface_z + ads_height
             score = self._symmetry_score(pos[:2], surface_xy)
-            sites.append(AdsorptionSite(
-                site_type="bridge",
-                position=pos,
-                coordinating_atoms=sorted([i, j]),
-                symmetry_rank=score,
-                fingerprint=self._fp("bridge", sorted([i, j])),
-            ))
+            sites.append(
+                AdsorptionSite(
+                    site_type="bridge",
+                    position=pos,
+                    coordinating_atoms=sorted([i, j]),
+                    symmetry_rank=score,
+                    fingerprint=self._fp("bridge", sorted([i, j])),
+                )
+            )
 
         # ---- Hollow sites via Delaunay triangulation --------------------
         if len(surface_xy) >= 3:
             from scipy.spatial import Delaunay
+
             tri = Delaunay(surface_xy)
             for simplex in tri.simplices:
                 real_idx = [surface_idx[k] for k in simplex]
@@ -403,13 +476,15 @@ class SurfaceTopologyGraph:
                 htype = "hollow_hcp" if has_sub else "hollow_fcc"
                 pos = np.array([centroid[0], centroid[1], surface_z + ads_height])
                 score = self._symmetry_score(centroid, surface_xy)
-                sites.append(AdsorptionSite(
-                    site_type=htype,
-                    position=pos,
-                    coordinating_atoms=sorted(real_idx),
-                    symmetry_rank=score,
-                    fingerprint=self._fp(htype, sorted(real_idx)),
-                ))
+                sites.append(
+                    AdsorptionSite(
+                        site_type=htype,
+                        position=pos,
+                        coordinating_atoms=sorted(real_idx),
+                        symmetry_rank=score,
+                        fingerprint=self._fp(htype, sorted(real_idx)),
+                    )
+                )
 
         # Deduplicate by position (within 0.3 Å)
         sites = self._deduplicate_sites(sites, tol=0.3)
@@ -463,14 +538,16 @@ class SurfaceTopologyGraph:
         assert self._built
         src, dst, attrs = [], [], []
         for e in self.edges:
-            for (a, b) in [(e.i, e.j), (e.j, e.i)]:
+            for a, b in [(e.i, e.j), (e.j, e.i)]:
                 src.append(a)
                 dst.append(b)
-                attrs.append([
-                    e.length / 5.0,
-                    e.angle_with_normal / np.pi,
-                    e.voronoi_area / 10.0,
-                ])
+                attrs.append(
+                    [
+                        e.length / 5.0,
+                        e.angle_with_normal / np.pi,
+                        e.voronoi_area / 10.0,
+                    ]
+                )
         return (
             np.array([src, dst], dtype=np.int64),
             np.array(attrs, dtype=np.float32),
@@ -483,12 +560,10 @@ class SurfaceTopologyGraph:
         G = nx.DiGraph()
         X = self.node_feature_matrix()
         for n in self.nodes:
-            G.add_node(n.index, features=X[n.index].tolist(),
-                       element=n.element, layer=n.layer)
+            G.add_node(n.index, features=X[n.index].tolist(), element=n.element, layer=n.layer)
         ei, ea = self.edge_index_and_attr()
         for k in range(ei.shape[1]):
-            G.add_edge(int(ei[0,k]), int(ei[1,k]),
-                       attr=ea[k].tolist())
+            G.add_edge(int(ei[0, k]), int(ei[1, k]), attr=ea[k].tolist())
         return G
 
     # ------------------------------------------------------------------
@@ -496,17 +571,16 @@ class SurfaceTopologyGraph:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _symmetry_score(site_xy: np.ndarray, neighbor_xy: np.ndarray,
-                         radius: float = 3.5) -> float:
+    def _symmetry_score(site_xy: np.ndarray, neighbor_xy: np.ndarray, radius: float = 3.5) -> float:
         """
         Local coordination tensor eigenvalue symmetry score.
         Score ∈ (0, 1], where 1 = perfectly symmetric.
         """
         dists = np.linalg.norm(neighbor_xy - site_xy, axis=1)
-        near  = neighbor_xy[dists < radius] - site_xy
+        near = neighbor_xy[dists < radius] - site_xy
         if len(near) < 2:
             return 0.0
-        T = near.T @ near          # 2×2 coordination tensor
+        T = near.T @ near  # 2×2 coordination tensor
         eigvals = np.linalg.eigvalsh(T)
         eigvals = np.sort(eigvals)[::-1]
         if eigvals[0] < 1e-10:
@@ -519,8 +593,7 @@ class SurfaceTopologyGraph:
         return hashlib.sha256(s.encode()).hexdigest()[:12]
 
     @staticmethod
-    def _deduplicate_sites(sites: List[AdsorptionSite],
-                            tol: float = 0.3) -> List[AdsorptionSite]:
+    def _deduplicate_sites(sites: List[AdsorptionSite], tol: float = 0.3) -> List[AdsorptionSite]:
         kept = []
         for s in sites:
             duplicate = False
@@ -534,13 +607,13 @@ class SurfaceTopologyGraph:
 
     def summary(self) -> str:
         lines = [
-            f"SurfaceTopologyGraph — {len(self.nodes)} atoms, "
-            f"{len(self.edges)} bonds",
+            f"SurfaceTopologyGraph — {len(self.nodes)} atoms, {len(self.edges)} bonds",
             f"  Elements : {sorted(set(n.element for n in self.nodes))}",
-            f"  Layers   : {max(n.layer for n in self.nodes)+1}",
+            f"  Layers   : {max(n.layer for n in self.nodes) + 1}",
         ]
         if self._sites is not None:
             from collections import Counter
+
             counts = Counter(s.site_type for s in self._sites)
             lines.append(f"  Sites    : {dict(counts)}")
         return "\n".join(lines)

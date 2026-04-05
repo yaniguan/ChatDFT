@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # 1. Surface Site Baseline: Distance-Cutoff NN
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class BaselineSiteResult:
@@ -42,7 +42,7 @@ def baseline_distance_cutoff_sites(
     of every pair within cutoff. No Voronoi, no symmetry scoring.
     """
     t0 = time.perf_counter()
-    N = len(positions)
+    len(positions)
     z_coords = positions[:, 2]
     surface_z = np.max(z_coords)
     # Surface atoms: within 1.0 A of top
@@ -53,7 +53,7 @@ def baseline_distance_cutoff_sites(
 
     # Bridge: every pair within cutoff
     for i, idx_i in enumerate(surface_idx):
-        for idx_j in surface_idx[i+1:]:
+        for idx_j in surface_idx[i + 1 :]:
             d = np.linalg.norm(positions[idx_i] - positions[idx_j])
             if d < cutoff:
                 sites["bridge"] += 1
@@ -73,12 +73,14 @@ def baseline_distance_cutoff_sites(
 def voronoi_sites(positions, elements, cell):
     """Run our Voronoi method and return comparable result."""
     from science.representations.surface_graph import SurfaceTopologyGraph
+
     t0 = time.perf_counter()
     stg = SurfaceTopologyGraph(positions, elements, cell)
     stg.build()
     sites = stg.classify_adsorption_sites()
     runtime = (time.perf_counter() - t0) * 1000
     from collections import Counter
+
     counts = Counter(s.site_type for s in sites)
     return BaselineSiteResult(
         n_sites=len(sites),
@@ -91,13 +93,14 @@ def voronoi_sites(positions, elements, cell):
 # 2. Structure Generation Baseline: Uniform Random Rattle
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class RattleComparisonResult:
     method: str
     sigma_mean: float
     sigma_std: float
     preserves_symmetry: bool
-    energy_spread_eV: float   # spread in potential energy of generated configs
+    energy_spread_eV: float  # spread in potential energy of generated configs
 
 
 def baseline_uniform_rattle(
@@ -122,7 +125,8 @@ def einstein_rattle_positions(
     seed: int = 42,
 ) -> list[np.ndarray]:
     """Run our Einstein rattle and return displaced positions."""
-    from science.generation.informed_sampler import EinsteinRattler, AtomsLike
+    from science.generation.informed_sampler import AtomsLike, EinsteinRattler
+
     rattler = EinsteinRattler(omega_THz=5.0, quantum=True, rng_seed=seed)
     atoms = AtomsLike(
         positions=positions,
@@ -176,15 +180,44 @@ def compare_rattle_methods(
 
 # Chemistry keywords for keyword-based scoring
 _CHEM_KEYWORDS = {
-    "adsorption", "desorption", "protonation", "reduction", "oxidation",
-    "intermediate", "barrier", "overpotential", "selectivity", "catalyst",
-    "surface", "electrode", "faradaic", "mechanism", "pathway",
-    "exothermic", "endothermic", "thermodynamic", "kinetic",
+    "adsorption",
+    "desorption",
+    "protonation",
+    "reduction",
+    "oxidation",
+    "intermediate",
+    "barrier",
+    "overpotential",
+    "selectivity",
+    "catalyst",
+    "surface",
+    "electrode",
+    "faradaic",
+    "mechanism",
+    "pathway",
+    "exothermic",
+    "endothermic",
+    "thermodynamic",
+    "kinetic",
 }
 
 _SPECIES_KEYWORDS = {
-    "*", "CO2", "CO", "COOH", "CHO", "CH2O", "OH", "OOH", "O",
-    "H", "H2", "H2O", "N2", "NH3", "NNH", "HCOOH",
+    "*",
+    "CO2",
+    "CO",
+    "COOH",
+    "CHO",
+    "CH2O",
+    "OH",
+    "OOH",
+    "O",
+    "H",
+    "H2",
+    "H2O",
+    "N2",
+    "NH3",
+    "NNH",
+    "HCOOH",
 }
 
 
@@ -216,8 +249,10 @@ def grounder_score(
 ) -> float:
     """Run our cross-modal grounder and return the score."""
     from science.alignment.hypothesis_grounder import (
-        HypothesisGrounder, ReactionNetwork,
+        HypothesisGrounder,
+        ReactionNetwork,
     )
+
     grounder = HypothesisGrounder()
     network = ReactionNetwork.from_dict(network_dict)
     return grounder.score(hypothesis, network, dG_profile)
@@ -226,6 +261,7 @@ def grounder_score(
 # ═══════════════════════════════════════════════════════════════════════
 # 4. SCF Prediction Baseline: Linear Extrapolation
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class SCFPredictionComparison:
@@ -264,8 +300,11 @@ def our_scf_prediction(
 ) -> Tuple[int, bool]:
     """Run our full SCF analysis pipeline."""
     from science.time_series.scf_convergence import (
-        SCFTrajectory, ChargeSloshingDetector, ConvergenceRatePredictor,
+        ChargeSloshingDetector,
+        ConvergenceRatePredictor,
+        SCFTrajectory,
     )
+
     traj = SCFTrajectory(dE=dE, ediff=ediff, nelm=nelm)
     sloshing = ChargeSloshingDetector().detect(traj)
     prediction = ConvergenceRatePredictor().predict(traj)
@@ -275,6 +314,7 @@ def our_scf_prediction(
 # ═══════════════════════════════════════════════════════════════════════
 # 5. Parameter Search Baseline: Grid Search
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class GridSearchResult:
@@ -286,7 +326,7 @@ class GridSearchResult:
 
 
 def baseline_grid_search(
-    energy_fn,    # (encut, kppra) -> energy_eV
+    energy_fn,  # (encut, kppra) -> energy_eV
     encut_values: list[float] = None,
     kppra_values: list[int] = None,
     n_atoms: int = 36,
@@ -296,7 +336,7 @@ def baseline_grid_search(
     Standard grid search: evaluate ALL combinations.
     """
     if encut_values is None:
-        encut_values = list(range(300, 601, 50))   # 7 values
+        encut_values = list(range(300, 601, 50))  # 7 values
     if kppra_values is None:
         kppra_values = list(range(400, 3201, 400))  # 8 values
 
@@ -321,8 +361,7 @@ def baseline_grid_search(
 
     if best is None:
         best_sorted = sorted(results, key=lambda r: abs(r[2] - ref_energy))
-        best = (best_sorted[0][0], best_sorted[0][1],
-                abs(best_sorted[0][2] - ref_energy) / n_atoms)
+        best = (best_sorted[0][0], best_sorted[0][1], abs(best_sorted[0][2] - ref_energy) / n_atoms)
 
     runtime = (time.perf_counter() - t0) * 1000
     return GridSearchResult(
@@ -357,17 +396,16 @@ def bayesian_search(
         opt.observe(encut, kppra, energy)
 
     result = opt.result()
-    runtime = (time.perf_counter() - t0) * 1000
-    return (result.optimal_encut, result.optimal_kppra,
-            result.n_evaluations, result.predicted_error)
+    (time.perf_counter() - t0) * 1000
+    return (result.optimal_encut, result.optimal_kppra, result.n_evaluations, result.predicted_error)
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # Synthetic DFT Energy Landscapes (for reproducible benchmarks)
 # ═══════════════════════════════════════════════════════════════════════
 
-def synthetic_energy_landscape(encut: float, kppra: int,
-                               noise: float = 0.002) -> float:
+
+def synthetic_energy_landscape(encut: float, kppra: int, noise: float = 0.002) -> float:
     """
     Realistic synthetic energy landscape for convergence testing.
     Models the typical behaviour: energy decreases with ENCUT/KPPRA
@@ -377,14 +415,13 @@ def synthetic_energy_landscape(encut: float, kppra: int,
     """
     rng = np.random.default_rng(int(encut * 1000 + kppra))
     E_ref = -142.567  # "converged" energy
-    pulay = 15.0 / (encut ** 1.5)
+    pulay = 15.0 / (encut**1.5)
     kpoint = 2.5 / kppra
     oscillation = 0.003 * np.sin(encut / 50.0)
     return E_ref + pulay + kpoint + oscillation + rng.normal(0, noise)
 
 
-def synthetic_sloshing_trajectory(n: int = 40, period: int = 6,
-                                   decay: float = -0.02) -> list[float]:
+def synthetic_sloshing_trajectory(n: int = 40, period: int = 6, decay: float = -0.02) -> list[float]:
     """Generate a synthetic SCF trajectory with charge sloshing."""
     t = np.arange(n, dtype=float)
     envelope = np.exp(decay * t)  # growing if decay < 0
@@ -403,9 +440,11 @@ def synthetic_healthy_trajectory(n: int = 30, rate: float = 0.3) -> list[float]:
 # Run All Benchmarks
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class BenchmarkSummary:
     """Summary of all benchmark comparisons."""
+
     surface_sites: Dict
     structure_gen: Dict
     hypothesis_scoring: Dict
@@ -462,10 +501,7 @@ class BenchmarkSummary:
         # Parameter search
         ps = self.parameter_search
         lines.append(
-            f"{'Parameter Search':<25s} "
-            f"{'Bayesian Opt.':<20s} "
-            f"{'Grid Search':<20s} "
-            f"{ps.get('improvement', 'N/A'):<15s}"
+            f"{'Parameter Search':<25s} {'Bayesian Opt.':<20s} {'Grid Search':<20s} {ps.get('improvement', 'N/A'):<15s}"
         )
 
         lines.append("=" * 80)

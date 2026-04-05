@@ -1,0 +1,149 @@
+name: Deploy to EKS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  AWS_REGION: us-west-2
+  EKS_CLUSTER: chatdft-eks
+  ECR_SERVER: 364585379072.dkr.ecr.us-west-2.amazonaws.com/chatdft-server
+  ECR_UI: 364585379072.dkr.ecr.us-west-2.amazonaws.com/chatdft-ui
+
+jobs:
+  # Detect which parts changed to avoid unnecessary builds
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            server:
+              - 'server/**'
+              - 'requirements.txt'
+              - 'Dockerfile'
+              - 'alembic/**'
+            ui:
+              - 'client/**'
+              - 'Dockerfile.ui'
+
+  build-server:
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_SERVER }}:${{ github.sha }}
+            ${{ env.ECR_SERVER }}:latest
+
+  build-ui:
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push UI image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ui
+          push: true
+          tags: |
+            ${{ env.ECR_UI }}:${{ github.sha }}
+            ${{ env.ECR_UI }}:latest
+
+  deploy:
+    needs: [changes, build-server, build-ui]
+    if: always() && (needs.build-server.result == 'success' || needs.build-server.result == 'skipped') && (needs.build-ui.result == 'success' || needs.build-ui.result == 'skipped') && (needs.changes.outputs.server == 'true' || needs.changes.outputs.ui == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER
+
+      # Run DB migration if server changed
+      - name: Run DB migration
+        if: needs.changes.outputs.server == 'true'
+        run: |
+          sed "s|ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/chatdft-server|$ECR_SERVER|g" \
+            infra/k8s/jobs/db-migrate.yaml > /tmp/migrate.yaml
+          # Use unique job name to avoid conflicts
+          sed -i "s/name: chatdft-db-migrate/name: chatdft-db-migrate-${GITHUB_SHA::8}/" /tmp/migrate.yaml
+          kubectl apply -f /tmp/migrate.yaml -n chatdft
+          kubectl wait --for=condition=complete job/chatdft-db-migrate-${GITHUB_SHA::8} -n chatdft --timeout=120s
+
+      # Restart deployments that had image changes
+      - name: Deploy server
+        if: needs.changes.outputs.server == 'true'
+        run: kubectl set image deployment/chatdft-server server=$ECR_SERVER:${{ github.sha }} -n chatdft
+
+      - name: Deploy UI
+        if: needs.changes.outputs.ui == 'true'
+        run: kubectl set image deployment/chatdft-ui ui=$ECR_UI:${{ github.sha }} -n chatdft
+
+      - name: Wait for rollout
+        run: |
+          if [ "${{ needs.changes.outputs.server }}" == "true" ]; then
+            kubectl rollout status deployment/chatdft-server -n chatdft --timeout=300s
+          fi
+          if [ "${{ needs.changes.outputs.ui }}" == "true" ]; then
+            kubectl rollout status deployment/chatdft-ui -n chatdft --timeout=180s
+          fi
+
+      - name: Health check
+        run: |
+          ALB=$(kubectl get ingress chatdft-ingress -n chatdft -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$ALB/health" || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed!"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS, retrying in 10s..."
+            sleep 10
+          done
+          echo "Health check failed after 5 attempts"
+          exit 1

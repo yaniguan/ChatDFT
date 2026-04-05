@@ -1,0 +1,16 @@
+# infra/terraform/terraform.tfvars.example
+# Copy to terraform.tfvars and customize
+
+aws_region   = "us-west-2"
+environment  = "dev"
+project_name = "chatdft"
+
+# EKS — adjust for cost/performance
+node_instance_type = "t3.medium"
+node_desired_count = 2
+node_min_count     = 1
+node_max_count     = 3
+
+# RDS — adjust for scale
+db_instance_class    = "db.t3.micro"
+db_allocated_storage = 20

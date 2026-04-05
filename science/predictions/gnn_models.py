@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 
@@ -43,6 +43,7 @@ try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
+
     _HAS_TORCH = True
 except ImportError:
     _HAS_TORCH = False
@@ -51,6 +52,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Utility: graph data container (PyG-compatible but standalone)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class GraphData:
@@ -66,6 +68,7 @@ class GraphData:
     batch : (N,) graph membership for batched graphs
     y : scalar target (e.g. adsorption energy in eV)
     """
+
     x: "torch.Tensor"
     edge_index: "torch.Tensor"
     edge_attr: "torch.Tensor"
@@ -98,14 +101,13 @@ class GraphData:
 
 def _check_torch():
     if not _HAS_TORCH:
-        raise ImportError(
-            "PyTorch is required for GNN models. Install with: pip install torch"
-        )
+        raise ImportError("PyTorch is required for GNN models. Install with: pip install torch")
 
 
 # ---------------------------------------------------------------------------
 # Helper layers
 # ---------------------------------------------------------------------------
+
 
 class _MLP(nn.Module):
     """Simple MLP with optional residual connection."""
@@ -207,6 +209,7 @@ def _scatter_softmax(src: torch.Tensor, index: torch.Tensor, dim_size: int) -> t
 # 0. MLP Baseline (no graph structure)
 # ---------------------------------------------------------------------------
 
+
 class MLPBaseline(nn.Module):
     """
     Simple MLP baseline that ignores graph structure entirely.
@@ -239,6 +242,7 @@ class MLPBaseline(nn.Module):
 # ---------------------------------------------------------------------------
 # 1. MPNN — Message Passing Neural Network (Gilmer et al., 2017)
 # ---------------------------------------------------------------------------
+
 
 class _MPNNLayer(nn.Module):
     """
@@ -280,14 +284,11 @@ class MPNN(nn.Module):
         Number of message passing steps.
     """
 
-    def __init__(self, d_node: int = 6, d_edge: int = 3,
-                 d_hidden: int = 64, n_layers: int = 3):
+    def __init__(self, d_node: int = 6, d_edge: int = 3, d_hidden: int = 64, n_layers: int = 3):
         _check_torch()
         super().__init__()
         self.node_emb = nn.Linear(d_node, d_hidden)
-        self.layers = nn.ModuleList([
-            _MPNNLayer(d_hidden, d_edge, d_hidden) for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList([_MPNNLayer(d_hidden, d_edge, d_hidden) for _ in range(n_layers)])
         self.readout = nn.Sequential(
             nn.Linear(d_hidden, d_hidden),
             nn.SiLU(),
@@ -310,6 +311,7 @@ class MPNN(nn.Module):
 # ---------------------------------------------------------------------------
 # 2. GAT — Graph Attention Network (Velickovic et al., 2018)
 # ---------------------------------------------------------------------------
+
 
 class _GATLayer(nn.Module):
     """
@@ -378,19 +380,13 @@ class GAT(nn.Module):
         Number of GAT layers.
     """
 
-    def __init__(self, d_node: int = 6, d_edge: int = 3,
-                 d_hidden: int = 64, n_heads: int = 4, n_layers: int = 3):
+    def __init__(self, d_node: int = 6, d_edge: int = 3, d_hidden: int = 64, n_heads: int = 4, n_layers: int = 3):
         _check_torch()
         super().__init__()
         self.node_emb = nn.Linear(d_node, d_hidden)
-        self.layers = nn.ModuleList([
-            _GATLayer(d_hidden, d_hidden, d_edge, n_heads)
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList([_GATLayer(d_hidden, d_hidden, d_edge, n_heads) for _ in range(n_layers)])
         self.norms = nn.ModuleList([nn.LayerNorm(d_hidden) for _ in range(n_layers)])
-        self.readout = nn.Sequential(
-            nn.Linear(d_hidden, d_hidden), nn.SiLU(), nn.Linear(d_hidden, 1)
-        )
+        self.readout = nn.Sequential(nn.Linear(d_hidden, d_hidden), nn.SiLU(), nn.Linear(d_hidden, 1))
 
     def forward(self, data: GraphData) -> torch.Tensor:
         h = self.node_emb(data.x)
@@ -409,6 +405,7 @@ class GAT(nn.Module):
 # ---------------------------------------------------------------------------
 # 3. SchNet — Continuous-Filter Convolutional Network (Schutt et al., 2018)
 # ---------------------------------------------------------------------------
+
 
 class _SchNetInteraction(nn.Module):
     """
@@ -467,15 +464,13 @@ class SchNet(nn.Module):
         Distance cutoff in Angstroms.
     """
 
-    def __init__(self, d_node: int = 6, d_hidden: int = 64,
-                 n_interactions: int = 3, n_rbf: int = 20, cutoff: float = 5.0):
+    def __init__(
+        self, d_node: int = 6, d_hidden: int = 64, n_interactions: int = 3, n_rbf: int = 20, cutoff: float = 5.0
+    ):
         _check_torch()
         super().__init__()
         self.node_emb = nn.Linear(d_node, d_hidden)
-        self.interactions = nn.ModuleList([
-            _SchNetInteraction(d_hidden, n_rbf, cutoff)
-            for _ in range(n_interactions)
-        ])
+        self.interactions = nn.ModuleList([_SchNetInteraction(d_hidden, n_rbf, cutoff) for _ in range(n_interactions)])
         self.readout = nn.Sequential(
             nn.Linear(d_hidden, d_hidden),
             nn.SiLU(),
@@ -497,6 +492,7 @@ class SchNet(nn.Module):
 # ---------------------------------------------------------------------------
 # 4. DimeNet — Directional Message Passing (Gasteiger et al., 2020)
 # ---------------------------------------------------------------------------
+
 
 class _SphericalBasis(nn.Module):
     """
@@ -587,9 +583,15 @@ class DimeNet(nn.Module):
         Distance cutoff in Angstroms.
     """
 
-    def __init__(self, d_node: int = 6, d_hidden: int = 64,
-                 n_interactions: int = 3, n_rbf: int = 8,
-                 n_angular: int = 7, cutoff: float = 5.0):
+    def __init__(
+        self,
+        d_node: int = 6,
+        d_hidden: int = 64,
+        n_interactions: int = 3,
+        n_rbf: int = 8,
+        n_angular: int = 7,
+        cutoff: float = 5.0,
+    ):
         _check_torch()
         super().__init__()
         self.cutoff = cutoff
@@ -607,16 +609,11 @@ class DimeNet(nn.Module):
             nn.Linear(d_hidden, d_hidden),
         )
 
-        self.interactions = nn.ModuleList([
-            _DimeNetInteraction(d_hidden, n_rbf, d_sbf)
-            for _ in range(n_interactions)
-        ])
+        self.interactions = nn.ModuleList([_DimeNetInteraction(d_hidden, n_rbf, d_sbf) for _ in range(n_interactions)])
 
         # Output: aggregate edge messages to nodes, then pool
         self.node_proj = nn.Linear(d_hidden, d_hidden)
-        self.readout = nn.Sequential(
-            nn.Linear(d_hidden, d_hidden), nn.SiLU(), nn.Linear(d_hidden, 1)
-        )
+        self.readout = nn.Sequential(nn.Linear(d_hidden, d_hidden), nn.SiLU(), nn.Linear(d_hidden, 1))
 
     def _build_triplets(self, edge_index, pos):
         """
@@ -638,7 +635,7 @@ class DimeNet(nn.Module):
         triplet_j = []
 
         # Group edges by destination node
-        max_node = max(src.max(), dst.max()) + 1
+        max(src.max(), dst.max()) + 1
         for e_ji in range(E):
             j = src[e_ji].item()
             i = dst[e_ji].item()
@@ -659,7 +656,8 @@ class DimeNet(nn.Module):
 
         triplet_idx = torch.tensor(
             list(zip(triplet_e_kj, triplet_e_ji, triplet_j)),
-            dtype=torch.long, device=pos.device,
+            dtype=torch.long,
+            device=pos.device,
         )
 
         # Compute angles
@@ -697,8 +695,7 @@ class DimeNet(nn.Module):
         if triplet_idx.shape[0] > 0:
             sbf = self.sbasis(dist_kj, angles)
         else:
-            sbf = torch.zeros(0, self.interactions[0].sbf_proj.in_features,
-                              device=data.x.device)
+            sbf = torch.zeros(0, self.interactions[0].sbf_proj.in_features, device=data.x.device)
 
         # Interaction blocks
         for interaction in self.interactions:
@@ -721,6 +718,7 @@ class DimeNet(nn.Module):
 # 5. SE(3)-Transformer — Equivariant Attention (Fuchs et al., 2020)
 # ---------------------------------------------------------------------------
 
+
 class _SE3AttentionLayer(nn.Module):
     """
     SE(3)-equivariant attention layer.
@@ -735,8 +733,7 @@ class _SE3AttentionLayer(nn.Module):
     ensuring SE(3) equivariance.
     """
 
-    def __init__(self, d_scalar: int, d_vector: int, n_heads: int = 4, n_rbf: int = 16,
-                 cutoff: float = 5.0):
+    def __init__(self, d_scalar: int, d_vector: int, n_heads: int = 4, n_rbf: int = 16, cutoff: float = 5.0):
         super().__init__()
         self.n_heads = n_heads
         self.d_scalar = d_scalar
@@ -855,18 +852,22 @@ class SE3Transformer(nn.Module):
         Distance cutoff for attention.
     """
 
-    def __init__(self, d_node: int = 6, d_scalar: int = 64, d_vector: int = 16,
-                 n_heads: int = 4, n_layers: int = 3, cutoff: float = 5.0):
+    def __init__(
+        self,
+        d_node: int = 6,
+        d_scalar: int = 64,
+        d_vector: int = 16,
+        n_heads: int = 4,
+        n_layers: int = 3,
+        cutoff: float = 5.0,
+    ):
         _check_torch()
         super().__init__()
         self.node_emb = nn.Linear(d_node, d_scalar)
-        self.layers = nn.ModuleList([
-            _SE3AttentionLayer(d_scalar, d_vector, n_heads, cutoff=cutoff)
-            for _ in range(n_layers)
-        ])
-        self.readout = nn.Sequential(
-            nn.Linear(d_scalar, d_scalar), nn.SiLU(), nn.Linear(d_scalar, 1)
+        self.layers = nn.ModuleList(
+            [_SE3AttentionLayer(d_scalar, d_vector, n_heads, cutoff=cutoff) for _ in range(n_layers)]
         )
+        self.readout = nn.Sequential(nn.Linear(d_scalar, d_scalar), nn.SiLU(), nn.Linear(d_scalar, 1))
         self.d_vector = d_vector
 
     def forward(self, data: GraphData) -> torch.Tensor:

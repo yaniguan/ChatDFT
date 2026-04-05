@@ -45,9 +45,8 @@ Key references
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -61,14 +60,32 @@ logger = get_logger(__name__)
 # Common intermediates by reaction type, from literature
 _INTERMEDIATE_CANDIDATES: Dict[str, List[str]] = {
     "co2rr": [
-        "COOH*", "CO*", "CHO*", "COH*", "CH2O*", "CHOH*", "CH3O*",
-        "OCH3*", "OCHO*", "C*", "CH*", "CH2*", "CH3*",
+        "COOH*",
+        "CO*",
+        "CHO*",
+        "COH*",
+        "CH2O*",
+        "CHOH*",
+        "CH3O*",
+        "OCH3*",
+        "OCHO*",
+        "C*",
+        "CH*",
+        "CH2*",
+        "CH3*",
     ],
     "her": ["H*"],
     "oer": ["OH*", "O*", "OOH*", "O2*"],
     "nrr": [
-        "N2*", "NNH*", "NNH2*", "NHNH*", "NHNH2*", "NH2NH2*",
-        "N*", "NH*", "NH2*",
+        "N2*",
+        "NNH*",
+        "NNH2*",
+        "NHNH*",
+        "NHNH2*",
+        "NH2NH2*",
+        "N*",
+        "NH*",
+        "NH2*",
     ],
     "orr": ["OOH*", "O*", "OH*", "O2*", "HOOH*"],
 }
@@ -77,39 +94,42 @@ _INTERMEDIATE_CANDIDATES: Dict[str, List[str]] = {
 @dataclass
 class IntermediateUncertainty:
     """Uncertainty analysis for a single intermediate."""
+
     species: str
-    energy_mean: float       # eV
-    energy_std: float        # eV (epistemic uncertainty)
-    dG_contribution: float   # eV (ΔG at this step)
-    sensitivity: float       # |∂η/∂ΔG_i| — how much overpotential changes
-    importance: float        # σ_i × sensitivity — mechanistic importance
-    is_rds: bool             # is this the rate-determining step?
+    energy_mean: float  # eV
+    energy_std: float  # eV (epistemic uncertainty)
+    dG_contribution: float  # eV (ΔG at this step)
+    sensitivity: float  # |∂η/∂ΔG_i| — how much overpotential changes
+    importance: float  # σ_i × sensitivity — mechanistic importance
+    is_rds: bool  # is this the rate-determining step?
 
 
 @dataclass
 class MechanismProposal:
     """A proposed alternative mechanism to investigate."""
+
     id: str
     description: str
-    modified_step: int                    # which step was changed
+    modified_step: int  # which step was changed
     original_intermediate: str
     proposed_intermediate: str
-    expected_information_gain: float      # bits
-    estimated_dG_change: float            # eV
-    confidence: float                     # 0-1
+    expected_information_gain: float  # bits
+    estimated_dG_change: float  # eV
+    confidence: float  # 0-1
     rationale: str
 
 
 @dataclass
 class MechanismAnalysis:
     """Complete uncertainty-guided mechanism analysis."""
+
     intermediates: List[IntermediateUncertainty]
     rds_step: int
-    overpotential: float                  # V
-    overpotential_uncertainty: float      # V (propagated from energy uncertainties)
+    overpotential: float  # V
+    overpotential_uncertainty: float  # V (propagated from energy uncertainties)
     proposals: List[MechanismProposal]
-    total_information_gain: float         # bits
-    recommended_next_dft: Optional[str]   # which DFT to run next
+    total_information_gain: float  # bits
+    recommended_next_dft: Optional[str]  # which DFT to run next
 
 
 class MechanismProposer:
@@ -214,31 +234,28 @@ class MechanismProposer:
         intermediate_analysis = []
         for i in range(n_steps):
             species = intermediates[i] if i < len(intermediates) else f"step_{i}"
-            intermediate_analysis.append(IntermediateUncertainty(
-                species=species,
-                energy_mean=float(dG[i]),
-                energy_std=float(sigma[i]),
-                dG_contribution=float(dG[i] - (dG[i - 1] if i > 0 else 0)),
-                sensitivity=float(sensitivities[i]),
-                importance=float(importance[i]),
-                is_rds=(i == rds_step + 1 if i > 0 else False),
-            ))
+            intermediate_analysis.append(
+                IntermediateUncertainty(
+                    species=species,
+                    energy_mean=float(dG[i]),
+                    energy_std=float(sigma[i]),
+                    dG_contribution=float(dG[i] - (dG[i - 1] if i > 0 else 0)),
+                    sensitivity=float(sensitivities[i]),
+                    importance=float(importance[i]),
+                    is_rds=(i == rds_step + 1 if i > 0 else False),
+                )
+            )
 
         # ── Step 4: Overpotential uncertainty propagation ──
         # η depends on the RDS step's ΔG, so propagate uncertainty
         if n_steps >= 2:
             # σ_η² = σ_{rds+1}² + σ_{rds}²
-            eta_unc = float(np.sqrt(
-                sigma[min(rds_step + 1, n_steps - 1)] ** 2 +
-                sigma[rds_step] ** 2
-            ))
+            eta_unc = float(np.sqrt(sigma[min(rds_step + 1, n_steps - 1)] ** 2 + sigma[rds_step] ** 2))
         else:
             eta_unc = 0.0
 
         # ── Step 5: Generate mechanism proposals ──
-        proposals = self._generate_proposals(
-            intermediates, dG, sigma, importance, rds_step
-        )
+        proposals = self._generate_proposals(intermediates, dG, sigma, importance, rds_step)
 
         # ── Step 6: Recommend next DFT ──
         if proposals:
@@ -272,7 +289,7 @@ class MechanismProposer:
     ) -> List[MechanismProposal]:
         """Generate ranked mechanism proposals at high-importance steps."""
         proposals = []
-        n = len(dG)
+        len(dG)
 
         # Sort steps by importance (highest first)
         step_order = np.argsort(-importance)
@@ -288,10 +305,7 @@ class MechanismProposer:
             current_species = intermediates[step_idx]
 
             # Find alternative intermediates not in current pathway
-            alternatives = [
-                c for c in self._candidates
-                if c not in intermediates and c != current_species
-            ]
+            alternatives = [c for c in self._candidates if c not in intermediates and c != current_species]
 
             if not alternatives:
                 continue
@@ -325,10 +339,11 @@ class MechanismProposer:
 
         # Sort by expected information gain
         proposals.sort(key=lambda p: -p.expected_information_gain)
-        return proposals[:self.n_proposals]
+        return proposals[: self.n_proposals]
 
     def _estimate_dG_difference(self, species_a: str, species_b: str) -> float:
         """Heuristic estimate of ΔG difference between two intermediates."""
+
         # Based on number of H atoms (proxy for proton-electron transfers)
         def count_H(s: str) -> int:
             s = s.replace("*", "").upper()
@@ -338,8 +353,7 @@ class MechanismProposer:
         # Each H roughly corresponds to ~0.3-0.5 eV in binding energy difference
         return dH * 0.4
 
-    def _rationale(self, original: str, proposed: str,
-                   step: int, rds_step: int) -> str:
+    def _rationale(self, original: str, proposed: str, step: int, rds_step: int) -> str:
         """Generate scientific rationale for the proposal."""
         is_near_rds = abs(step - rds_step - 1) <= 1
         if is_near_rds:
@@ -373,8 +387,6 @@ def demo_mechanism_proposal() -> MechanismAnalysis:
     # High uncertainty on CHO* (step 3) — debated intermediate
     uncertainties = [0.0, 0.05, 0.08, 0.25, 0.12, 0.03]
 
-    analysis = proposer.analyse(
-        intermediates, dG_profile, uncertainties, U_applied=0.0
-    )
+    analysis = proposer.analyse(intermediates, dG_profile, uncertainties, U_applied=0.0)
 
     return analysis

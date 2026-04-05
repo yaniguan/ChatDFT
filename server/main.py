@@ -1,4 +1,5 @@
 # server/main.py
+import os
 from dotenv import load_dotenv
 load_dotenv()   # loads .env before any other import reads os.environ
 

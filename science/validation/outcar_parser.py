@@ -26,16 +26,12 @@ import csv
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-
-import numpy as np
+from typing import Dict, List, Optional
 
 from science.core.logging import get_logger
 from science.time_series.scf_convergence import (
     ChargeSloshingDetector,
-    ConvergenceRatePredictor,
     SCFTrajectory,
-    analyse_scf,
 )
 
 logger = get_logger(__name__)
@@ -43,18 +39,10 @@ logger = get_logger(__name__)
 # OUTCAR regex patterns
 _RE_NELM = re.compile(r"NELM\s*=\s*(\d+)")
 _RE_EDIFF = re.compile(r"EDIFF\s*=\s*([\d.Ee+-]+)")
-_RE_ENERGY = re.compile(
-    r"free  energy\s+TOTEN\s*=\s*([\d.Ee+-]+)\s+eV"
-)
-_RE_DE = re.compile(
-    r"total energy-loss\s*=\s*([\d.Ee+-]+)"
-)
-_RE_DAV = re.compile(
-    r"DAV:\s+(\d+)\s+([\d.Ee+-]+)\s+([\d.Ee+-]+)\s+([\d.Ee+-]+)"
-)
-_RE_RMM = re.compile(
-    r"RMM:\s+(\d+)\s+([\d.Ee+-]+)\s+([\d.Ee+-]+)\s+([\d.Ee+-]+)"
-)
+_RE_ENERGY = re.compile(r"free  energy\s+TOTEN\s*=\s*([\d.Ee+-]+)\s+eV")
+_RE_DE = re.compile(r"total energy-loss\s*=\s*([\d.Ee+-]+)")
+_RE_DAV = re.compile(r"DAV:\s+(\d+)\s+([\d.Ee+-]+)\s+([\d.Ee+-]+)\s+([\d.Ee+-]+)")
+_RE_RMM = re.compile(r"RMM:\s+(\d+)\s+([\d.Ee+-]+)\s+([\d.Ee+-]+)\s+([\d.Ee+-]+)")
 _RE_IONIC_STEP = re.compile(r"---+\s*Iteration\s+(\d+)\(")
 _RE_ALGO = re.compile(r"IALGO\s*=\s*(\d+)")
 _RE_ISPIN = re.compile(r"ISPIN\s*=\s*(\d+)")
@@ -64,9 +52,10 @@ _RE_ISMEAR = re.compile(r"ISMEAR\s*=\s*([-\d]+)")
 @dataclass
 class OUTCARMetadata:
     """Metadata extracted from OUTCAR header."""
+
     nelm: int = 60
     ediff: float = 1e-4
-    ialgo: int = 38       # 38=Normal, 48=VeryFast, 68=Fast
+    ialgo: int = 38  # 38=Normal, 48=VeryFast, 68=Fast
     ispin: int = 1
     ismear: int = 1
     n_atoms: int = 0
@@ -77,6 +66,7 @@ class OUTCARMetadata:
 @dataclass
 class ParsedOUTCAR:
     """Parsed OUTCAR with SCF trajectories and metadata."""
+
     filepath: str
     metadata: OUTCARMetadata
     ionic_steps: List[SCFTrajectory]
@@ -138,10 +128,14 @@ def parse_outcar(filepath: str) -> ParsedOUTCAR:
         # New ionic step marker
         if _RE_IONIC_STEP.search(line):
             if current_dE:
-                ionic_steps.append(SCFTrajectory(
-                    dE=current_dE, rms_dV=current_rms or None,
-                    nelm=meta.nelm, ediff=meta.ediff,
-                ))
+                ionic_steps.append(
+                    SCFTrajectory(
+                        dE=current_dE,
+                        rms_dV=current_rms or None,
+                        nelm=meta.nelm,
+                        ediff=meta.ediff,
+                    )
+                )
             current_dE = []
             current_rms = []
 
@@ -160,17 +154,22 @@ def parse_outcar(filepath: str) -> ParsedOUTCAR:
 
     # Final ionic step
     if current_dE:
-        ionic_steps.append(SCFTrajectory(
-            dE=current_dE, rms_dV=current_rms or None,
-            nelm=meta.nelm, ediff=meta.ediff,
-        ))
+        ionic_steps.append(
+            SCFTrajectory(
+                dE=current_dE,
+                rms_dV=current_rms or None,
+                nelm=meta.nelm,
+                ediff=meta.ediff,
+            )
+        )
 
     total_scf = sum(len(t.dE) for t in ionic_steps)
     converged = ionic_steps[-1].is_converged() if ionic_steps else False
 
-    logger.info(f"Parsed OUTCAR",
-                extra={"file": str(path.name), "ionic_steps": len(ionic_steps),
-                       "total_scf": total_scf, "converged": converged})
+    logger.info(
+        "Parsed OUTCAR",
+        extra={"file": str(path.name), "ionic_steps": len(ionic_steps), "total_scf": total_scf, "converged": converged},
+    )
 
     return ParsedOUTCAR(
         filepath=filepath,
@@ -184,6 +183,7 @@ def parse_outcar(filepath: str) -> ParsedOUTCAR:
 @dataclass
 class DetectorValidationResult:
     """Result of validating sloshing detector on labeled OUTCAR dataset."""
+
     n_files: int
     n_labeled_sloshing: int
     n_labeled_healthy: int
@@ -217,8 +217,7 @@ class OUTCARDataset:
     >>> print(f"F1: {result.f1:.3f}, Accuracy: {result.accuracy:.3f}")
     """
 
-    def __init__(self, parsed_files: List[ParsedOUTCAR],
-                 labels: Dict[str, bool]):
+    def __init__(self, parsed_files: List[ParsedOUTCAR], labels: Dict[str, bool]):
         self.files = parsed_files
         self.labels = labels
 
@@ -294,14 +293,16 @@ class OUTCARDataset:
             else:
                 tn += 1
 
-            per_file.append({
-                "filename": fname,
-                "true_sloshing": true_label,
-                "pred_sloshing": pred,
-                "correct": pred == true_label,
-                "n_ionic_steps": parsed.n_ionic_steps,
-                "total_scf": parsed.total_scf_steps,
-            })
+            per_file.append(
+                {
+                    "filename": fname,
+                    "true_sloshing": true_label,
+                    "pred_sloshing": pred,
+                    "correct": pred == true_label,
+                    "n_ionic_steps": parsed.n_ionic_steps,
+                    "total_scf": parsed.total_scf_steps,
+                }
+            )
 
         n = tp + fp + tn + fn
         accuracy = (tp + tn) / max(n, 1)

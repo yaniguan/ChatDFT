@@ -45,21 +45,23 @@ On 60 deliberately broken VASP inputs (20 SCF issues, 20 consistency errors,
   - Auto-fixes 43/60 (72%) without user intervention
   - Reduces wasted HPC hours by an estimated 85% vs no error checking
 """
+
 from __future__ import annotations
 
 import math
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
-
+from typing import Any, Dict, List, Optional, Tuple
 
 # ═══════════════════════════════════════════════════════════════════════
 # 1. Physics-Based SCF Remediation
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class SCFDiagnosis(Enum):
     """Diagnosis of SCF convergence failure based on trajectory analysis."""
+
     CHARGE_SLOSHING = "charge_sloshing"
     SLOW_MONOTONIC = "slow_monotonic"
     OSCILLATING_NONCONVERGENT = "oscillating_nonconvergent"
@@ -72,6 +74,7 @@ class SCFDiagnosis(Enum):
 @dataclass
 class SCFTrajectoryAnalysis:
     """Analysis of an SCF convergence trajectory."""
+
     diagnosis: SCFDiagnosis
     n_steps: int
     final_ediff: float
@@ -158,7 +161,7 @@ def analyze_scf_trajectory(
     windowed = detrended * window
     # One-sided FFT
     fft_vals = np.abs(np.fft.rfft(windowed))
-    total_power = np.sum(fft_vals ** 2)
+    total_power = np.sum(fft_vals**2)
     # DC component is index 0; AC is everything else
     ac_power = np.sum(fft_vals[1:] ** 2)
     sloshing_ratio = ac_power / max(total_power, 1e-10)
@@ -197,7 +200,7 @@ def analyze_scf_trajectory(
             fix = {"AMIX": current_amix * 0.3, "BMIX": 0.001, "AMIX_MAG": 0.05, "BMIX_MAG": 0.001}
             explanation = (
                 f"Persistent charge sloshing (AC/total={sloshing_ratio:.2f}). "
-                f"Reducing AMIX from {current_amix} to {current_amix*0.3:.3f}."
+                f"Reducing AMIX from {current_amix} to {current_amix * 0.3:.3f}."
             )
         else:
             fix = {"ALGO": "Damped", "TIME": 0.5, "AMIX": 0.02, "BMIX": 3.0}
@@ -224,9 +227,12 @@ def analyze_scf_trajectory(
     elif sloshing_ratio > 0.2 and convergence_rate < 0:
         diagnosis = SCFDiagnosis.OSCILLATING_NONCONVERGENT
         fix = {
-            "ALGO": "Normal", "IALGO": 38,
-            "AMIX": 0.01, "BMIX": 0.0001,
-            "AMIX_MAG": 0.01, "BMIX_MAG": 0.0001,
+            "ALGO": "Normal",
+            "IALGO": 38,
+            "AMIX": 0.01,
+            "BMIX": 0.0001,
+            "AMIX_MAG": 0.01,
+            "BMIX_MAG": 0.0001,
             "NELM": 800,
         }
         explanation = (
@@ -238,23 +244,23 @@ def analyze_scf_trajectory(
         diagnosis = SCFDiagnosis.INITIAL_DIVERGENCE
         fix = {"ISTART": 0, "ICHARG": 2, "ALGO": "All", "NELM": 300}
         explanation = (
-            "Initial divergence — possible bad WAVECAR or CHGCAR. "
-            "Restarting from scratch (ISTART=0, ICHARG=2)."
+            "Initial divergence — possible bad WAVECAR or CHGCAR. Restarting from scratch (ISTART=0, ICHARG=2)."
         )
 
     elif final_ediff < target_ediff * 10:
         diagnosis = SCFDiagnosis.NEAR_CONVERGENCE
         fix = {"NELM": max(int(incar.get("NELM", 200)), 300)}
         explanation = (
-            f"Almost converged (final ΔE={final_ediff:.2e} vs target {target_ediff:.2e}). "
-            f"Just needs more steps."
+            f"Almost converged (final ΔE={final_ediff:.2e} vs target {target_ediff:.2e}). Just needs more steps."
         )
 
     elif incar.get("ISPIN") == 2 and sign_change_rate > 0.4:
         diagnosis = SCFDiagnosis.MAGNETIC_INSTABILITY
         fix = {
-            "AMIX_MAG": 0.05, "BMIX_MAG": 0.0001,
-            "ALGO": "All", "NELM": 400,
+            "AMIX_MAG": 0.05,
+            "BMIX_MAG": 0.0001,
+            "ALGO": "All",
+            "NELM": 400,
         }
         explanation = (
             f"Magnetic instability (sign_change={sign_change_rate:.2f} with ISPIN=2). "
@@ -284,9 +290,11 @@ def analyze_scf_trajectory(
 # 2. Cross-File Consistency Validator
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ConsistencyIssue:
     """A detected consistency issue in VASP input files."""
+
     severity: str  # "error" (will crash) | "warning" (may produce wrong results) | "info"
     category: str
     message: str
@@ -296,37 +304,95 @@ class ConsistencyIssue:
 
 # Magnetic elements with their default initial magnetic moments
 MAGNETIC_ELEMENTS = {
-    "Fe": 5.0, "Co": 3.0, "Ni": 2.0, "Mn": 5.0, "Cr": 3.0,
-    "V": 2.0, "Ti": 1.0, "Gd": 7.0, "Eu": 7.0,
+    "Fe": 5.0,
+    "Co": 3.0,
+    "Ni": 2.0,
+    "Mn": 5.0,
+    "Cr": 3.0,
+    "V": 2.0,
+    "Ti": 1.0,
+    "Gd": 7.0,
+    "Eu": 7.0,
 }
 
 # Typical POTCAR ENMAX values (eV)
 POTCAR_ENMAX = {
-    "H": 250, "He": 258, "Li": 141, "Be": 309, "B": 319,
-    "C": 400, "N": 400, "O": 400, "F": 400, "Ne": 344,
-    "Na": 102, "Mg": 200, "Al": 240, "Si": 245, "P": 255,
-    "S": 259, "Cl": 262, "Ar": 266, "K": 117, "Ca": 267,
-    "Sc": 155, "Ti": 178, "V": 193, "Cr": 227, "Mn": 270,
-    "Fe": 268, "Co": 270, "Ni": 270, "Cu": 295, "Zn": 277,
-    "Ga": 135, "Ge": 174, "As": 209, "Se": 212, "Br": 216,
-    "Rb": 109, "Sr": 230, "Y": 160, "Zr": 155, "Nb": 209,
-    "Mo": 225, "Ru": 213, "Rh": 229, "Pd": 251, "Ag": 250,
-    "In": 96, "Sn": 103, "Sb": 172, "Te": 175, "I": 176,
-    "Cs": 90, "Ba": 187, "La": 219, "Pt": 230, "Au": 230,
-    "Ir": 211, "Os": 228, "Re": 226, "W": 224, "Ta": 224,
+    "H": 250,
+    "He": 258,
+    "Li": 141,
+    "Be": 309,
+    "B": 319,
+    "C": 400,
+    "N": 400,
+    "O": 400,
+    "F": 400,
+    "Ne": 344,
+    "Na": 102,
+    "Mg": 200,
+    "Al": 240,
+    "Si": 245,
+    "P": 255,
+    "S": 259,
+    "Cl": 262,
+    "Ar": 266,
+    "K": 117,
+    "Ca": 267,
+    "Sc": 155,
+    "Ti": 178,
+    "V": 193,
+    "Cr": 227,
+    "Mn": 270,
+    "Fe": 268,
+    "Co": 270,
+    "Ni": 270,
+    "Cu": 295,
+    "Zn": 277,
+    "Ga": 135,
+    "Ge": 174,
+    "As": 209,
+    "Se": 212,
+    "Br": 216,
+    "Rb": 109,
+    "Sr": 230,
+    "Y": 160,
+    "Zr": 155,
+    "Nb": 209,
+    "Mo": 225,
+    "Ru": 213,
+    "Rh": 229,
+    "Pd": 251,
+    "Ag": 250,
+    "In": 96,
+    "Sn": 103,
+    "Sb": 172,
+    "Te": 175,
+    "I": 176,
+    "Cs": 90,
+    "Ba": 187,
+    "La": 219,
+    "Pt": 230,
+    "Au": 230,
+    "Ir": 211,
+    "Os": 228,
+    "Re": 226,
+    "W": 224,
+    "Ta": 224,
 }
 
 # Two-step workflow dependencies
 WORKFLOW_DEPS = {
-    "dos":           {"requires": ["CHGCAR"], "prereq_params": {"LCHARG": True, "LWAVE": True}},
-    "pdos":          {"requires": ["CHGCAR"], "prereq_params": {"LCHARG": True, "LWAVE": True}},
-    "band":          {"requires": ["CHGCAR"], "prereq_params": {"LCHARG": True, "LWAVE": True}},
-    "elf":           {"requires": ["WAVECAR"], "prereq_params": {"LWAVE": True}, "own_params": {"NCORE": 1}},
-    "cohp":          {"requires": ["WAVECAR"], "prereq_params": {"LWAVE": True}, "own_params": {"ISYM": -1}},
+    "dos": {"requires": ["CHGCAR"], "prereq_params": {"LCHARG": True, "LWAVE": True}},
+    "pdos": {"requires": ["CHGCAR"], "prereq_params": {"LCHARG": True, "LWAVE": True}},
+    "band": {"requires": ["CHGCAR"], "prereq_params": {"LCHARG": True, "LWAVE": True}},
+    "elf": {"requires": ["WAVECAR"], "prereq_params": {"LWAVE": True}, "own_params": {"NCORE": 1}},
+    "cohp": {"requires": ["WAVECAR"], "prereq_params": {"LWAVE": True}, "own_params": {"ISYM": -1}},
     "work_function": {"requires": [], "own_params": {"LVHAR": True, "LDIPOL": True, "IDIPOL": 3}},
-    "bader":         {"requires": ["CHGCAR"], "prereq_params": {"LCHARG": True},
-                      "own_params": {"LAECHG": True, "PREC": "Accurate", "LREAL": False}},
-    "cdd":           {"requires": ["CHGCAR"], "prereq_params": {"LCHARG": True}},
+    "bader": {
+        "requires": ["CHGCAR"],
+        "prereq_params": {"LCHARG": True},
+        "own_params": {"LAECHG": True, "PREC": "Accurate", "LREAL": False},
+    },
+    "cdd": {"requires": ["CHGCAR"], "prereq_params": {"LCHARG": True}},
 }
 
 
@@ -381,26 +447,30 @@ def validate_consistency(
                 else:
                     count += 1
             if count != n_atoms:
-                issues.append(ConsistencyIssue(
-                    severity="error",
-                    category="MAGMOM",
-                    message=f"MAGMOM has {count} values but POSCAR has {n_atoms} atoms",
-                    fix=None,  # Can't auto-fix without knowing atom types
-                    auto_fixable=False,
-                ))
+                issues.append(
+                    ConsistencyIssue(
+                        severity="error",
+                        category="MAGMOM",
+                        message=f"MAGMOM has {count} values but POSCAR has {n_atoms} atoms",
+                        fix=None,  # Can't auto-fix without knowing atom types
+                        auto_fixable=False,
+                    )
+                )
 
     # ── 2. ISPIN for magnetic elements ───────────────────────────────
     has_magnetic = any(e in MAGNETIC_ELEMENTS for e in unique_elements)
     ispin = incar.get("ISPIN", 1)
     if has_magnetic and ispin == 1:
         mag_present = [e for e in unique_elements if e in MAGNETIC_ELEMENTS]
-        issues.append(ConsistencyIssue(
-            severity="warning",
-            category="ISPIN",
-            message=f"Magnetic elements {mag_present} present but ISPIN=1. Should be ISPIN=2.",
-            fix={"ISPIN": 2},
-            auto_fixable=True,
-        ))
+        issues.append(
+            ConsistencyIssue(
+                severity="warning",
+                category="ISPIN",
+                message=f"Magnetic elements {mag_present} present but ISPIN=1. Should be ISPIN=2.",
+                fix={"ISPIN": 2},
+                auto_fixable=True,
+            )
+        )
 
     # ── 3. ENCUT vs POTCAR ENMAX ─────────────────────────────────────
     encut = incar.get("ENCUT", 400)
@@ -408,27 +478,30 @@ def validate_consistency(
     recommended_encut = max_enmax * 1.3
 
     if encut < max_enmax:
-        issues.append(ConsistencyIssue(
-            severity="error",
-            category="ENCUT",
-            message=(
-                f"ENCUT={encut} eV is below max POTCAR ENMAX={max_enmax} eV "
-                f"(elements: {unique_elements}). Minimum recommended: {recommended_encut:.0f} eV."
-            ),
-            fix={"ENCUT": int(math.ceil(recommended_encut / 10) * 10)},
-            auto_fixable=True,
-        ))
+        issues.append(
+            ConsistencyIssue(
+                severity="error",
+                category="ENCUT",
+                message=(
+                    f"ENCUT={encut} eV is below max POTCAR ENMAX={max_enmax} eV "
+                    f"(elements: {unique_elements}). Minimum recommended: {recommended_encut:.0f} eV."
+                ),
+                fix={"ENCUT": int(math.ceil(recommended_encut / 10) * 10)},
+                auto_fixable=True,
+            )
+        )
     elif encut < recommended_encut:
-        issues.append(ConsistencyIssue(
-            severity="warning",
-            category="ENCUT",
-            message=(
-                f"ENCUT={encut} eV is below 1.3×ENMAX={recommended_encut:.0f} eV. "
-                f"May not be fully converged."
-            ),
-            fix={"ENCUT": int(math.ceil(recommended_encut / 10) * 10)},
-            auto_fixable=True,
-        ))
+        issues.append(
+            ConsistencyIssue(
+                severity="warning",
+                category="ENCUT",
+                message=(
+                    f"ENCUT={encut} eV is below 1.3×ENMAX={recommended_encut:.0f} eV. May not be fully converged."
+                ),
+                fix={"ENCUT": int(math.ceil(recommended_encut / 10) * 10)},
+                auto_fixable=True,
+            )
+        )
 
     # ── 4. DFT+U array lengths ──────────────────────────────────────
     if incar.get("LDAU"):
@@ -443,28 +516,32 @@ def validate_consistency(
                 else:
                     continue
                 if len(parts) != n_types:
-                    issues.append(ConsistencyIssue(
-                        severity="error",
-                        category="DFT+U",
-                        message=f"{key} has {len(parts)} values but {n_types} atom types ({unique_elements})",
-                        auto_fixable=False,
-                    ))
+                    issues.append(
+                        ConsistencyIssue(
+                            severity="error",
+                            category="DFT+U",
+                            message=f"{key} has {len(parts)} values but {n_types} atom types ({unique_elements})",
+                            auto_fixable=False,
+                        )
+                    )
 
     # ── 5. KPOINTS density ──────────────────────────────────────────
     if kpoints and cell_volume_A3:
-        kp_match = re.search(r'(\d+)\s+(\d+)\s+(\d+)', kpoints)
+        kp_match = re.search(r"(\d+)\s+(\d+)\s+(\d+)", kpoints)
         if kp_match:
             k1, k2, k3 = int(kp_match.group(1)), int(kp_match.group(2)), int(kp_match.group(3))
             kppra = k1 * k2 * k3 * n_atoms
             # Rule of thumb: KPPRA > 1000 for metals, > 500 for semiconductors
             if kppra < 500:
-                issues.append(ConsistencyIssue(
-                    severity="warning",
-                    category="KPOINTS",
-                    message=f"KPPRA={kppra} is very low (k-mesh {k1}×{k2}×{k3}, {n_atoms} atoms). "
-                            f"Recommended KPPRA > 1000 for metals.",
-                    auto_fixable=False,
-                ))
+                issues.append(
+                    ConsistencyIssue(
+                        severity="warning",
+                        category="KPOINTS",
+                        message=f"KPPRA={kppra} is very low (k-mesh {k1}×{k2}×{k3}, {n_atoms} atoms). "
+                        f"Recommended KPPRA > 1000 for metals.",
+                        auto_fixable=False,
+                    )
+                )
 
     # ── 6. Workflow prerequisites ────────────────────────────────────
     calc_key = calc_type.lower().strip()
@@ -474,60 +551,70 @@ def validate_consistency(
         for param, required_val in deps.get("own_params", {}).items():
             actual = incar.get(param)
             if actual is None or actual != required_val:
-                issues.append(ConsistencyIssue(
-                    severity="error",
-                    category="workflow",
-                    message=f"{calc_key} requires {param}={required_val}, but got {param}={actual}",
-                    fix={param: required_val},
-                    auto_fixable=True,
-                ))
+                issues.append(
+                    ConsistencyIssue(
+                        severity="error",
+                        category="workflow",
+                        message=f"{calc_key} requires {param}={required_val}, but got {param}={actual}",
+                        fix={param: required_val},
+                        auto_fixable=True,
+                    )
+                )
 
     # ── 7. ELF-specific: NCORE must be 1 ────────────────────────────
     if incar.get("LELF") and incar.get("NCORE", 1) != 1:
-        issues.append(ConsistencyIssue(
-            severity="error",
-            category="ELF",
-            message=f"LELF=True requires NCORE=1 (got NCORE={incar.get('NCORE')}). VASP will abort.",
-            fix={"NCORE": 1},
-            auto_fixable=True,
-        ))
+        issues.append(
+            ConsistencyIssue(
+                severity="error",
+                category="ELF",
+                message=f"LELF=True requires NCORE=1 (got NCORE={incar.get('NCORE')}). VASP will abort.",
+                fix={"NCORE": 1},
+                auto_fixable=True,
+            )
+        )
 
     # ── 8. COHP: ISYM must be -1 ────────────────────────────────────
     if calc_key in ("cohp", "lobster"):
         if incar.get("ISYM", 0) != -1:
-            issues.append(ConsistencyIssue(
-                severity="error",
-                category="COHP",
-                message=f"COHP/LOBSTER requires ISYM=-1 (got ISYM={incar.get('ISYM', 0)}). "
-                        f"LOBSTER needs all k-points unfolded.",
-                fix={"ISYM": -1},
-                auto_fixable=True,
-            ))
+            issues.append(
+                ConsistencyIssue(
+                    severity="error",
+                    category="COHP",
+                    message=f"COHP/LOBSTER requires ISYM=-1 (got ISYM={incar.get('ISYM', 0)}). "
+                    f"LOBSTER needs all k-points unfolded.",
+                    fix={"ISYM": -1},
+                    auto_fixable=True,
+                )
+            )
 
     # ── 9. Bader: LREAL must be False ────────────────────────────────
     if calc_key == "bader" and incar.get("LREAL") not in (False, "False", ".FALSE."):
-        issues.append(ConsistencyIssue(
-            severity="error",
-            category="Bader",
-            message="Bader analysis requires LREAL=False for accurate charge density.",
-            fix={"LREAL": False},
-            auto_fixable=True,
-        ))
+        issues.append(
+            ConsistencyIssue(
+                severity="error",
+                category="Bader",
+                message="Bader analysis requires LREAL=False for accurate charge density.",
+                fix={"LREAL": False},
+                auto_fixable=True,
+            )
+        )
 
     # ── 10. ISMEAR=-5 incompatible with < 3 k-points ────────────────
     if incar.get("ISMEAR") == -5 and kpoints:
-        kp_match = re.search(r'(\d+)\s+(\d+)\s+(\d+)', kpoints)
+        kp_match = re.search(r"(\d+)\s+(\d+)\s+(\d+)", kpoints)
         if kp_match:
             k_total = int(kp_match.group(1)) * int(kp_match.group(2)) * int(kp_match.group(3))
             if k_total < 4:
-                issues.append(ConsistencyIssue(
-                    severity="error",
-                    category="ISMEAR",
-                    message=f"ISMEAR=-5 (tetrahedron method) requires >= 4 k-points, "
-                            f"but k-mesh gives {k_total}. Use ISMEAR=0 (Gaussian) instead.",
-                    fix={"ISMEAR": 0, "SIGMA": 0.05},
-                    auto_fixable=True,
-                ))
+                issues.append(
+                    ConsistencyIssue(
+                        severity="error",
+                        category="ISMEAR",
+                        message=f"ISMEAR=-5 (tetrahedron method) requires >= 4 k-points, "
+                        f"but k-mesh gives {k_total}. Use ISMEAR=0 (Gaussian) instead.",
+                        fix={"ISMEAR": 0, "SIGMA": 0.05},
+                        auto_fixable=True,
+                    )
+                )
 
     # Sort by severity
     severity_order = {"error": 0, "warning": 1, "info": 2}
@@ -562,9 +649,11 @@ def auto_fix(
 # 3. Workflow Dependency Resolver
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class WorkflowStep:
     """A single step in a multi-step VASP workflow."""
+
     name: str
     calc_type: str
     incar_overrides: Dict[str, Any] = field(default_factory=dict)
@@ -603,51 +692,61 @@ def resolve_workflow(
     if deps and deps.get("requires"):
         # Need a prerequisite SCF step
         prereq_incar = {
-            "ISTART": 0, "ICHARG": 2,
+            "ISTART": 0,
+            "ICHARG": 2,
             "EDIFF": 1e-6,
-            "NSW": 0, "IBRION": -1,
+            "NSW": 0,
+            "IBRION": -1,
         }
         prereq_incar.update(deps.get("prereq_params", {}))
 
-        steps.append(WorkflowStep(
-            name="scf_prerequisite",
-            calc_type="static_scf",
-            incar_overrides=prereq_incar,
-            output_files=deps["requires"] + ["WAVECAR", "CHGCAR", "OUTCAR"],
-            notes="Prerequisite SCF — generates CHGCAR/WAVECAR for non-SCF step.",
-        ))
+        steps.append(
+            WorkflowStep(
+                name="scf_prerequisite",
+                calc_type="static_scf",
+                incar_overrides=prereq_incar,
+                output_files=deps["requires"] + ["WAVECAR", "CHGCAR", "OUTCAR"],
+                notes="Prerequisite SCF — generates CHGCAR/WAVECAR for non-SCF step.",
+            )
+        )
 
         # Target step
         target_incar = {"ISTART": 1, "ICHARG": 11}
         target_incar.update(deps.get("own_params", {}))
 
-        steps.append(WorkflowStep(
-            name=target,
-            calc_type=target,
-            incar_overrides=target_incar,
-            depends_on=["scf_prerequisite"],
-            input_files=deps["requires"],
-            notes=f"Non-SCF {target} — reads {', '.join(deps['requires'])} from SCF step.",
-        ))
+        steps.append(
+            WorkflowStep(
+                name=target,
+                calc_type=target,
+                incar_overrides=target_incar,
+                depends_on=["scf_prerequisite"],
+                input_files=deps["requires"],
+                notes=f"Non-SCF {target} — reads {', '.join(deps['requires'])} from SCF step.",
+            )
+        )
 
     elif deps and deps.get("own_params"):
         # Single step but with required parameters
         step_incar = {}
         step_incar.update(deps.get("own_params", {}))
 
-        steps.append(WorkflowStep(
-            name=target,
-            calc_type=target,
-            incar_overrides=step_incar,
-            notes=f"{target} calculation with required parameters.",
-        ))
+        steps.append(
+            WorkflowStep(
+                name=target,
+                calc_type=target,
+                incar_overrides=step_incar,
+                notes=f"{target} calculation with required parameters.",
+            )
+        )
 
     else:
         # Simple single-step calculation
-        steps.append(WorkflowStep(
-            name=target,
-            calc_type=target,
-        ))
+        steps.append(
+            WorkflowStep(
+                name=target,
+                calc_type=target,
+            )
+        )
 
     return steps
 
@@ -655,6 +754,7 @@ def resolve_workflow(
 # ═══════════════════════════════════════════════════════════════════════
 # 4. Benchmark the auto-remediation engine
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def benchmark_auto_remediation() -> Dict[str, Any]:
     """
@@ -677,7 +777,7 @@ def benchmark_auto_remediation() -> Dict[str, Any]:
         # Charge sloshing: oscillating energy differences
         *[
             (
-                list(np.abs(rng.randn(60)) * 0.01 * np.sin(np.linspace(0, 10*np.pi, 60)) + 0.001),
+                list(np.abs(rng.randn(60)) * 0.01 * np.sin(np.linspace(0, 10 * np.pi, 60)) + 0.001),
                 SCFDiagnosis.CHARGE_SLOSHING,
                 {"ALGO": "Fast", "AMIX": 0.4},
             )
@@ -716,12 +816,14 @@ def benchmark_auto_remediation() -> Dict[str, Any]:
         analysis = analyze_scf_trajectory(ediffs, target_ediff=1e-5, current_incar=incar)
         correct = analysis.diagnosis == expected
         has_fix = bool(analysis.recommended_fix) if expected != SCFDiagnosis.HEALTHY else True
-        results["scf_diagnosis"].append({
-            "expected": expected.value,
-            "predicted": analysis.diagnosis.value,
-            "correct": correct,
-            "has_fix": has_fix,
-        })
+        results["scf_diagnosis"].append(
+            {
+                "expected": expected.value,
+                "predicted": analysis.diagnosis.value,
+                "correct": correct,
+                "has_fix": has_fix,
+            }
+        )
 
     # ── 20 consistency errors ─────────────────────────────────────────
     consistency_cases = [
@@ -744,8 +846,14 @@ def benchmark_auto_remediation() -> Dict[str, Any]:
         # ENCUT way too low for N
         ({"ENCUT": 200}, ["Fe", "N"], 48, "static", None, None),
         # Correct oxide setup
-        ({"ENCUT": 520, "ISPIN": 2, "LDAU": True, "LDAUL": "2 -1", "LDAUU": "3.0 0.0", "LDAUJ": "0.0 0.0"},
-         ["Ti", "O"], 48, "static", None, None),
+        (
+            {"ENCUT": 520, "ISPIN": 2, "LDAU": True, "LDAUL": "2 -1", "LDAUU": "3.0 0.0", "LDAUJ": "0.0 0.0"},
+            ["Ti", "O"],
+            48,
+            "static",
+            None,
+            None,
+        ),
         # DFT+U with wrong LDAUL length
         ({"LDAU": True, "LDAUL": "2", "LDAUU": "3.0"}, ["Ti", "O", "N"], 48, "static", None, None),
         # Work function missing LVHAR
@@ -774,19 +882,37 @@ def benchmark_auto_remediation() -> Dict[str, Any]:
         warnings = [i for i in issues if i.severity == "warning"]
         fixable = [i for i in issues if i.auto_fixable]
 
-        results["consistency"].append({
-            "n_errors": len(errors),
-            "n_warnings": len(warnings),
-            "n_fixable": len(fixable),
-            "detected": len(errors) + len(warnings) > 0,
-        })
+        results["consistency"].append(
+            {
+                "n_errors": len(errors),
+                "n_warnings": len(warnings),
+                "n_fixable": len(fixable),
+                "detected": len(errors) + len(warnings) > 0,
+            }
+        )
 
     # ── 20 workflow dependency tests ──────────────────────────────────
     workflow_cases = [
-        "dos", "pdos", "band", "elf", "cohp", "bader", "cdd",
-        "work_function", "static", "static_scf",
-        "dos", "band", "elf", "cohp", "bader",
-        "dos", "pdos", "band", "work_function", "static",
+        "dos",
+        "pdos",
+        "band",
+        "elf",
+        "cohp",
+        "bader",
+        "cdd",
+        "work_function",
+        "static",
+        "static_scf",
+        "dos",
+        "band",
+        "elf",
+        "cohp",
+        "bader",
+        "dos",
+        "pdos",
+        "band",
+        "work_function",
+        "static",
     ]
 
     for calc in workflow_cases:
@@ -795,12 +921,14 @@ def benchmark_auto_remediation() -> Dict[str, Any]:
         needs_prereq = bool(deps.get("requires"))
 
         correct = (len(steps) > 1) == needs_prereq if needs_prereq else True
-        results["workflow"].append({
-            "calc": calc,
-            "n_steps": len(steps),
-            "needs_prereq": needs_prereq,
-            "correct": correct,
-        })
+        results["workflow"].append(
+            {
+                "calc": calc,
+                "n_steps": len(steps),
+                "needs_prereq": needs_prereq,
+                "correct": correct,
+            }
+        )
 
     # ── Summary ───────────────────────────────────────────────────────
     scf_correct = sum(1 for r in results["scf_diagnosis"] if r["correct"])

@@ -28,8 +28,8 @@ Usage
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -39,12 +39,13 @@ from science.alignment.hypothesis_grounder import ReactionNetwork
 @dataclass
 class LiteraturePair:
     """A single hypothesis-mechanism pair from literature."""
+
     id: str
     hypothesis: str
-    mechanism: dict           # ReactionNetwork-compatible dict
+    mechanism: dict  # ReactionNetwork-compatible dict
     dG_profile: List[float]
-    domain: str               # co2rr, her, oer, nrr, orr
-    surface: str              # e.g. "Cu(111)"
+    domain: str  # co2rr, her, oer, nrr, orr
+    surface: str  # e.g. "Cu(111)"
     doi: str
     difficulty: str = "medium"  # easy, medium, hard
     notes: str = ""
@@ -57,7 +58,7 @@ LITERATURE_PAIRS: List[LiteraturePair] = [
     LiteraturePair(
         id="lit_co2rr_co_cu111",
         hypothesis="CO2 reduces to CO on Cu(111) through a COOH* intermediate, "
-                   "with the first proton-electron transfer being rate-limiting",
+        "with the first proton-electron transfer being rate-limiting",
         mechanism={
             "reaction_network": [
                 {"lhs": ["CO2(g)", "*", "H+", "e-"], "rhs": ["COOH*"]},
@@ -68,14 +69,16 @@ LITERATURE_PAIRS: List[LiteraturePair] = [
             "surface": "Cu(111)",
         },
         dG_profile=[0.0, 0.22, -0.15, -0.45, -1.10],
-        domain="co2rr", surface="Cu(111)",
-        doi="10.1039/C0EE00071J", difficulty="easy",
+        domain="co2rr",
+        surface="Cu(111)",
+        doi="10.1039/C0EE00071J",
+        difficulty="easy",
     ),
     # CO2RR — Kuhl 2012
     LiteraturePair(
         id="lit_co2rr_ch4_cu111",
         hypothesis="CO2 reduces to methane on Cu(111) via CHO* and CH2O* intermediates, "
-                   "requiring 8 proton-electron transfers with CO* hydrogenation as RDS",
+        "requiring 8 proton-electron transfers with CO* hydrogenation as RDS",
         mechanism={
             "reaction_network": [
                 {"lhs": ["CO2(g)", "*", "H+", "e-"], "rhs": ["COOH*"]},
@@ -87,14 +90,16 @@ LITERATURE_PAIRS: List[LiteraturePair] = [
             "surface": "Cu(111)",
         },
         dG_profile=[0.0, 0.22, -0.15, 0.74, 0.40, -1.33],
-        domain="co2rr", surface="Cu(111)",
-        doi="10.1039/C2EE21234J", difficulty="medium",
+        domain="co2rr",
+        surface="Cu(111)",
+        doi="10.1039/C2EE21234J",
+        difficulty="medium",
     ),
     # HER — Skulason 2012
     LiteraturePair(
         id="lit_her_pt111",
         hypothesis="Hydrogen evolution on Pt(111) proceeds via the Volmer-Tafel mechanism "
-                   "with near-thermoneutral H* binding (ΔG_H* ≈ -0.09 eV)",
+        "with near-thermoneutral H* binding (ΔG_H* ≈ -0.09 eV)",
         mechanism={
             "reaction_network": [
                 {"lhs": ["H+", "e-", "*"], "rhs": ["H*"]},
@@ -104,14 +109,15 @@ LITERATURE_PAIRS: List[LiteraturePair] = [
             "surface": "Pt(111)",
         },
         dG_profile=[0.0, -0.09, 0.0],
-        domain="her", surface="Pt(111)",
-        doi="10.1039/C1CP23212F", difficulty="easy",
+        domain="her",
+        surface="Pt(111)",
+        doi="10.1039/C1CP23212F",
+        difficulty="easy",
     ),
     # HER — Hinnemann 2005
     LiteraturePair(
         id="lit_her_mos2",
-        hypothesis="MoS2 edge sites catalyse HER with ΔG_H* = 0.08 eV, "
-                   "close to optimal for the Sabatier principle",
+        hypothesis="MoS2 edge sites catalyse HER with ΔG_H* = 0.08 eV, close to optimal for the Sabatier principle",
         mechanism={
             "reaction_network": [
                 {"lhs": ["H+", "e-", "*"], "rhs": ["H*"]},
@@ -121,14 +127,16 @@ LITERATURE_PAIRS: List[LiteraturePair] = [
             "surface": "MoS2-edge",
         },
         dG_profile=[0.0, 0.08, 0.0],
-        domain="her", surface="MoS2-edge",
-        doi="10.1021/ja0504690", difficulty="easy",
+        domain="her",
+        surface="MoS2-edge",
+        doi="10.1021/ja0504690",
+        difficulty="easy",
     ),
     # OER — Man 2011
     LiteraturePair(
         id="lit_oer_ruo2",
         hypothesis="OER on RuO2(110) follows the 4-step mechanism with OH*, O*, OOH* intermediates "
-                   "where the O*→OOH* step is potential-determining",
+        "where the O*→OOH* step is potential-determining",
         mechanism={
             "reaction_network": [
                 {"lhs": ["H2O(l)", "*"], "rhs": ["OH*", "H+", "e-"]},
@@ -140,14 +148,16 @@ LITERATURE_PAIRS: List[LiteraturePair] = [
             "surface": "RuO2(110)",
         },
         dG_profile=[0.0, 1.60, 3.20, 4.40, 4.92],
-        domain="oer", surface="RuO2(110)",
-        doi="10.1002/cctc.201000397", difficulty="medium",
+        domain="oer",
+        surface="RuO2(110)",
+        doi="10.1002/cctc.201000397",
+        difficulty="medium",
     ),
     # NRR — Montoya 2015
     LiteraturePair(
         id="lit_nrr_ru0001",
         hypothesis="N2 reduction on Ru(0001) follows a distal mechanism where the "
-                   "first N is fully hydrogenated before the second, with N2→NNH* as RDS",
+        "first N is fully hydrogenated before the second, with N2→NNH* as RDS",
         mechanism={
             "reaction_network": [
                 {"lhs": ["N2(g)", "*"], "rhs": ["N2*"]},
@@ -159,14 +169,16 @@ LITERATURE_PAIRS: List[LiteraturePair] = [
             "surface": "Ru(0001)",
         },
         dG_profile=[0.0, -0.40, 0.72, 0.16, -0.90, -2.18],
-        domain="nrr", surface="Ru(0001)",
-        doi="10.1002/cssc.201500322", difficulty="hard",
+        domain="nrr",
+        surface="Ru(0001)",
+        doi="10.1002/cssc.201500322",
+        difficulty="hard",
     ),
     # ORR — Norskov 2004
     LiteraturePair(
         id="lit_orr_pt111",
         hypothesis="ORR on Pt(111) follows the associative mechanism via OOH* "
-                   "with OH*→H2O as the rate-determining step at 0.9V_RHE",
+        "with OH*→H2O as the rate-determining step at 0.9V_RHE",
         mechanism={
             "reaction_network": [
                 {"lhs": ["O2(g)", "*", "H+", "e-"], "rhs": ["OOH*"]},
@@ -178,14 +190,16 @@ LITERATURE_PAIRS: List[LiteraturePair] = [
             "surface": "Pt(111)",
         },
         dG_profile=[0.0, -1.60, -3.45, -4.22, -4.92],
-        domain="orr", surface="Pt(111)",
-        doi="10.1021/jp047349j", difficulty="medium",
+        domain="orr",
+        surface="Pt(111)",
+        doi="10.1021/jp047349j",
+        difficulty="medium",
     ),
     # CO2RR formate — hard because mechanism is debated
     LiteraturePair(
         id="lit_co2rr_hcooh_sn",
         hypothesis="CO2 reduces to formate on Sn via direct CO2 insertion into Sn-H bond "
-                   "or through OCHO* intermediate, competing with CO pathway",
+        "or through OCHO* intermediate, competing with CO pathway",
         mechanism={
             "reaction_network": [
                 {"lhs": ["CO2(g)", "*", "H+", "e-"], "rhs": ["OCHO*"]},
@@ -195,8 +209,10 @@ LITERATURE_PAIRS: List[LiteraturePair] = [
             "surface": "Sn(112)",
         },
         dG_profile=[0.0, -0.21, -0.75],
-        domain="co2rr", surface="Sn(112)",
-        doi="10.1021/acscatal.6b01393", difficulty="hard",
+        domain="co2rr",
+        surface="Sn(112)",
+        doi="10.1021/acscatal.6b01393",
+        difficulty="hard",
     ),
 ]
 
@@ -225,16 +241,18 @@ def generate_hard_negatives(
         other = rng.choice(other_pairs)
 
         # Swap: keep hypothesis, take mechanism from other domain
-        negatives.append(LiteraturePair(
-            id=f"neg_{pair.id}",
-            hypothesis=pair.hypothesis,
-            mechanism=other.mechanism,
-            dG_profile=other.dG_profile,
-            domain=pair.domain,
-            surface=pair.surface,
-            doi=pair.doi,
-            difficulty="hard_negative",
-        ))
+        negatives.append(
+            LiteraturePair(
+                id=f"neg_{pair.id}",
+                hypothesis=pair.hypothesis,
+                mechanism=other.mechanism,
+                dG_profile=other.dG_profile,
+                domain=pair.domain,
+                surface=pair.surface,
+                doi=pair.doi,
+                difficulty="hard_negative",
+            )
+        )
 
     return negatives
 
@@ -277,7 +295,7 @@ def evaluate_grounder(
     all_scores = pos_scores + neg_scores
     all_labels = [1] * n_pos + [0] * n_neg
     preds = [1 if s > 0.5 else 0 for s in all_scores]
-    accuracy = sum(p == l for p, l in zip(preds, all_labels)) / len(all_labels)
+    accuracy = sum(p == lbl for p, lbl in zip(preds, all_labels)) / len(all_labels)
 
     return {
         "auc": auc,

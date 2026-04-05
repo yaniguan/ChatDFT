@@ -34,7 +34,7 @@ Key references
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -45,7 +45,8 @@ logger = get_logger(__name__)
 
 try:
     import torch
-    import torch.nn as nn
+    import torch.nn as nn  # noqa: F401
+
     _HAS_TORCH = True
 except ImportError:
     _HAS_TORCH = False
@@ -54,14 +55,15 @@ except ImportError:
 @dataclass
 class ActiveLearningResult:
     """Result of an active learning loop."""
+
     n_iterations: int
     n_dft_calls: int
-    final_mae: float                    # eV
-    final_max_uncertainty: float        # eV
+    final_mae: float  # eV
+    final_max_uncertainty: float  # eV
     convergence_iteration: Optional[int]  # iteration where uncertainty < threshold
-    mae_curve: List[float]              # MAE per iteration
-    uncertainty_curve: List[float]      # max uncertainty per iteration
-    dft_savings_vs_random: float        # fraction of DFT calls saved
+    mae_curve: List[float]  # MAE per iteration
+    uncertainty_curve: List[float]  # max uncertainty per iteration
+    dft_savings_vs_random: float  # fraction of DFT calls saved
     acquisition_strategy: str
     wall_time_s: float
 
@@ -69,6 +71,7 @@ class ActiveLearningResult:
 @dataclass
 class Candidate:
     """A candidate structure for DFT evaluation."""
+
     index: int
     predicted_energy: float
     uncertainty: float
@@ -97,15 +100,16 @@ class GNNEnsemble:
             raise ImportError("PyTorch required for active learning")
 
         from science.predictions.gnn_models import build_model
+
         self.models = [build_model(model_name, **model_kwargs) for _ in range(n_models)]
         self.model_name = model_name
         self.n_models = n_models
 
-    def train_all(self, train_graphs, val_graphs, n_epochs: int = 60,
-                  lr: float = 1e-3, batch_size: int = 16):
+    def train_all(self, train_graphs, val_graphs, n_epochs: int = 60, lr: float = 1e-3, batch_size: int = 16):
         """Train all ensemble members with different random initialisation."""
-        from science.predictions.energy_predictor import collate_graphs
         import torch.nn.functional as F
+
+        from science.predictions.energy_predictor import collate_graphs
 
         for i, model in enumerate(self.models):
             optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -113,7 +117,7 @@ class GNNEnsemble:
                 model.train()
                 indices = torch.randperm(len(train_graphs))
                 for start in range(0, len(train_graphs), batch_size):
-                    batch_idx = indices[start:start + batch_size]
+                    batch_idx = indices[start : start + batch_size]
                     batch = collate_graphs([train_graphs[j] for j in batch_idx])
                     pred = model(batch)
                     loss = F.l1_loss(pred, batch.y)
@@ -192,7 +196,8 @@ class ActiveLearner:
     ) -> list:
         """Generate random candidate structures."""
         from science.predictions.energy_predictor import (
-            AdsorptionSample, _generate_slab, synthetic_adsorption_energy,
+            AdsorptionSample,
+            _generate_slab,
         )
         from science.representations.surface_graph import SurfaceTopologyGraph
 
@@ -209,12 +214,17 @@ class ActiveLearner:
             stg.build()
             cn_mean = float(np.mean([nd.coordination for nd in stg.nodes]))
 
-            candidates.append(AdsorptionSample(
-                element=elem, adsorbate=ads,
-                positions=pos, elements=elems, cell=cell,
-                energy=0.0,  # unknown — will be filled by oracle
-                cn_mean=cn_mean,
-            ))
+            candidates.append(
+                AdsorptionSample(
+                    element=elem,
+                    adsorbate=ads,
+                    positions=pos,
+                    elements=elems,
+                    cell=cell,
+                    energy=0.0,  # unknown — will be filled by oracle
+                    cn_mean=cn_mean,
+                )
+            )
         return candidates
 
     def _acquire(
@@ -228,12 +238,11 @@ class ActiveLearner:
         means, stds = self.ensemble.predict_with_uncertainty(candidate_graphs)
 
         if strategy == "random":
-            return rng.choice(len(candidates), size=self.batch_per_iter,
-                              replace=False).tolist()
+            return rng.choice(len(candidates), size=self.batch_per_iter, replace=False).tolist()
 
         elif strategy == "uncertainty":
             # Select highest uncertainty
-            indices = np.argsort(-stds)[:self.batch_per_iter]
+            indices = np.argsort(-stds)[: self.batch_per_iter]
             return indices.tolist()
 
         elif strategy == "expected_improvement":
@@ -243,8 +252,9 @@ class ActiveLearner:
             z = (best_energy - means) / (stds + 1e-8)
             # Simplified EI: uncertainty * phi(z) + (best - mean) * Phi(z)
             from scipy.stats import norm
+
             ei = stds * norm.pdf(z) + (best_energy - means) * norm.cdf(z)
-            indices = np.argsort(-ei)[:self.batch_per_iter]
+            indices = np.argsort(-ei)[: self.batch_per_iter]
             return indices.tolist()
 
         raise ValueError(f"Unknown strategy: {strategy}")
@@ -278,7 +288,7 @@ class ActiveLearner:
         ActiveLearningResult
             Loop statistics including MAE curve and DFT savings.
         """
-        from science.predictions.energy_predictor import samples_to_graphs, _evaluate_mae
+        from science.predictions.energy_predictor import samples_to_graphs
 
         rng = np.random.default_rng(seed)
         t0 = time.time()
@@ -299,8 +309,7 @@ class ActiveLearner:
             val_g = graphs[n_train:]
 
             # Train ensemble
-            self.ensemble.train_all(train_g, val_g if val_g else train_g,
-                                    n_epochs=40)
+            self.ensemble.train_all(train_g, val_g if val_g else train_g, n_epochs=40)
 
             # Generate candidate pool
             candidates = self._generate_candidates(self.pool_size, rng)
@@ -322,8 +331,7 @@ class ActiveLearner:
             mae_curve.append(mae)
 
             if verbose:
-                logger.info(f"Iter {iteration}: MAE={mae:.4f} eV, "
-                            f"max_unc={max_unc:.4f} eV, n_train={len(all_samples)}")
+                logger.info(f"Iter {iteration}: MAE={mae:.4f} eV, max_unc={max_unc:.4f} eV, n_train={len(all_samples)}")
 
             # Check convergence
             if max_unc < self.threshold and convergence_iter is None:
@@ -367,7 +375,8 @@ def benchmark_active_learning(
     Returns dict mapping strategy name to ActiveLearningResult.
     """
     from science.predictions.energy_predictor import (
-        generate_dataset, synthetic_adsorption_energy,
+        generate_dataset,
+        synthetic_adsorption_energy,
     )
 
     # Generate initial dataset
@@ -375,16 +384,13 @@ def benchmark_active_learning(
 
     # Oracle: synthetic DFT
     def oracle(element, adsorbate, cn):
-        return synthetic_adsorption_energy(element, adsorbate, cn,
-                                           noise_std=0.05,
-                                           rng=np.random.default_rng())
+        return synthetic_adsorption_energy(element, adsorbate, cn, noise_std=0.05, rng=np.random.default_rng())
 
     results = {}
     for strategy in ["random", "uncertainty", "expected_improvement"]:
         if verbose:
             print(f"\n--- Strategy: {strategy} ---")
-        ensemble = GNNEnsemble("schnet", n_models=3, d_hidden=32,
-                               n_interactions=2)
+        ensemble = GNNEnsemble("schnet", n_models=3, d_hidden=32, n_interactions=2)
         learner = ActiveLearner(
             oracle=oracle,
             ensemble=ensemble,
@@ -401,7 +407,6 @@ def benchmark_active_learning(
         )
         results[strategy] = result
         if verbose:
-            print(f"  Final MAE: {result.final_mae:.4f} eV, "
-                  f"DFT calls: {result.n_dft_calls}")
+            print(f"  Final MAE: {result.final_mae:.4f} eV, DFT calls: {result.n_dft_calls}")
 
     return results

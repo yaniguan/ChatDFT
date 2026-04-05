@@ -46,12 +46,13 @@ Result
   | Error auto-fix rate     | 0%             | 72%     | N/A (novel)         |
   | Calc type coverage      | N/A            | 10/10   | N/A                 |
 """
+
 from __future__ import annotations
 
 import json
 import sys
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -64,22 +65,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 # Task definitions — 25 realistic DFT workflow scenarios
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class BenchmarkTask:
     """A single benchmark task with ground truth."""
+
     id: int
-    domain: str        # CO2RR, HER, OER, NRR, electronic
-    query: str         # natural language input
-    difficulty: str    # easy, medium, hard
+    domain: str  # CO2RR, HER, OER, NRR, electronic
+    query: str  # natural language input
+    difficulty: str  # easy, medium, hard
     # Ground truth
-    expected_calc_types: List[str]       # e.g., ["relax", "static", "dos"]
-    expected_species: List[str]          # e.g., ["CO*", "COOH*"]
-    expected_surface: str                # e.g., "Cu(111)"
+    expected_calc_types: List[str]  # e.g., ["relax", "static", "dos"]
+    expected_species: List[str]  # e.g., ["CO*", "COOH*"]
+    expected_surface: str  # e.g., "Cu(111)"
     expected_incar_keys: Dict[str, Any]  # critical INCAR params that must be set
-    expected_n_steps: int                # number of DFT jobs in workflow
+    expected_n_steps: int  # number of DFT jobs in workflow
     # Human baseline
-    human_setup_min: float               # median human setup time (minutes)
-    human_error_rate: float              # fraction of humans who make mistakes
+    human_setup_min: float  # median human setup time (minutes)
+    human_error_rate: float  # fraction of humans who make mistakes
     # Injected errors for recovery testing
     injected_errors: List[str] = field(default_factory=list)
     notes: str = ""
@@ -88,257 +91,347 @@ class BenchmarkTask:
 BENCHMARK_TASKS: List[BenchmarkTask] = [
     # ── CO₂RR (8 tasks) ──────────────────────────────────────────────
     BenchmarkTask(
-        id=1, domain="CO2RR", difficulty="easy",
+        id=1,
+        domain="CO2RR",
+        difficulty="easy",
         query="Calculate the adsorption energy of CO on Cu(111)",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["CO*"], expected_surface="Cu(111)",
+        expected_species=["CO*"],
+        expected_surface="Cu(111)",
         expected_incar_keys={"ENCUT": 400, "ISMEAR": 1, "EDIFF": 1e-5, "GGA": "PE"},
         expected_n_steps=3,
-        human_setup_min=25.0, human_error_rate=0.10,
+        human_setup_min=25.0,
+        human_error_rate=0.10,
     ),
     BenchmarkTask(
-        id=2, domain="CO2RR", difficulty="medium",
+        id=2,
+        domain="CO2RR",
+        difficulty="medium",
         query="Map the full CO2RR pathway on Cu(111): CO2 → COOH → CO → CHO → CH2O → CH3O → CH3OH",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
         expected_species=["CO2*", "COOH*", "CO*", "CHO*", "CH2O*", "CH3O*", "CH3OH*"],
         expected_surface="Cu(111)",
         expected_incar_keys={"ENCUT": 400, "ISMEAR": 1, "EDIFF": 1e-5},
         expected_n_steps=16,  # 7 intermediates × 2 (relax + static) + slab + ref
-        human_setup_min=120.0, human_error_rate=0.35,
+        human_setup_min=120.0,
+        human_error_rate=0.35,
     ),
     BenchmarkTask(
-        id=3, domain="CO2RR", difficulty="hard",
+        id=3,
+        domain="CO2RR",
+        difficulty="hard",
         query="Find the rate-determining step for CO2-to-CO on Ag(111) with explicit water layer",
         expected_calc_types=["relax_slab", "relax_adsorbate", "neb", "static"],
         expected_species=["CO2*", "COOH*", "CO*"],
         expected_surface="Ag(111)",
         expected_incar_keys={"ENCUT": 400, "LSOL": False, "IMAGES": 4},
         expected_n_steps=8,
-        human_setup_min=180.0, human_error_rate=0.50,
+        human_setup_min=180.0,
+        human_error_rate=0.50,
         injected_errors=["scf_nonconvergence"],
     ),
     BenchmarkTask(
-        id=4, domain="CO2RR", difficulty="medium",
+        id=4,
+        domain="CO2RR",
+        difficulty="medium",
         query="Compare CO adsorption on Cu(111) top, bridge, and hollow sites",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["CO*"], expected_surface="Cu(111)",
+        expected_species=["CO*"],
+        expected_surface="Cu(111)",
         expected_incar_keys={"ENCUT": 400, "ISMEAR": 1},
         expected_n_steps=7,  # slab + 3 sites × 2
-        human_setup_min=45.0, human_error_rate=0.20,
+        human_setup_min=45.0,
+        human_error_rate=0.20,
     ),
     BenchmarkTask(
-        id=5, domain="CO2RR", difficulty="easy",
+        id=5,
+        domain="CO2RR",
+        difficulty="easy",
         query="Adsorption energy of COOH on Pt(111)",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["COOH*"], expected_surface="Pt(111)",
+        expected_species=["COOH*"],
+        expected_surface="Pt(111)",
         expected_incar_keys={"ENCUT": 400, "ISMEAR": 1},
         expected_n_steps=3,
-        human_setup_min=25.0, human_error_rate=0.10,
+        human_setup_min=25.0,
+        human_error_rate=0.10,
     ),
     BenchmarkTask(
-        id=6, domain="CO2RR", difficulty="hard",
+        id=6,
+        domain="CO2RR",
+        difficulty="hard",
         query="CO2RR selectivity on Cu(100) vs Cu(111): compare CH4 vs C2H4 pathways",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
         expected_species=["CO2*", "CO*", "CHO*", "OCCO*"],
         expected_surface="Cu(100)",
         expected_incar_keys={"ENCUT": 400, "ISMEAR": 1},
         expected_n_steps=20,
-        human_setup_min=240.0, human_error_rate=0.55,
+        human_setup_min=240.0,
+        human_error_rate=0.55,
     ),
     BenchmarkTask(
-        id=7, domain="CO2RR", difficulty="medium",
+        id=7,
+        domain="CO2RR",
+        difficulty="medium",
         query="DFT+D3 adsorption of CO2 on Cu(211) step edge",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["CO2*"], expected_surface="Cu(211)",
+        expected_species=["CO2*"],
+        expected_surface="Cu(211)",
         expected_incar_keys={"IVDW": 11, "ENCUT": 400},
         expected_n_steps=3,
-        human_setup_min=40.0, human_error_rate=0.25,
+        human_setup_min=40.0,
+        human_error_rate=0.25,
         notes="Must include van der Waals correction IVDW=11",
     ),
     BenchmarkTask(
-        id=8, domain="CO2RR", difficulty="easy",
+        id=8,
+        domain="CO2RR",
+        difficulty="easy",
         query="CO binding energy on Au(111)",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["CO*"], expected_surface="Au(111)",
+        expected_species=["CO*"],
+        expected_surface="Au(111)",
         expected_incar_keys={"ENCUT": 400, "ISMEAR": 1},
         expected_n_steps=3,
-        human_setup_min=25.0, human_error_rate=0.08,
+        human_setup_min=25.0,
+        human_error_rate=0.08,
     ),
-
     # ── HER (5 tasks) ────────────────────────────────────────────────
     BenchmarkTask(
-        id=9, domain="HER", difficulty="easy",
+        id=9,
+        domain="HER",
+        difficulty="easy",
         query="Hydrogen adsorption free energy on Pt(111)",
         expected_calc_types=["relax_slab", "relax_adsorbate", "freq"],
-        expected_species=["H*"], expected_surface="Pt(111)",
+        expected_species=["H*"],
+        expected_surface="Pt(111)",
         expected_incar_keys={"ENCUT": 400, "ISMEAR": 1, "IBRION": 5},
         expected_n_steps=4,  # slab + H_ads + freq + gas-phase H2
-        human_setup_min=35.0, human_error_rate=0.15,
+        human_setup_min=35.0,
+        human_error_rate=0.15,
         notes="Must include ZPE correction (IBRION=5 for frequencies)",
     ),
     BenchmarkTask(
-        id=10, domain="HER", difficulty="medium",
+        id=10,
+        domain="HER",
+        difficulty="medium",
         query="HER volcano plot: ΔG_H on Pt, Pd, Ni, Cu, Au, Ag(111)",
         expected_calc_types=["relax_slab", "relax_adsorbate", "freq"],
-        expected_species=["H*"], expected_surface="various(111)",
+        expected_species=["H*"],
+        expected_surface="various(111)",
         expected_incar_keys={"ENCUT": 400, "IBRION": 5},
         expected_n_steps=24,  # 6 metals × 4 calcs
-        human_setup_min=180.0, human_error_rate=0.30,
+        human_setup_min=180.0,
+        human_error_rate=0.30,
     ),
     BenchmarkTask(
-        id=11, domain="HER", difficulty="hard",
+        id=11,
+        domain="HER",
+        difficulty="hard",
         query="HER on MoS2 basal plane vs edge: compare ΔG_H* with spin polarization",
         expected_calc_types=["relax_slab", "relax_adsorbate", "freq", "static"],
-        expected_species=["H*"], expected_surface="MoS2",
+        expected_species=["H*"],
+        expected_surface="MoS2",
         expected_incar_keys={"ISPIN": 2, "ENCUT": 400},
         expected_n_steps=8,
-        human_setup_min=90.0, human_error_rate=0.40,
+        human_setup_min=90.0,
+        human_error_rate=0.40,
         injected_errors=["scf_nonconvergence"],
         notes="MoS2 requires spin polarization ISPIN=2",
     ),
     BenchmarkTask(
-        id=12, domain="HER", difficulty="medium",
+        id=12,
+        domain="HER",
+        difficulty="medium",
         query="H coverage effect on Pt(111): 1/9 ML, 1/4 ML, 1/3 ML",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["H*"], expected_surface="Pt(111)",
+        expected_species=["H*"],
+        expected_surface="Pt(111)",
         expected_incar_keys={"ENCUT": 400, "ISMEAR": 1},
         expected_n_steps=9,
-        human_setup_min=60.0, human_error_rate=0.25,
+        human_setup_min=60.0,
+        human_error_rate=0.25,
     ),
     BenchmarkTask(
-        id=13, domain="HER", difficulty="easy",
+        id=13,
+        domain="HER",
+        difficulty="easy",
         query="H adsorption on Ni(111) fcc hollow site",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["H*"], expected_surface="Ni(111)",
+        expected_species=["H*"],
+        expected_surface="Ni(111)",
         expected_incar_keys={"ENCUT": 400, "ISPIN": 2},
         expected_n_steps=3,
-        human_setup_min=30.0, human_error_rate=0.15,
+        human_setup_min=30.0,
+        human_error_rate=0.15,
         notes="Ni is magnetic — ISPIN=2 required",
     ),
-
     # ── OER (5 tasks) ────────────────────────────────────────────────
     BenchmarkTask(
-        id=14, domain="OER", difficulty="medium",
+        id=14,
+        domain="OER",
+        difficulty="medium",
         query="OER overpotential on IrO2(110): compute ΔG for OH*, O*, OOH*",
         expected_calc_types=["relax_slab", "relax_adsorbate", "freq"],
-        expected_species=["OH*", "O*", "OOH*"], expected_surface="IrO2(110)",
+        expected_species=["OH*", "O*", "OOH*"],
+        expected_surface="IrO2(110)",
         expected_incar_keys={"ENCUT": 520, "ISPIN": 2, "LDAU": True},
         expected_n_steps=10,
-        human_setup_min=90.0, human_error_rate=0.40,
+        human_setup_min=90.0,
+        human_error_rate=0.40,
         notes="Oxide requires higher ENCUT=520 and DFT+U",
     ),
     BenchmarkTask(
-        id=15, domain="OER", difficulty="hard",
+        id=15,
+        domain="OER",
+        difficulty="hard",
         query="OER on RuO2(110) with explicit water: compute all 4 electron transfer steps",
         expected_calc_types=["relax_slab", "relax_adsorbate", "freq", "static"],
         expected_species=["OH*", "O*", "OOH*", "H2O*"],
         expected_surface="RuO2(110)",
         expected_incar_keys={"ENCUT": 520, "ISPIN": 2, "LDAU": True},
         expected_n_steps=14,
-        human_setup_min=150.0, human_error_rate=0.50,
+        human_setup_min=150.0,
+        human_error_rate=0.50,
         injected_errors=["scf_nonconvergence", "geometry_explosion"],
     ),
     BenchmarkTask(
-        id=16, domain="OER", difficulty="easy",
+        id=16,
+        domain="OER",
+        difficulty="easy",
         query="O adsorption on RuO2(110) bridge site",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["O*"], expected_surface="RuO2(110)",
+        expected_species=["O*"],
+        expected_surface="RuO2(110)",
         expected_incar_keys={"ENCUT": 520, "ISPIN": 2},
         expected_n_steps=3,
-        human_setup_min=35.0, human_error_rate=0.20,
+        human_setup_min=35.0,
+        human_error_rate=0.20,
     ),
     BenchmarkTask(
-        id=17, domain="OER", difficulty="medium",
+        id=17,
+        domain="OER",
+        difficulty="medium",
         query="Compare OER activity: IrO2 vs RuO2 vs TiO2(110)",
         expected_calc_types=["relax_slab", "relax_adsorbate", "freq"],
         expected_species=["OH*", "O*", "OOH*"],
         expected_surface="various(110)",
         expected_incar_keys={"ENCUT": 520, "ISPIN": 2, "LDAU": True},
         expected_n_steps=30,
-        human_setup_min=240.0, human_error_rate=0.45,
+        human_setup_min=240.0,
+        human_error_rate=0.45,
     ),
     BenchmarkTask(
-        id=18, domain="OER", difficulty="medium",
+        id=18,
+        domain="OER",
+        difficulty="medium",
         query="OER scaling relations: compute O* and OH* binding on 5 perovskites",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["OH*", "O*"], expected_surface="perovskite(001)",
+        expected_species=["OH*", "O*"],
+        expected_surface="perovskite(001)",
         expected_incar_keys={"ENCUT": 520, "ISPIN": 2},
         expected_n_steps=20,
-        human_setup_min=200.0, human_error_rate=0.40,
+        human_setup_min=200.0,
+        human_error_rate=0.40,
     ),
-
     # ── NRR (3 tasks) ────────────────────────────────────────────────
     BenchmarkTask(
-        id=19, domain="NRR", difficulty="hard",
+        id=19,
+        domain="NRR",
+        difficulty="hard",
         query="N2 reduction pathway on Fe(110): distal vs alternating mechanism",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static", "neb"],
         expected_species=["N2*", "NNH*", "NNH2*", "N*", "NH*", "NH2*", "NH3*"],
         expected_surface="Fe(110)",
         expected_incar_keys={"ENCUT": 400, "ISPIN": 2},
         expected_n_steps=18,
-        human_setup_min=240.0, human_error_rate=0.55,
+        human_setup_min=240.0,
+        human_error_rate=0.55,
         injected_errors=["scf_nonconvergence"],
         notes="Fe is magnetic, requires careful MAGMOM initialization",
     ),
     BenchmarkTask(
-        id=20, domain="NRR", difficulty="medium",
+        id=20,
+        domain="NRR",
+        difficulty="medium",
         query="N2 adsorption on Mo(110): end-on vs side-on comparison",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["N2*"], expected_surface="Mo(110)",
+        expected_species=["N2*"],
+        expected_surface="Mo(110)",
         expected_incar_keys={"ENCUT": 400, "ISPIN": 2},
         expected_n_steps=5,
-        human_setup_min=50.0, human_error_rate=0.30,
+        human_setup_min=50.0,
+        human_error_rate=0.30,
     ),
     BenchmarkTask(
-        id=21, domain="NRR", difficulty="easy",
+        id=21,
+        domain="NRR",
+        difficulty="easy",
         query="NH3 adsorption energy on Ru(0001)",
         expected_calc_types=["relax_slab", "relax_adsorbate", "static"],
-        expected_species=["NH3*"], expected_surface="Ru(0001)",
+        expected_species=["NH3*"],
+        expected_surface="Ru(0001)",
         expected_incar_keys={"ENCUT": 400, "ISMEAR": 1},
         expected_n_steps=3,
-        human_setup_min=25.0, human_error_rate=0.10,
+        human_setup_min=25.0,
+        human_error_rate=0.10,
     ),
-
     # ── Electronic structure (4 tasks) ─────────────────────────────
     BenchmarkTask(
-        id=22, domain="electronic", difficulty="medium",
+        id=22,
+        domain="electronic",
+        difficulty="medium",
         query="Projected DOS and d-band center of Pt(111) surface atoms",
         expected_calc_types=["static_scf", "dos"],
-        expected_species=[], expected_surface="Pt(111)",
+        expected_species=[],
+        expected_surface="Pt(111)",
         expected_incar_keys={"ISMEAR": -5, "LORBIT": 11, "NEDOS": 2000, "ICHARG": 11},
         expected_n_steps=2,
-        human_setup_min=40.0, human_error_rate=0.30,
+        human_setup_min=40.0,
+        human_error_rate=0.30,
         notes="Two-step workflow: SCF (LWAVE=True) then non-SCF DOS (ICHARG=11)",
     ),
     BenchmarkTask(
-        id=23, domain="electronic", difficulty="medium",
+        id=23,
+        domain="electronic",
+        difficulty="medium",
         query="Bader charge analysis of CO adsorbed on Cu(111)",
         expected_calc_types=["relax_adsorbate", "bader"],
-        expected_species=["CO*"], expected_surface="Cu(111)",
+        expected_species=["CO*"],
+        expected_surface="Cu(111)",
         expected_incar_keys={"LAECHG": True, "PREC": "Accurate", "LREAL": False},
         expected_n_steps=3,
-        human_setup_min=50.0, human_error_rate=0.35,
+        human_setup_min=50.0,
+        human_error_rate=0.35,
         injected_errors=["potcar_precision"],
         notes="Bader requires LAECHG=True, PREC=Accurate, LREAL=False",
     ),
     BenchmarkTask(
-        id=24, domain="electronic", difficulty="hard",
+        id=24,
+        domain="electronic",
+        difficulty="hard",
         query="COHP analysis of Pt-CO bond using LOBSTER",
         expected_calc_types=["static_scf", "cohp"],
-        expected_species=["CO*"], expected_surface="Pt(111)",
+        expected_species=["CO*"],
+        expected_surface="Pt(111)",
         expected_incar_keys={"ISYM": -1, "LWAVE": True, "LORBIT": 11},
         expected_n_steps=3,
-        human_setup_min=75.0, human_error_rate=0.50,
+        human_setup_min=75.0,
+        human_error_rate=0.50,
         notes="ISYM=-1 mandatory for LOBSTER; many students forget this",
     ),
     BenchmarkTask(
-        id=25, domain="electronic", difficulty="easy",
+        id=25,
+        domain="electronic",
+        difficulty="easy",
         query="Work function of clean Cu(111) surface",
         expected_calc_types=["static_scf", "work_function"],
-        expected_species=[], expected_surface="Cu(111)",
+        expected_species=[],
+        expected_surface="Cu(111)",
         expected_incar_keys={"LVHAR": True, "LDIPOL": True, "IDIPOL": 3},
         expected_n_steps=2,
-        human_setup_min=30.0, human_error_rate=0.25,
+        human_setup_min=30.0,
+        human_error_rate=0.25,
     ),
 ]
 
@@ -347,9 +440,11 @@ BENCHMARK_TASKS: List[BenchmarkTask] = [
 # Evaluation engine
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class TaskResult:
     """Result of evaluating ChatDFT on one benchmark task."""
+
     task_id: int
     domain: str
     difficulty: str
@@ -446,16 +541,12 @@ def evaluate_error_recovery(
 
     for error_type in task.injected_errors:
         # Check if the error was detected in recovery log
-        detected = any(
-            error_type.lower() in str(entry).lower()
-            for entry in recovery_log
-        )
+        detected = any(error_type.lower() in str(entry).lower() for entry in recovery_log)
         if detected:
             n_detected += 1
             # Check if it was fixed (retry succeeded)
             fixed = any(
-                entry.get("success", False) and error_type.lower() in str(entry).lower()
-                for entry in recovery_log
+                entry.get("success", False) and error_type.lower() in str(entry).lower() for entry in recovery_log
             )
             if fixed:
                 n_fixed += 1
@@ -466,6 +557,7 @@ def evaluate_error_recovery(
 # ═══════════════════════════════════════════════════════════════════════
 # Simulate ChatDFT execution on benchmark tasks
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def simulate_chatdft_on_task(task: BenchmarkTask) -> TaskResult:
     """
@@ -485,22 +577,27 @@ def simulate_chatdft_on_task(task: BenchmarkTask) -> TaskResult:
 
     # ── 1. Intent parsing ─────────────────────────────────────────────
     # Simulate intent extraction (in production: call intent_agent)
-    from server.execution.vasp_incar import get_incar, INCAR_PRESETS
+    from server.execution.vasp_incar import get_incar
 
     # Simple heuristic intent parser for benchmark
     parsed_intent = _simulate_intent_parse(task.query)
-    result.surface_correct, result.intent_correct, result.species_recall = \
-        evaluate_intent(task, parsed_intent)
+    result.surface_correct, result.intent_correct, result.species_recall = evaluate_intent(task, parsed_intent)
 
     # ── 2. INCAR generation ───────────────────────────────────────────
     # Get the primary calc type and generate INCAR
     primary_calc = task.expected_calc_types[-1]  # last calc type
     calc_key_map = {
-        "relax_slab": "static", "relax_adsorbate": "static",
-        "static": "static", "static_scf": "static_scf",
-        "dos": "dos", "pdos": "pdos", "band": "band",
-        "freq": "static", "neb": "static",
-        "bader": "bader", "cohp": "cohp",
+        "relax_slab": "static",
+        "relax_adsorbate": "static",
+        "static": "static",
+        "static_scf": "static_scf",
+        "dos": "dos",
+        "pdos": "pdos",
+        "band": "band",
+        "freq": "static",
+        "neb": "static",
+        "bader": "bader",
+        "cohp": "cohp",
         "work_function": "work_function",
     }
     incar_key = calc_key_map.get(primary_calc, "static")
@@ -509,12 +606,13 @@ def simulate_chatdft_on_task(task: BenchmarkTask) -> TaskResult:
     # Apply domain-specific adjustments (what ChatDFT's parameter agent does)
     generated_incar = _apply_domain_adjustments(generated_incar, task, parsed_intent)
 
-    result.incar_correct_keys, result.incar_total_keys, result.incar_accuracy, result.incar_errors = \
-        evaluate_incar(task, generated_incar)
+    result.incar_correct_keys, result.incar_total_keys, result.incar_accuracy, result.incar_errors = evaluate_incar(
+        task, generated_incar
+    )
 
     # ── 3. Error recovery ─────────────────────────────────────────────
     if task.injected_errors:
-        from server.execution.agent_coordinator import classify_dft_error, RetryManager
+        from server.execution.agent_coordinator import RetryManager, classify_dft_error
 
         recovery_log = []
         for error_type in task.injected_errors:
@@ -524,16 +622,19 @@ def simulate_chatdft_on_task(task: BenchmarkTask) -> TaskResult:
             rm = RetryManager(max_retries=3)
             fix = rm.get_adjusted_params(generated_incar, classification)
 
-            recovery_log.append({
-                "error_type": error_type,
-                "category": classification.category.value,
-                "detected": classification.is_retryable,
-                "fix": fix,
-                "success": bool(fix),  # simplified: if we have a fix, assume it works
-            })
+            recovery_log.append(
+                {
+                    "error_type": error_type,
+                    "category": classification.category.value,
+                    "detected": classification.is_retryable,
+                    "fix": fix,
+                    "success": bool(fix),  # simplified: if we have a fix, assume it works
+                }
+            )
 
-        result.errors_injected, result.errors_detected, result.errors_fixed = \
-            evaluate_error_recovery(task, recovery_log)
+        result.errors_injected, result.errors_detected, result.errors_fixed = evaluate_error_recovery(
+            task, recovery_log
+        )
 
     # ── Timing ────────────────────────────────────────────────────────
     result.chatdft_setup_s = time.time() - t0
@@ -556,16 +657,12 @@ def _simulate_intent_parse(query: str) -> Dict[str, Any]:
     intent: Dict[str, Any] = {"species": [], "surface": "", "calc_types": []}
 
     # Surface extraction
-    surface_match = re.search(
-        r'([A-Z][a-z]?(?:\d*[A-Z][a-z]?)*)\((\d{3,4})\)', query
-    )
+    surface_match = re.search(r"([A-Z][a-z]?(?:\d*[A-Z][a-z]?)*)\((\d{3,4})\)", query)
     if surface_match:
         intent["surface"] = f"{surface_match.group(1)}({surface_match.group(2)})"
 
     # Species extraction
-    species_patterns = re.findall(
-        r'\b(CO2?|COOH|CHO|CH[234]O?H?|OH|OOH|N2|NH[23]?|H2?O?|O)\b', query
-    )
+    species_patterns = re.findall(r"\b(CO2?|COOH|CHO|CH[234]O?H?|OH|OOH|N2|NH[23]?|H2?O?|O)\b", query)
     intent["species"] = [f"{s}*" for s in species_patterns]
 
     # Calc type hints
@@ -627,19 +724,13 @@ def _generate_error_text(error_type: str) -> str:
             "Error EDDDAV: not converged after 200 iterations\n"
         ),
         "geometry_explosion": (
-            "WARNING: VERY BAD NEWS! internal error in subroutine SGRCON:\n"
-            "Found some forces that are VERY large\n"
+            "WARNING: VERY BAD NEWS! internal error in subroutine SGRCON:\nFound some forces that are VERY large\n"
         ),
         "memory_overflow": (
-            "slurmstepd: error: Detected 1 oom-killer event(s). "
-            "Some of the step tasks have been OOM Killed.\n"
+            "slurmstepd: error: Detected 1 oom-killer event(s). Some of the step tasks have been OOM Killed.\n"
         ),
-        "potcar_precision": (
-            "WARNING: POTCAR file POTCAR not found for element X\n"
-        ),
-        "queue_error": (
-            "CANCELLED AT 2024-01-15T12:00:00 DUE TO TIME LIMIT\n"
-        ),
+        "potcar_precision": ("WARNING: POTCAR file POTCAR not found for element X\n"),
+        "queue_error": ("CANCELLED AT 2024-01-15T12:00:00 DUE TO TIME LIMIT\n"),
     }
     return templates.get(error_type, f"Unknown error: {error_type}")
 
@@ -647,6 +738,7 @@ def _generate_error_text(error_type: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 # Run full benchmark suite
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def run_e2e_benchmark(
     tasks: Optional[List[BenchmarkTask]] = None,
@@ -746,8 +838,16 @@ def run_e2e_benchmark(
         "by_domain": by_domain,
         "calc_type_coverage": {
             "supported": [
-                "static_scf", "relax", "dos", "pdos", "band", "elf",
-                "bader", "cdd", "work_function", "cohp",
+                "static_scf",
+                "relax",
+                "dos",
+                "pdos",
+                "band",
+                "elf",
+                "bader",
+                "cdd",
+                "work_function",
+                "cohp",
             ],
             "total": 10,
             "coverage": "10/10",
@@ -774,31 +874,34 @@ def print_summary_table(summary: Dict[str, Any]) -> None:
     e = summary["error_recovery"]
 
     rows = [
-        ("Tasks evaluated",             f"{summary['n_tasks']}",        "",           ""),
-        ("Overall success rate",         f"{summary['overall_success_rate']:.0%}",  "",  ""),
-        ("─" * 30,                       "─" * 12,                       "─" * 12,    "─" * 15),
-        ("Metric",                       "Human",                        "ChatDFT",   "Improvement"),
-        ("─" * 30,                       "─" * 12,                       "─" * 12,    "─" * 15),
-        ("Median setup time",
-         f"{t['median_human_min']:.0f} min",
-         f"{t['median_chatdft_s']:.1f} sec",
-         f"{t['median_speedup']:.0f}x faster"),
-        ("Intent parsing accuracy",      "N/A",   f"{a['intent_accuracy']:.0%}",      ""),
-        ("Surface recognition",          "N/A",   f"{a['surface_accuracy']:.0%}",      ""),
-        ("Species recall",               "N/A",   f"{a['species_recall']:.0%}",        ""),
-        ("INCAR param correctness",
-         "82% (survey)",
-         f"{a['incar_accuracy']:.0%}",
-         f"+{(a['incar_accuracy']-0.82)*100:.0f}pp"),
-        ("Error detection rate",
-         "34% (survey)",
-         f"{e['detection_rate']:.0%}",
-         f"+{(e['detection_rate']-0.34)*100:.0f}pp"),
-        ("Error auto-fix rate",
-         "0% (manual)",
-         f"{e['fix_rate']:.0%}",
-         "novel capability"),
-        ("Calc type coverage",           "N/A",   "10/10",                             ""),
+        ("Tasks evaluated", f"{summary['n_tasks']}", "", ""),
+        ("Overall success rate", f"{summary['overall_success_rate']:.0%}", "", ""),
+        ("─" * 30, "─" * 12, "─" * 12, "─" * 15),
+        ("Metric", "Human", "ChatDFT", "Improvement"),
+        ("─" * 30, "─" * 12, "─" * 12, "─" * 15),
+        (
+            "Median setup time",
+            f"{t['median_human_min']:.0f} min",
+            f"{t['median_chatdft_s']:.1f} sec",
+            f"{t['median_speedup']:.0f}x faster",
+        ),
+        ("Intent parsing accuracy", "N/A", f"{a['intent_accuracy']:.0%}", ""),
+        ("Surface recognition", "N/A", f"{a['surface_accuracy']:.0%}", ""),
+        ("Species recall", "N/A", f"{a['species_recall']:.0%}", ""),
+        (
+            "INCAR param correctness",
+            "82% (survey)",
+            f"{a['incar_accuracy']:.0%}",
+            f"+{(a['incar_accuracy'] - 0.82) * 100:.0f}pp",
+        ),
+        (
+            "Error detection rate",
+            "34% (survey)",
+            f"{e['detection_rate']:.0%}",
+            f"+{(e['detection_rate'] - 0.34) * 100:.0f}pp",
+        ),
+        ("Error auto-fix rate", "0% (manual)", f"{e['fix_rate']:.0%}", "novel capability"),
+        ("Calc type coverage", "N/A", "10/10", ""),
     ]
 
     for row in rows:
@@ -812,17 +915,21 @@ def print_summary_table(summary: Dict[str, Any]) -> None:
     # By difficulty
     print("\n  By Difficulty:")
     for diff, stats in summary.get("by_difficulty", {}).items():
-        print(f"    {diff:8s}: success={stats['success_rate']:.0%}  "
-              f"INCAR={stats['mean_incar_acc']:.0%}  "
-              f"human={stats['median_human_min']:.0f}min  "
-              f"chatdft={stats['median_chatdft_s']:.3f}s")
+        print(
+            f"    {diff:8s}: success={stats['success_rate']:.0%}  "
+            f"INCAR={stats['mean_incar_acc']:.0%}  "
+            f"human={stats['median_human_min']:.0f}min  "
+            f"chatdft={stats['median_chatdft_s']:.3f}s"
+        )
 
     # By domain
     print("\n  By Domain:")
     for domain, stats in summary.get("by_domain", {}).items():
-        print(f"    {domain:12s}: success={stats['success_rate']:.0%}  "
-              f"INCAR={stats['mean_incar_acc']:.0%}  "
-              f"(n={stats['n']})")
+        print(
+            f"    {domain:12s}: success={stats['success_rate']:.0%}  "
+            f"INCAR={stats['mean_incar_acc']:.0%}  "
+            f"(n={stats['n']})"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════

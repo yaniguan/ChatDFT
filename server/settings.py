@@ -2,7 +2,9 @@
 from __future__ import annotations
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
-import os, sys
+import logging, os, sys
+
+_log = logging.getLogger("chatdft")
 
 # detect paths
 HERE = Path(__file__).resolve().parent                      # .../server

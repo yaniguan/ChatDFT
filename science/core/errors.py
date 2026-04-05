@@ -49,6 +49,7 @@ class ChatDFTError(Exception):
 
 # ── Data errors ──────────────────────────────────────────────────────
 
+
 class DataError(ChatDFTError):
     """Invalid input data."""
 
@@ -67,6 +68,7 @@ class InvalidReactionNetwork(DataError):
 
 # ── Model errors ─────────────────────────────────────────────────────
 
+
 class ModelError(ChatDFTError):
     """ML model failure during training or inference."""
 
@@ -80,6 +82,7 @@ class InferenceError(ModelError):
 
 
 # ── Physics errors ───────────────────────────────────────────────────
+
 
 class PhysicsError(ChatDFTError):
     """Result violates physical constraints."""

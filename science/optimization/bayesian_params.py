@@ -31,8 +31,8 @@ Key references
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 import numpy as np
 from scipy.optimize import minimize
@@ -46,6 +46,7 @@ log = logging.getLogger(__name__)
 # Gaussian Process (minimal, self-contained)
 # ---------------------------------------------------------------------------
 
+
 class GaussianProcess:
     """
     Gaussian Process regression with Matern-5/2 kernel.
@@ -55,8 +56,7 @@ class GaussianProcess:
     Fit by maximising log marginal likelihood over (σ², l, σ_noise).
     """
 
-    def __init__(self, length_scale: float = 1.0, signal_var: float = 1.0,
-                 noise_var: float = 1e-4):
+    def __init__(self, length_scale: float = 1.0, signal_var: float = 1.0, noise_var: float = 1e-4):
         self.l = length_scale
         self.sigma2 = signal_var
         self.noise = noise_var
@@ -109,7 +109,11 @@ class GaussianProcess:
             try:
                 L = np.linalg.cholesky(K)
                 alpha = np.linalg.solve(L.T, np.linalg.solve(L, self.y_train))
-                log_ml = -0.5 * self.y_train @ alpha - np.sum(np.log(np.diag(L))) - 0.5 * len(self.y_train) * np.log(2 * np.pi)
+                log_ml = (
+                    -0.5 * self.y_train @ alpha
+                    - np.sum(np.log(np.diag(L)))
+                    - 0.5 * len(self.y_train) * np.log(2 * np.pi)
+                )
                 return -log_ml
             except np.linalg.LinAlgError:
                 return 1e10
@@ -119,8 +123,7 @@ class GaussianProcess:
         rng = np.random.default_rng(42)
         for _ in range(n_restarts):
             x0 = rng.normal(0, 1, 2)
-            res = minimize(neg_log_marginal, x0, method="L-BFGS-B",
-                           bounds=[(-3, 3), (-3, 3)])
+            res = minimize(neg_log_marginal, x0, method="L-BFGS-B", bounds=[(-3, 3), (-3, 3)])
             if res.fun < best_val:
                 best_val = res.fun
                 best_params = res.x
@@ -133,8 +136,8 @@ class GaussianProcess:
 # Acquisition functions
 # ---------------------------------------------------------------------------
 
-def expected_improvement(mu: np.ndarray, sigma: np.ndarray,
-                         best_y: float, xi: float = 0.01) -> np.ndarray:
+
+def expected_improvement(mu: np.ndarray, sigma: np.ndarray, best_y: float, xi: float = 0.01) -> np.ndarray:
     """Expected Improvement acquisition function."""
     improvement = mu - best_y - xi
     Z = improvement / (sigma + 1e-12)
@@ -146,6 +149,7 @@ def expected_improvement(mu: np.ndarray, sigma: np.ndarray,
 # ---------------------------------------------------------------------------
 # Cost model for DFT calculations
 # ---------------------------------------------------------------------------
+
 
 def dft_cost_model(encut: float, kppra: int, n_atoms: int = 36) -> float:
     """
@@ -164,13 +168,14 @@ def dft_cost_model(encut: float, kppra: int, n_atoms: int = 36) -> float:
 # Bayesian DFT Parameter Optimizer
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ParameterPoint:
     encut: float
     kppra: int
     energy_eV: float = 0.0
     cost: float = 0.0
-    energy_error: float = 0.0    # |E - E_converged|
+    energy_error: float = 0.0  # |E - E_converged|
 
 
 @dataclass
@@ -207,14 +212,17 @@ class BayesianParameterOptimizer:
     >>> result = optimizer.result()
     """
 
-    def __init__(self, n_atoms: int = 36,
-                 encut_range: Tuple[float, float] = (300, 600),
-                 kppra_range: Tuple[int, int] = (400, 3200),
-                 target_error: float = 0.001):
+    def __init__(
+        self,
+        n_atoms: int = 36,
+        encut_range: Tuple[float, float] = (300, 600),
+        kppra_range: Tuple[int, int] = (400, 3200),
+        target_error: float = 0.001,
+    ):
         self.n_atoms = n_atoms
         self.encut_range = encut_range
         self.kppra_range = kppra_range
-        self.target_error = target_error   # eV/atom convergence target
+        self.target_error = target_error  # eV/atom convergence target
 
         self.observations: List[ParameterPoint] = []
         self._gp = GaussianProcess(length_scale=1.0, signal_var=1.0, noise_var=1e-4)
@@ -229,18 +237,19 @@ class BayesianParameterOptimizer:
         rng.shuffle(encuts)
         rng.shuffle(kppras)
         # Round ENCUT to nearest 10, KPPRA to nearest 100
-        return [
-            (round(e / 10) * 10, round(k / 100) * 100)
-            for e, k in zip(encuts, kppras)
-        ]
+        return [(round(e / 10) * 10, round(k / 100) * 100) for e, k in zip(encuts, kppras)]
 
     def observe(self, encut: float, kppra: int, energy_eV: float):
         """Record one DFT evaluation result."""
         cost = dft_cost_model(encut, int(kppra), self.n_atoms)
-        self.observations.append(ParameterPoint(
-            encut=encut, kppra=int(kppra),
-            energy_eV=energy_eV, cost=cost,
-        ))
+        self.observations.append(
+            ParameterPoint(
+                encut=encut,
+                kppra=int(kppra),
+                energy_eV=energy_eV,
+                cost=cost,
+            )
+        )
 
         # Update reference as the highest-accuracy point
         if self._reference_energy is None:
@@ -300,9 +309,13 @@ class BayesianParameterOptimizer:
         """Return the optimization result with Pareto front."""
         if not self.observations:
             return OptimizationResult(
-                optimal_encut=400, optimal_kppra=1600,
-                predicted_error=0, predicted_cost=1,
-                n_evaluations=0, pareto_front=[], all_points=[],
+                optimal_encut=400,
+                optimal_kppra=1600,
+                predicted_error=0,
+                predicted_cost=1,
+                n_evaluations=0,
+                pareto_front=[],
+                all_points=[],
                 convergence_history=[],
             )
 

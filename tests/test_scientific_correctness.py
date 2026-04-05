@@ -16,14 +16,15 @@ Categories:
 import numpy as np
 import pytest
 
-
 # ─── Rotational / Translational Invariance ─────────────────────────
+
 
 class TestInvariance:
     """Graph features and energies must be invariant under rigid transforms."""
 
     def _build_graph(self, positions, elements, cell):
         from science.representations.surface_graph import SurfaceTopologyGraph
+
         stg = SurfaceTopologyGraph(positions, elements, cell)
         stg.build()
         return stg
@@ -42,7 +43,7 @@ class TestInvariance:
         # but relative ordering and normalised features should be close)
         # Z/100 and layer should be exactly the same
         np.testing.assert_allclose(X1[:, 0], X2[:, 0], atol=1e-6)  # Z/100
-        np.testing.assert_array_equal(X1[:, 1], X2[:, 1])           # layer
+        np.testing.assert_array_equal(X1[:, 1], X2[:, 1])  # layer
 
     def test_rebuild_determinism(self, cu111_positions, cu111_elements, cu111_cell):
         """Building the same graph twice should give identical features."""
@@ -60,7 +61,7 @@ class TestInvariance:
             import torch
         except ImportError:
             pytest.skip("PyTorch not installed")
-        from science.predictions.gnn_models import build_model, GraphData
+        from science.predictions.gnn_models import GraphData, build_model
 
         rng = np.random.default_rng(42)
         N, E = 6, 12
@@ -93,7 +94,7 @@ class TestInvariance:
             import torch
         except ImportError:
             pytest.skip("PyTorch not installed")
-        from science.predictions.gnn_models import build_model, GraphData
+        from science.predictions.gnn_models import GraphData, build_model
 
         rng = np.random.default_rng(42)
         N, E = 6, 12
@@ -106,11 +107,8 @@ class TestInvariance:
         theta = 1.23
         axis = np.array([0.3, 0.5, 0.8])
         axis = axis / np.linalg.norm(axis)
-        K = np.array([[0, -axis[2], axis[1]],
-                       [axis[2], 0, -axis[0]],
-                       [-axis[1], axis[0], 0]])
-        R = (np.eye(3) + np.sin(theta) * K +
-             (1 - np.cos(theta)) * K @ K).astype(np.float32)
+        K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        R = (np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * K @ K).astype(np.float32)
         pos_rot = pos @ R.T
 
         data1 = GraphData.from_numpy(x, ei, ea, pos, y=0.0)
@@ -122,13 +120,11 @@ class TestInvariance:
             e1 = model(data1).item()
             e2 = model(data2).item()
         # Energy (scalar) should be invariant
-        assert abs(e1 - e2) < 1e-3, (
-            f"SE(3)-Transformer not rotation-invariant: {e1} vs {e2}, "
-            f"diff={abs(e1-e2):.6f}"
-        )
+        assert abs(e1 - e2) < 1e-3, f"SE(3)-Transformer not rotation-invariant: {e1} vs {e2}, diff={abs(e1 - e2):.6f}"
 
 
 # ─── Physical Monotonicity Constraints ──────────────────────────────
+
 
 class TestPhysicsConstraints:
     """Physical laws that the algorithms must respect."""
@@ -136,18 +132,19 @@ class TestPhysicsConstraints:
     def test_einstein_sigma_increases_with_temperature(self):
         """σ(T) must increase monotonically with temperature."""
         from science.generation.informed_sampler import EinsteinRattler
+
         rattler = EinsteinRattler(omega_THz=5.0, quantum=True, rng_seed=42)
         temps = [1, 50, 100, 300, 600, 1000, 2000]
         sigmas = [rattler._sigma(63.546, T) for T in temps]
         for i in range(1, len(sigmas)):
             assert sigmas[i] >= sigmas[i - 1], (
-                f"σ not monotone: σ({temps[i-1]}K)={sigmas[i-1]:.6f} > "
-                f"σ({temps[i]}K)={sigmas[i]:.6f}"
+                f"σ not monotone: σ({temps[i - 1]}K)={sigmas[i - 1]:.6f} > σ({temps[i]}K)={sigmas[i]:.6f}"
             )
 
     def test_einstein_lighter_atoms_displace_more(self):
         """Lighter atoms must have larger displacement at same T."""
         from science.generation.informed_sampler import EinsteinRattler
+
         rattler = EinsteinRattler(omega_THz=5.0, quantum=True, rng_seed=42)
         sigma_H = rattler._sigma(1.008, 300)
         sigma_Cu = rattler._sigma(63.546, 300)
@@ -157,6 +154,7 @@ class TestPhysicsConstraints:
     def test_quantum_zpe_at_zero_temperature(self):
         """At T→0, quantum σ >> classical σ (zero-point energy dominates)."""
         from science.generation.informed_sampler import EinsteinRattler
+
         q_rattler = EinsteinRattler(omega_THz=5.0, quantum=True, rng_seed=42)
         c_rattler = EinsteinRattler(omega_THz=5.0, quantum=False, rng_seed=42)
         sigma_q = q_rattler._sigma(63.546, 0.001)
@@ -167,6 +165,7 @@ class TestPhysicsConstraints:
     def test_bo_higher_params_lower_error(self):
         """Higher ENCUT + KPPRA should give lower energy error."""
         from science.benchmarks.baselines import synthetic_energy_landscape
+
         e_low = synthetic_energy_landscape(350, 800)
         e_high = synthetic_energy_landscape(600, 3200)
         target = -142.567
@@ -175,44 +174,46 @@ class TestPhysicsConstraints:
     def test_golden_dataset_dG_starts_at_zero(self):
         """All free energy profiles must start at 0 (CHE convention)."""
         from science.evaluation.golden_dataset import GOLDEN_SET
+
         for ex in GOLDEN_SET:
-            assert ex.expected_dG_profile[0] == 0.0, (
-                f"{ex.id}: dG[0] = {ex.expected_dG_profile[0]}"
-            )
+            assert ex.expected_dG_profile[0] == 0.0, f"{ex.id}: dG[0] = {ex.expected_dG_profile[0]}"
 
     def test_golden_dataset_overpotentials_physical(self):
         """Overpotentials must be positive and < 5 V."""
         from science.evaluation.golden_dataset import GOLDEN_SET
+
         for ex in GOLDEN_SET:
-            assert 0 < ex.expected_overpotential < 5.0, (
-                f"{ex.id}: η = {ex.expected_overpotential}"
-            )
+            assert 0 < ex.expected_overpotential < 5.0, f"{ex.id}: η = {ex.expected_overpotential}"
 
 
 # ─── Negative Tests (Invalid Inputs) ────────────────────────────────
+
 
 class TestNegativeInputs:
     """Invalid inputs should raise clear errors, not silently corrupt."""
 
     def test_nan_positions_rejected(self):
-        from science.representations.surface_graph import SurfaceTopologyGraph
         from science.core.errors import InvalidStructure
+        from science.representations.surface_graph import SurfaceTopologyGraph
+
         pos = np.array([[0, 0, 0], [np.nan, 1, 2]], dtype=float)
         cell = np.eye(3) * 10
         with pytest.raises(InvalidStructure, match="NaN"):
             SurfaceTopologyGraph(pos, ["Cu", "Cu"], cell)
 
     def test_zero_volume_cell_rejected(self):
-        from science.representations.surface_graph import SurfaceTopologyGraph
         from science.core.errors import InvalidStructure
+        from science.representations.surface_graph import SurfaceTopologyGraph
+
         pos = np.array([[0, 0, 0], [1, 1, 1]], dtype=float)
         cell = np.array([[1, 0, 0], [1, 0, 0], [0, 0, 1]], dtype=float)  # degenerate
         with pytest.raises(InvalidStructure, match="[Dd]egenerate"):
             SurfaceTopologyGraph(pos, ["Cu", "Cu"], cell)
 
     def test_mismatched_positions_elements(self):
-        from science.representations.surface_graph import SurfaceTopologyGraph
         from science.core.errors import InvalidStructure
+        from science.representations.surface_graph import SurfaceTopologyGraph
+
         pos = np.array([[0, 0, 0]], dtype=float)
         cell = np.eye(3) * 10
         with pytest.raises(InvalidStructure):
@@ -220,6 +221,7 @@ class TestNegativeInputs:
 
     def test_empty_scf_trajectory(self):
         from science.time_series.scf_convergence import SCFTrajectory, analyse_scf
+
         traj = SCFTrajectory(dE=[], ediff=1e-5, nelm=60)
         report = analyse_scf(traj, is_metal=True)
         # Should handle gracefully, not crash
@@ -231,7 +233,8 @@ class TestNegativeInputs:
             import torch
         except ImportError:
             pytest.skip("PyTorch not installed")
-        from science.predictions.gnn_models import build_model, GraphData
+        from science.predictions.gnn_models import GraphData, build_model
+
         N = 4
         x = np.random.rand(N, 6).astype(np.float32)
         ei = np.zeros((2, 0), dtype=np.int64)  # no edges
@@ -249,12 +252,14 @@ class TestNegativeInputs:
 
 # ─── Numerical Regression Tests ─────────────────────────────────────
 
+
 class TestNumericalRegression:
     """Lock key outputs to prevent silent numerical drift."""
 
     def test_cu111_node_features_regression(self, cu111_positions, cu111_elements, cu111_cell):
         """Cu(111) node features must match reference values."""
         from science.representations.surface_graph import SurfaceTopologyGraph
+
         stg = SurfaceTopologyGraph(cu111_positions, cu111_elements, cu111_cell)
         stg.build()
         X = stg.node_feature_matrix()
@@ -267,6 +272,7 @@ class TestNumericalRegression:
     def test_einstein_sigma_regression(self):
         """Einstein σ at 300K for Cu must match reference."""
         from science.generation.informed_sampler import EinsteinRattler
+
         rattler = EinsteinRattler(omega_THz=5.0, quantum=True, rng_seed=42)
         sigma = rattler._sigma(63.546, 300.0)
         # Reference: σ(Cu, 300K, ω=5THz) ≈ 1.118 Å (verified from implementation)
@@ -275,8 +281,10 @@ class TestNumericalRegression:
     def test_fft_sloshing_detection_regression(self):
         """Sloshing detector must correctly classify known trajectories."""
         from science.time_series.scf_convergence import (
-            SCFTrajectory, ChargeSloshingDetector,
+            ChargeSloshingDetector,
+            SCFTrajectory,
         )
+
         detector = ChargeSloshingDetector()
 
         # Healthy: pure exponential decay
@@ -286,25 +294,27 @@ class TestNumericalRegression:
         assert not result_h.is_sloshing, "Healthy trajectory misclassified as sloshing"
 
         # Sloshing: oscillatory with slow decay
-        sloshing_dE = list(0.01 * np.exp(-0.02 * t) *
-                           (0.5 + np.abs(np.sin(2 * np.pi * t / 5))) + 1e-7)
+        sloshing_dE = list(0.01 * np.exp(-0.02 * t) * (0.5 + np.abs(np.sin(2 * np.pi * t / 5))) + 1e-7)
         result_s = detector.detect(SCFTrajectory(dE=sloshing_dE, ediff=1e-5, nelm=60))
         assert result_s.is_sloshing, "Sloshing trajectory missed"
 
     def test_synthetic_landscape_regression(self):
         """Synthetic energy landscape must produce stable values."""
         from science.benchmarks.baselines import synthetic_energy_landscape
+
         e = synthetic_energy_landscape(500, 2400)
         assert abs(e - (-142.5639)) < 0.01, f"Landscape regression: {e}"
 
 
 # ─── Seed Manager Tests ─────────────────────────────────────────────
 
+
 class TestSeedManager:
     """Verify reproducibility infrastructure."""
 
     def test_set_global_seed(self):
-        from science.core.seeds import set_global_seed, get_rng
+        from science.core.seeds import get_rng, set_global_seed
+
         set_global_seed(123)
         rng1 = get_rng("test_module")
         val1 = rng1.random()
@@ -316,14 +326,16 @@ class TestSeedManager:
         assert val1 == val2
 
     def test_different_modules_different_rngs(self):
-        from science.core.seeds import set_global_seed, get_rng
+        from science.core.seeds import get_rng, set_global_seed
+
         set_global_seed(42)
         rng_a = get_rng("module_a")
         rng_b = get_rng("module_b")
         assert rng_a.random() != rng_b.random()
 
     def test_experiment_manifest(self):
-        from science.core.seeds import set_global_seed, experiment_manifest
+        from science.core.seeds import experiment_manifest, set_global_seed
+
         set_global_seed(42)
         m = experiment_manifest()
         assert m["global_seed"] == 42
@@ -332,23 +344,27 @@ class TestSeedManager:
 
 # ─── Error Taxonomy Tests ───────────────────────────────────────────
 
+
 class TestErrorTaxonomy:
     """Verify the error hierarchy works correctly."""
 
     def test_invalid_structure_is_data_error(self):
-        from science.core.errors import InvalidStructure, DataError, ChatDFTError
+        from science.core.errors import ChatDFTError, DataError, InvalidStructure
+
         e = InvalidStructure("bad cell", context={"volume": 0.0})
         assert isinstance(e, DataError)
         assert isinstance(e, ChatDFTError)
         assert "volume=0.0" in str(e)
 
     def test_physics_error_hierarchy(self):
-        from science.core.errors import ThermodynamicError, PhysicsError
+        from science.core.errors import PhysicsError, ThermodynamicError
+
         e = ThermodynamicError("negative entropy")
         assert isinstance(e, PhysicsError)
 
     def test_model_error_hierarchy(self):
-        from science.core.errors import TrainingError, ModelError
+        from science.core.errors import ModelError, TrainingError
+
         e = TrainingError("loss diverged", context={"epoch": 50, "loss": float("inf")})
         assert isinstance(e, ModelError)
         assert "epoch=50" in str(e)
@@ -356,13 +372,14 @@ class TestErrorTaxonomy:
 
 # ─── Active Learning Tests ──────────────────────────────────────────
 
+
 class TestActiveLearning:
     """Test the DFT↔GNN active learning loop."""
 
     def test_ensemble_uncertainty(self):
         """Ensemble should produce uncertainty > 0."""
         try:
-            import torch
+            import torch  # noqa: F401
         except ImportError:
             pytest.skip("PyTorch not installed")
         from science.predictions.active_learning import GNNEnsemble
@@ -381,22 +398,25 @@ class TestActiveLearning:
     def test_active_loop_reduces_uncertainty(self):
         """Active learning should reduce uncertainty over iterations."""
         try:
-            import torch
+            import torch  # noqa: F401
         except ImportError:
             pytest.skip("PyTorch not installed")
         from science.predictions.active_learning import (
-            GNNEnsemble, ActiveLearner,
+            ActiveLearner,
+            GNNEnsemble,
         )
         from science.predictions.energy_predictor import (
-            generate_dataset, synthetic_adsorption_energy,
+            generate_dataset,
+            synthetic_adsorption_energy,
         )
 
         initial = generate_dataset(n_samples=15, seed=42, n_atoms=8)
-        oracle = lambda e, a, cn: synthetic_adsorption_energy(e, a, cn, noise_std=0.05)
+
+        def oracle(e, a, cn):
+            return synthetic_adsorption_energy(e, a, cn, noise_std=0.05)
 
         ensemble = GNNEnsemble("schnet", n_models=3, d_hidden=32, n_interactions=2)
-        learner = ActiveLearner(oracle=oracle, ensemble=ensemble,
-                                pool_size=20, batch_per_iter=3)
+        learner = ActiveLearner(oracle=oracle, ensemble=ensemble, pool_size=20, batch_per_iter=3)
         result = learner.run(initial, max_iterations=3, strategy="uncertainty", seed=42)
 
         assert result.n_dft_calls > len(initial)
@@ -406,21 +426,24 @@ class TestActiveLearning:
     def test_trainable_grounder_improves(self):
         """Trainable grounder should reduce loss during training."""
         try:
-            import torch
+            import torch  # noqa: F401
         except ImportError:
             pytest.skip("PyTorch not installed")
         from science.alignment.hypothesis_grounder import (
-            TrainableGrounder, ReactionNetwork,
+            ReactionNetwork,
+            TrainableGrounder,
         )
 
         grounder = TrainableGrounder(d_embed=32)
         pairs = []
         for i in range(15):
             h = f"CO2 reduction step {i} on Cu via COOH*"
-            n = ReactionNetwork.from_dict({
-                "reaction_network": [{"lhs": ["CO2(g)", "*"], "rhs": ["COOH*"]}],
-                "intermediates": ["*", "CO2(g)", "COOH*"],
-            })
+            n = ReactionNetwork.from_dict(
+                {
+                    "reaction_network": [{"lhs": ["CO2(g)", "*"], "rhs": ["COOH*"]}],
+                    "intermediates": ["*", "CO2(g)", "COOH*"],
+                }
+            )
             dG = [0.0, 0.2 + i * 0.01, -0.1]
             pairs.append((h, n, dG))
 
@@ -430,6 +453,7 @@ class TestActiveLearning:
     def test_threshold_validation(self):
         """FFT threshold validation should produce valid metrics."""
         from science.time_series.scf_convergence import validate_thresholds
+
         result = validate_thresholds(n_healthy=15, n_sloshing=15, seed=42, n_grid=5)
         assert 0 < result.best_ac_ratio < 1
         assert 0 < result.f1 <= 1

@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chatdft-db-migrate
+  namespace: chatdft
+  labels:
+    app: chatdft-server
+    component: migration
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/chatdft-server:latest
+          command:
+            - alembic
+            - upgrade
+            - head
+          envFrom:
+            - secretRef:
+                name: chatdft-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
