@@ -195,21 +195,29 @@ async def ingest_paper(
             existing_stmt = select(KnowledgeChunk).where(KnowledgeChunk.doc_id == doc_id)
             existing_res = await s.execute(existing_stmt)
             if not existing_res.scalars().all():
-                # Use semantic_chunk() for section-aware splitting;
-                # abstract is always prepended as chunk 0.
+                # ── Chemistry-aware chunker (preferred) ──────────
+                # Falls back to semantic_chunk() if chem_chunker unavailable.
                 abstract_text = abstract or title
-                body_chunks = semantic_chunk(body)  # [{text, section}, ...]
-
-                # Build final chunk list: abstract anchor + deduped body chunks
-                deduped = [c for c in body_chunks if c["text"].strip() != abstract_text.strip()]
-                all_chunks = [{"text": abstract_text, "section": "abstract"}] + deduped
+                try:
+                    from science.rag.chem_chunker import chem_chunk as _chem_chunk
+                    chem_chunks = _chem_chunk(body, source_doc=source_id or title)
+                    deduped = [c for c in chem_chunks if c.text.strip() != abstract_text.strip()]
+                    all_chunks = [{"text": abstract_text, "section": "abstract", "enriched": abstract_text}]
+                    all_chunks += [{"text": c.text, "section": c.section, "enriched": c.enriched_text} for c in deduped]
+                except ImportError:
+                    body_chunks = semantic_chunk(body)
+                    deduped = [c for c in body_chunks if c["text"].strip() != abstract_text.strip()]
+                    all_chunks = [{"text": abstract_text, "section": "abstract", "enriched": abstract_text}] + \
+                                 [dict(c, enriched=c["text"]) for c in deduped]
 
                 for idx, ch in enumerate(all_chunks):
                     chunk_text_raw = ch["text"]
                     section        = ch["section"]
                     if not chunk_text_raw.strip():
                         continue
-                    vec = await embed_text(chunk_text_raw)
+                    # Embed the enriched text (with context header) for better retrieval
+                    embed_input = ch.get("enriched", chunk_text_raw)
+                    vec = await embed_text(embed_input)
                     chunk = KnowledgeChunk(
                         doc_id=doc_id,
                         chunk_idx=idx,

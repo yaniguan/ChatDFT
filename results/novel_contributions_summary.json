@@ -1,0 +1,78 @@
+{
+  "generated_at": "2026-04-04",
+  "rag_chunker": {
+    "n_chunks": 7,
+    "mean_completeness": 0.55,
+    "pct_complete": 0.5714285714285714,
+    "type_distribution": {
+      "table": 1,
+      "reaction": 3,
+      "prose": 3
+    },
+    "avg_tags_per_chunk": 1.5714285714285714,
+    "avg_species_per_chunk": 5.428571428571429,
+    "n_graph_edges": 11
+  },
+  "e2e_benchmark": {
+    "n_tasks": 25,
+    "overall_success_rate": 0.4,
+    "timing": {
+      "total_human_min": 2320.0,
+      "total_chatdft_s": 0.06,
+      "median_human_min": 50.0,
+      "median_chatdft_s": 0.0,
+      "median_speedup": 3000000.0
+    },
+    "accuracy": {
+      "intent_accuracy": 0.56,
+      "surface_accuracy": 0.68,
+      "species_recall": 0.712,
+      "incar_accuracy": 0.817
+    },
+    "error_recovery": {
+      "tasks_with_errors": 5,
+      "errors_injected": 6,
+      "errors_detected": 6,
+      "detection_rate": 1.0,
+      "errors_fixed": 5,
+      "fix_rate": 0.833
+    }
+  },
+  "auto_remediation": {
+    "total_test_cases": 60,
+    "scf_diagnosis": {
+      "n_cases": 20,
+      "accuracy": 0.75,
+      "fix_rate": 1.0
+    },
+    "consistency_validation": {
+      "n_cases": 20,
+      "detection_rate": 0.75,
+      "auto_fix_rate": 0.75
+    },
+    "workflow_resolution": {
+      "n_cases": 20,
+      "accuracy": 1.0
+    },
+    "overall": {
+      "detection_rate": 0.8333333333333334,
+      "auto_fix_rate": 0.9166666666666666
+    }
+  },
+  "test_suite": {
+    "total_tests": 42,
+    "all_passing": true,
+    "existing_tests": 226,
+    "existing_all_passing": true
+  },
+  "figures_generated": [
+    "fig7_chem_chunker",
+    "fig8_multihop_graph",
+    "fig9_agent_dag",
+    "fig10_error_taxonomy",
+    "fig11_reward_signal",
+    "fig12_e2e_radar",
+    "fig13_e2e_domains",
+    "fig14_auto_remediation"
+  ]
+}

@@ -158,6 +158,16 @@ app.include_router(strulib_router)
 from server.science_routes import router as science_router
 app.include_router(science_router)
 
+# --- Scientist-facing API layer (zero-friction endpoints) ---
+from server.api.model_api import router as model_api_router
+app.include_router(model_api_router)
+
+from server.api.preprocessor import router as preprocessor_router
+app.include_router(preprocessor_router)
+
+from server.api.one_click import router as one_click_router
+app.include_router(one_click_router)
+
 
 
 # ====== Added endpoints and helpers (async-ready, drop-in) ======

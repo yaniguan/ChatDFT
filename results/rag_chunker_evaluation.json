@@ -1,0 +1,13 @@
+{
+  "n_chunks": 7,
+  "mean_completeness": 0.55,
+  "pct_complete": 0.5714285714285714,
+  "type_distribution": {
+    "table": 1,
+    "reaction": 3,
+    "prose": 3
+  },
+  "avg_tags_per_chunk": 1.5714285714285714,
+  "avg_species_per_chunk": 5.428571428571429,
+  "n_graph_edges": 11
+}

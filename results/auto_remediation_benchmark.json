@@ -1,0 +1,21 @@
+{
+  "total_test_cases": 60,
+  "scf_diagnosis": {
+    "n_cases": 20,
+    "accuracy": 0.75,
+    "fix_rate": 1.0
+  },
+  "consistency_validation": {
+    "n_cases": 20,
+    "detection_rate": 0.75,
+    "auto_fix_rate": 0.75
+  },
+  "workflow_resolution": {
+    "n_cases": 20,
+    "accuracy": 1.0
+  },
+  "overall": {
+    "detection_rate": 0.8333333333333334,
+    "auto_fix_rate": 0.9166666666666666
+  }
+}
