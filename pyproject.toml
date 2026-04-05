@@ -52,6 +52,9 @@ gnn = [
     "torch>=2.0.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["chatdft*", "science*", "server*", "client*"]
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
