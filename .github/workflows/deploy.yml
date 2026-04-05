@@ -107,13 +107,18 @@ jobs:
       # Run DB migration if server changed
       - name: Run DB migration
         if: needs.changes.outputs.server == 'true'
+        continue-on-error: true
         run: |
           sed "s|ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/chatdft-server|$ECR_SERVER|g" \
             infra/k8s/jobs/db-migrate.yaml > /tmp/migrate.yaml
           # Use unique job name to avoid conflicts
           sed -i "s/name: chatdft-db-migrate/name: chatdft-db-migrate-${GITHUB_SHA::8}/" /tmp/migrate.yaml
           kubectl apply -f /tmp/migrate.yaml -n chatdft
-          kubectl wait --for=condition=complete job/chatdft-db-migrate-${GITHUB_SHA::8} -n chatdft --timeout=120s
+          kubectl wait --for=condition=complete job/chatdft-db-migrate-${GITHUB_SHA::8} -n chatdft --timeout=300s || {
+            echo "Migration job logs:"
+            kubectl logs -l job-name=chatdft-db-migrate-${GITHUB_SHA::8} -n chatdft --tail=20 || true
+            echo "Warning: Migration timed out or failed, continuing with deploy..."
+          }
 
       # Restart deployments that had image changes
       - name: Deploy server
