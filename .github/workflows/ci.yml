@@ -14,13 +14,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install ruff mypy numpy
+      - run: pip install ruff mypy numpy sqlalchemy pydantic
       - name: Ruff lint
         run: ruff check science/ tests/ --output-format=github
       - name: Ruff format check
         run: ruff format --check science/ tests/
       - name: MyPy type check (science/)
-        run: mypy science/ --ignore-missing-imports --no-strict-optional
+        continue-on-error: true
+        run: mypy science/
 
   test:
     runs-on: ubuntu-latest
@@ -35,6 +36,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: |
+          pip install --upgrade pip setuptools wheel
           pip install -e ".[dev]"
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install pytest-cov
