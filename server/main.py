@@ -169,6 +169,12 @@ app.include_router(preprocessor_router)
 from server.api.one_click import router as one_click_router
 app.include_router(one_click_router)
 
+from server.api.batch_adsorption import router as batch_ads_router
+app.include_router(batch_ads_router)
+
+from server.api.batch_results import router as batch_results_router
+app.include_router(batch_results_router)
+
 
 
 # ====== Added endpoints and helpers (async-ready, drop-in) ======

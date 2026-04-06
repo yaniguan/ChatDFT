@@ -31,6 +31,7 @@ import unicodedata
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.responses import JSONResponse
 
 # ---------- LLM & RAG ----------
 try:
@@ -1050,7 +1051,16 @@ def _build_tasks(intent: Dict[str, Any],
 
 # ========================= /chat/plan =========================
 @router.post("/chat/plan")
-async def api_plan(request: Request) -> None:
+async def api_plan(request: Request):
+    try:
+        return await _api_plan_impl(request)
+    except Exception as e:
+        import logging
+        logging.getLogger("chatdft").exception("Plan endpoint crashed")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+async def _api_plan_impl(request: Request):
     body = await request.json()
     USE_SEED_POLICY = body.get("use_seed_policy", DEFAULTS["USE_SEED_POLICY"])
     CONF_THRESHOLD  = float(body.get("conf_threshold", DEFAULTS["CONF_THRESHOLD"]))
@@ -1176,9 +1186,9 @@ async def api_plan(request: Request) -> None:
 
     # 12) 组装 workflow（便于前端 HPC 页面）
     workflow = {
-        "id": f"wf-{session_id}-{int(datetime.now(timezone.utc).timestamp())}" if session_id else f"wf-{int(datetime.now(timezone.utc).timestamp())}",
+        "id": f"wf-{session_id}-{int(datetime.utcnow().timestamp())}" if session_id else f"wf-{int(datetime.utcnow().timestamp())}",
         "title": f"DFT workflow — {(intent_in.get('problem_type') or 'Task')}",
-        "created_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "created_at": datetime.utcnow().isoformat() + "Z",
         "project": f"session-{session_id}" if session_id else None,
         "run_id": session_id,
         "mechanisms": [mech_name] if mech_name else [],

@@ -157,4 +157,18 @@ def pull_results(job_uid, local_dir, svr=None):
     os.makedirs(local_dir, exist_ok=True)
     remote = f"{_target(svr)}:{_remote_base(svr).rstrip('/')}/{job_uid}/"
 
-    # 仅包含常见结果；可按需扩展
+    # Only pull common result files to avoid large transfers
+    includes = [
+        "OUTCAR", "CONTCAR", "CONTCAR_OPT", "OSZICAR", "vasprun.xml",
+        "ase_results.csv", "ase.out", "ase.run.log", "opt.log",
+        "stdout*", "stderr*",
+    ]
+    include_args = []
+    for inc in includes:
+        include_args += ["--include", inc]
+    include_args += ["--exclude", "*"]
+
+    subprocess.run(
+        ["rsync", "-av"] + include_args + [remote, local_dir.rstrip("/") + "/"],
+        check=False, capture_output=True, text=True,
+    )

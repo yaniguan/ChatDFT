@@ -1597,6 +1597,242 @@ def render_message(msg: dict):
             st.error(msg["content"])
 
 
+def _detect_adsorption_query(intent: dict, query_text: str = "") -> dict:
+    """Detect if this is an adsorption study and extract metals/adsorbate/sites."""
+    import re
+    result = {"is_adsorption": False}
+
+    q = query_text.lower() if query_text else ""
+    system = (intent or {}).get("system", {}) if isinstance(intent, dict) else {}
+    adsorbate = (intent or {}).get("adsorbate", "") or system.get("adsorbate", "")
+
+    # Check for adsorption keywords
+    ads_keywords = ["adsorption", "adsorb", "binding energy", "e_ads", "chemisorption"]
+    if not any(kw in q for kw in ads_keywords) and not adsorbate:
+        return result
+
+    # Extract adsorbate
+    for ads in ["H", "CO", "OH", "O", "N", "NH3", "H2O", "CO2", "COOH", "CHO"]:
+        if ads.lower() in q.split() or f"{ads.lower()} " in q:
+            adsorbate = ads
+            break
+    if not adsorbate:
+        adsorbate = "H"
+
+    # Extract metals
+    metals = []
+    all_metals = ["Pt", "Pd", "Ni", "Cu", "Au", "Ag", "Rh", "Ir", "Fe", "Co", "Ru", "Mo", "W"]
+    for m in all_metals:
+        if m.lower() in q.lower() or m in str(intent):
+            metals.append(m)
+    if not metals:
+        material = system.get("material", "")
+        metal_match = re.search(r"([A-Z][a-z]?)", material)
+        if metal_match and metal_match.group(1) in all_metals:
+            metals = [metal_match.group(1)]
+    if not metals:
+        metals = ["Pt"]
+
+    # Extract facet
+    facet_match = re.search(r"\((\d{3})\)", q) or re.search(r"(\d{3})\s*surface", q)
+    facet = facet_match.group(1) if facet_match else "111"
+
+    # Sites
+    sites = ["ontop", "bridge", "hollow"]
+
+    result = {
+        "is_adsorption": True,
+        "adsorbate": adsorbate,
+        "metals": metals,
+        "facet": facet,
+        "sites": sites,
+    }
+    return result
+
+
+def _render_hpc_batch_section(data: dict, msg_index: int = 0):
+    """Render HPC batch submission and monitoring section in the chat pipeline."""
+    if not data:
+        return
+
+    intent = data.get("intent", {})
+    # Try to detect adsorption query from the chat messages
+    query_text = ""
+    for msg in reversed(st.session_state.get("chat_messages", [])):
+        if msg.get("role") == "user":
+            query_text = msg.get("content", "")
+            break
+
+    # Unique key suffix to avoid duplicate keys across multiple messages
+    ks = f"_{msg_index}"
+
+    ads_info = _detect_adsorption_query(intent, query_text)
+
+    with st.expander("🚀 HPC Batch Submission", expanded=ads_info.get("is_adsorption", False)):
+        if ads_info.get("is_adsorption"):
+            st.markdown(
+                f"**Detected adsorption study:** {ads_info['adsorbate']} on "
+                f"{', '.join(ads_info['metals'])}({ads_info['facet']}) "
+                f"at {', '.join(ads_info['sites'])} sites"
+            )
+
+        # Editable configuration
+        col_a, col_m = st.columns(2)
+        with col_a:
+            adsorbate_sel = st.selectbox(
+                "Adsorbate", ["H", "CO", "OH", "O", "N", "NH3", "H2O"],
+                index=["H", "CO", "OH", "O", "N", "NH3", "H2O"].index(ads_info.get("adsorbate", "H")) if ads_info.get("adsorbate", "H") in ["H", "CO", "OH", "O", "N", "NH3", "H2O"] else 0,
+                key=f"hpc_adsorbate{ks}",
+            )
+        with col_m:
+            metals_sel = st.multiselect(
+                "Metals",
+                ["Pt", "Pd", "Ni", "Cu", "Au", "Ag", "Rh", "Ir", "Fe"],
+                default=ads_info.get("metals", ["Pt", "Pd", "Ni"]),
+                key=f"hpc_metals{ks}",
+            )
+
+        col_f, col_s = st.columns(2)
+        with col_f:
+            facet_sel = st.selectbox("Facet", ["111", "100", "110"], index=0, key=f"hpc_facet{ks}")
+        with col_s:
+            sites_sel = st.multiselect(
+                "Sites", ["ontop", "bridge", "hollow"],
+                default=ads_info.get("sites", ["ontop", "bridge", "hollow"]),
+                key=f"hpc_sites{ks}",
+            )
+
+        # Use selected values
+        ads_info = {
+            "is_adsorption": True,
+            "adsorbate": adsorbate_sel,
+            "metals": metals_sel or ["Pt"],
+            "facet": facet_sel,
+            "sites": sites_sel or ["ontop"],
+        }
+
+        n_ads = len(ads_info["metals"]) * len(ads_info["sites"])
+        n_ref = len(ads_info["metals"]) + 1
+        st.caption(f"{n_ads} adsorption + {n_ref} reference = **{n_ads + n_ref} total calculations**")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            supercell = st.selectbox("Supercell", ["3x4", "4x4"], index=0, key=f"hpc_supercell{ks}")
+        with col2:
+            encut = st.number_input("ENCUT", value=400, step=50, key=f"hpc_encut{ks}")
+        with col3:
+            kpoints = st.text_input("KPOINTS", value="4 4 1", key=f"hpc_kpoints{ks}")
+
+        batch_key = "hpc_batch_uid"
+
+        if st.button("🚀 Submit All to Hoffman2", type="primary", key=f"hpc_submit_btn{ks}"):
+            with st.spinner(f"Generating {n_ads + n_ref} structures and submitting to PBS queue..."):
+                result = api.post("/api/batch_adsorption", {
+                    "adsorbate": ads_info["adsorbate"],
+                    "metals": ads_info["metals"],
+                    "facet": ads_info["facet"],
+                    "sites": ads_info["sites"],
+                    "supercell": supercell,
+                    "nlayers": 4,
+                    "encut": encut,
+                    "kpoints": kpoints,
+                    "server_name": "hoffman2",
+                    "include_references": True,
+                })
+
+            if result.get("ok"):
+                st.session_state[batch_key] = result["batch_uid"]
+                st.success(
+                    f"Submitted **{result['n_jobs']}** jobs to Hoffman2! "
+                    f"Batch: `{result['batch_uid'][:8]}`"
+                )
+                # Show submitted jobs
+                for j in result.get("jobs", []):
+                    st.caption(f"  PBS {j['pbs_id']}: {j['title']}")
+            else:
+                st.error(f"Submission failed: {result.get('error', result.get('detail', ''))}")
+
+        # ── Status monitoring ────────────────────────────────────────
+        if st.session_state.get(batch_key):
+            st.markdown("---")
+            st.markdown("#### Job Status")
+
+            if st.button("🔄 Refresh", key=f"hpc_refresh_btn{ks}"):
+                pass  # Just triggers rerun
+
+            status = api.get("/api/batch_status", {"batch_uid": st.session_state[batch_key]})
+
+            if status.get("ok"):
+                jobs = status.get("jobs", [])
+                n_total = status["n_total"]
+                n_done = status["n_done"]
+                progress = n_done / n_total if n_total > 0 else 0
+
+                st.progress(progress, text=f"{n_done}/{n_total} done | "
+                            f"{status['n_running']} running | {status['n_queued']} queued")
+
+                import pandas as pd
+                rows = []
+                for j in jobs:
+                    emoji = {"submitted": "🟡", "queued": "🟡", "running": "🔵",
+                             "done": "🟢", "synced": "✅", "failed": "🔴"}.get(j["status"], "⚪")
+                    rows.append({
+                        "": f"{emoji}",
+                        "Title": j["title"],
+                        "Status": j["status"],
+                        "PBS ID": j["pbs_id"],
+                        "Energy (eV)": f"{j['energy']:.4f}" if j.get("energy") is not None else "—",
+                    })
+                st.dataframe(pd.DataFrame(rows), hide_index=True, width=None)
+
+                # Results when all done
+                if status["all_done"]:
+                    st.markdown("#### Results")
+                    ads_jobs = [j for j in jobs if not j.get("is_reference")]
+                    ref_jobs = [j for j in jobs if j.get("is_reference")]
+
+                    ref_e = {}
+                    gas_e = {}
+                    for j in ref_jobs:
+                        if j.get("energy") is not None:
+                            if j["site"] == "gas":
+                                gas_e[j["adsorbate"]] = j["energy"]
+                            else:
+                                ref_e[j["metal"]] = j["energy"]
+
+                    result_rows = []
+                    for j in ads_jobs:
+                        e = j.get("energy")
+                        e_ads = None
+                        if e is not None and ref_e.get(j["metal"]) is not None and gas_e.get("H2") is not None:
+                            e_ads = e - ref_e[j["metal"]] - 0.5 * gas_e["H2"]
+                        result_rows.append({
+                            "Metal": j["metal"],
+                            "Site": j["site"],
+                            "E_total (eV)": f"{e:.4f}" if e else "—",
+                            "E_ads (eV)": f"{e_ads:.3f}" if e_ads is not None else "—",
+                        })
+
+                    df = pd.DataFrame(result_rows)
+                    st.dataframe(df, hide_index=True, width=None)
+
+                    # Download Excel
+                    try:
+                        import requests as req_lib
+                        url = f"{api.BASE}/api/batch_results_excel?batch_uid={st.session_state[batch_key]}"
+                        r = req_lib.get(url, timeout=30)
+                        if r.status_code == 200:
+                            st.download_button(
+                                "📥 Download Excel",
+                                data=r.content,
+                                file_name=f"adsorption_results.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"hpc_excel_dl{ks}",
+                            )
+                    except Exception:
+                        pass
+
+
 def _render_pipeline_result(data: dict):
     """Render the intent → hypothesis → plan pipeline result."""
     if not data:
@@ -1665,7 +1901,7 @@ def _render_pipeline_result(data: dict):
 
     # ── Plan ──────────────────────────────────────────────────────────────
     with st.expander("📋 Calculation Plan", expanded=True):
-        tasks = plan.get("tasks", [])
+        tasks = (plan or {}).get("tasks", [])
         if not tasks:
             st.caption("No tasks generated.")
         else:
@@ -1684,8 +1920,12 @@ def _render_pipeline_result(data: dict):
                 for t in sec_tasks:
                     _render_task_card(t)
 
+    # ── HPC Batch Submission ────────────────────────────────────────────
+    _msg_idx = len(st.session_state.get("chat_messages", []))
+    _render_hpc_batch_section(data, msg_index=_msg_idx)
+
     # ── Next suggestions from plan ────────────────────────────────────────
-    suggestions = plan.get("suggestions", [])
+    suggestions = (plan or {}).get("suggestions", [])
     if suggestions and isinstance(suggestions, list) and isinstance(suggestions[0], dict):
         with st.expander("💡 Suggestions", expanded=False):
             for s in suggestions[:5]:

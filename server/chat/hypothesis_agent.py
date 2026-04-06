@@ -23,6 +23,7 @@ from __future__ import annotations
 import os, json, re
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from .contracts import HypothesisBundle, RunEvent
 
 # === Dynamic mechanism builder (replaces static REGISTRY) ===
@@ -65,7 +66,16 @@ def _conditions_line(cond: Dict[str, Any]) -> str:
         f"T={cond['temperature']}K"          if cond.get("temperature") else None,
     ])
 
-def _safe_json(s: str) -> Dict[str, Any]:
+def _safe_json(s) -> Dict[str, Any]:
+    # Handle dict responses from chatgpt_call (extract text content)
+    if isinstance(s, dict):
+        choices = s.get("choices") or []
+        if choices:
+            s = choices[0].get("message", {}).get("content", "")
+        else:
+            return s  # Already a dict, maybe it IS the JSON
+    if not isinstance(s, str):
+        return {}
     try:
         start = s.find("{"); end = s.rfind("}")
         if start >= 0 and end >= 0:
@@ -220,13 +230,18 @@ async def _llm_markdown(fields: Dict[str, Any]) -> Optional[str]:
     sys2 = f"{sys}\n\nNote: Summarize conditions as: {cond if cond!='-' else 'N/A'}."
     user = "FIELDS:\n" + json.dumps(fields, ensure_ascii=False, indent=2)
     try:
-        txt = await chatgpt_call(
+        resp = await chatgpt_call(
             [{"role":"system","content": sys2},
              {"role":"user","content": user}],
-            temperature=0.3, max_tokens=600
+            temperature=0.3, max_tokens=600, json_mode=False
         )
-        return txt.strip()
-    except (ValueError, KeyError, TypeError):
+        if isinstance(resp, dict):
+            choices = resp.get("choices") or []
+            txt = choices[0]["message"]["content"] if choices else ""
+        else:
+            txt = str(resp)
+        return txt.strip() if isinstance(txt, str) else ""
+    except (ValueError, KeyError, TypeError, IndexError):
         return None
 
 async def _llm_graph(intent: Dict[str, Any], hint: str="", seed: Optional[Dict[str, Any]]=None) -> Optional[Dict[str, Any]]:
@@ -657,7 +672,16 @@ async def _get_mech_seed(intent: Dict[str, Any], session_id=None) -> Dict[str, A
 # ============================ FastAPI endpoint ============================
 
 @router.post("/chat/hypothesis")
-async def hypothesis_create(request: Request) -> None:
+async def hypothesis_create(request: Request):
+    try:
+        return await _hypothesis_create_impl(request)
+    except Exception as e:
+        import logging
+        logging.getLogger("chatdft").exception("Hypothesis endpoint crashed")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+async def _hypothesis_create_impl(request: Request) -> None:
     data: Dict[str, Any] = (await request.json()) or {}
     session_id = data.get("session_id")
     # extract intent/knowledge/history (keep API compatible)

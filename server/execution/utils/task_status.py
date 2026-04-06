@@ -81,7 +81,7 @@ async def emit_task_status(
                 return False
 
             task.status = status
-            task.updated_at = datetime.now(timezone.utc)
+            task.updated_at = datetime.utcnow()
             if output_data is not None:
                 task.output_data = output_data
             if error_msg is not None:

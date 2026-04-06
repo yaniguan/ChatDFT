@@ -147,7 +147,7 @@ async def _adb() -> Any:
     return SessionLocal()
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.utcnow()  # naive UTC — matches DB TIMESTAMP WITHOUT TIME ZONE
 
 def _safe(obj, default=None) -> Any:
     try: return obj if obj is not None else default
@@ -314,7 +314,8 @@ def _compute_confidence(intent: Dict[str, Any], fewshots: List[Dict[str, Any]], 
     if facet:    spec += 0.12
     if intent.get("reactant") or (intent.get("adsorbates") and len(intent["adsorbates"]) > 0):
         spec += 0.03
-    if intent.get("product") or (intent.get("deliverables") or {}).get("target_products"):
+    _deliv = intent.get("deliverables")
+    if intent.get("product") or (isinstance(_deliv, dict) and _deliv.get("target_products")):
         spec += 0.03
     if intent.get("area") and intent["area"] not in ("", "heterogeneous_catalysis"):
         spec += 0.03  # explicitly identified domain
@@ -418,7 +419,7 @@ async def _persist_intent(session, session_id: int, intent: dict, rag_refs: list
             "metrics": intent.get("metrics"),
             "constraints": intent.get("constraints"),
         },
-        created_at=datetime.now(timezone.utc),
+        created_at=_now_utc(),
     )
     session.add(msg)
     await session.flush()
@@ -435,7 +436,7 @@ async def _persist_intent(session, session_id: int, intent: dict, rag_refs: list
             confidence=float(intent.get("confidence") or 0.0),
             agent="intent_agent",
             tags=intent.get("tags"),
-            created_at=datetime.now(timezone.utc),
+            created_at=_now_utc(),
         )
         session.add(hyp)
         await session.flush()
@@ -622,7 +623,7 @@ async def _expand_workflow_tasks(session, session_id: int, message_id: int, inte
             engine="VASP",
             status="idle",
             input_data=input_data,
-            created_at=datetime.now(timezone.utc),
+            created_at=_now_utc(),
         )
         session.add(t)
         await session.flush()
@@ -718,6 +719,14 @@ def _make_user_prompt(user_text: str, guided: Dict[str, Any], fewshots: List[Dic
 # ==== 替换你的 api_intent ====
 @router.post("/chat/intent")
 async def api_intent(request: Request) -> Dict[str, Any]:
+    try:
+        return await _api_intent_impl(request)
+    except Exception as e:
+        log.exception("Intent endpoint crashed")
+        return JSONResponse({"ok": False, "error": str(e), "detail": f"{type(e).__name__}: {e}"}, status_code=500)
+
+
+async def _api_intent_impl(request: Request) -> Dict[str, Any]:
     body = await request.json()
     session_id: int = body.get("session_id")
     user_text: str  = body.get("text") or ""
@@ -806,7 +815,9 @@ async def api_intent(request: Request) -> Dict[str, Any]:
             if not intent.get("area") and dom:
                 intent["area"] = "electro" if dom == "electrocatalysis" else dom
 
-            intent.setdefault("deliverables", {}).setdefault("figures", [])
+            if not isinstance(intent.get("deliverables"), dict):
+                intent["deliverables"] = {}
+            intent["deliverables"].setdefault("figures", [])
             for fig in ["free_energy_diagram", "BEPR_scan", "microkinetic_curves", "coverage_vs_potential"]:
                 if fig not in intent["deliverables"]["figures"]:
                     intent["deliverables"]["figures"].append(fig)
@@ -815,7 +826,8 @@ async def api_intent(request: Request) -> Dict[str, Any]:
             for k in mech_keys: tags.add(k)
             intent["tags"] = list(tags)
 
-            tp = set(_to_list(intent.get("deliverables", {}).get("target_products")))
+            _dv = intent.get("deliverables") if isinstance(intent.get("deliverables"), dict) else {}
+            tp = set(_to_list(_dv.get("target_products")))
             tl = user_text.lower()
             if re.search(r"\bmethanol\b|\bch3oh\b", tl): tp.add("CH3OH")
             if re.search(r"\bethanol\b|\bch3ch2oh\b", tl): tp.add("CH3CH2OH")
@@ -904,7 +916,7 @@ async def api_intent(request: Request) -> Dict[str, Any]:
                         confidence=0.9,
                         source="intent_agent",
                         lang="en",
-                        created_at=datetime.now(timezone.utc),
+                        created_at=_now_utc(),
                     )
                     s.add(rec)
                 await s.commit()

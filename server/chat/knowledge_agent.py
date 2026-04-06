@@ -452,7 +452,7 @@ async def run_daily_update(trigger: str = "scheduler") -> Dict[str, Any]:
         try:
             async with AsyncSessionLocal() as s:
                 run_log = LiteratureUpdateLog(
-                    run_at=datetime.now(timezone.utc),
+                    run_at=datetime.utcnow(),
                     trigger=trigger,
                     queries_used=queries_run,
                     n_new_docs=total_new,
