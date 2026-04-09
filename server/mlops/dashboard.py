@@ -251,8 +251,33 @@ _MODEL_COST: Dict[str, Tuple[float, float]] = {
 }
 
 
+def _split_provider_model(tagged: str) -> Tuple[str, str]:
+    """
+    Parse a ``provider:model`` string as written by ``openai_wrapper``.
+
+    Returns ``(provider, model)``. Falls back to ``("unknown", tagged)`` if
+    there is no ``:`` separator (pre-vLLM rows from an earlier deploy).
+    """
+    if not tagged:
+        return ("unknown", "")
+    # vLLM model names often contain ``/`` (HF repo) but never ``:`` as a
+    # separator, so a single split on the first colon is unambiguous.
+    if ":" in tagged:
+        provider, model = tagged.split(":", 1)
+        return (provider or "unknown", model)
+    return ("unknown", tagged)
+
+
 def _cost_usd(model: str, in_tok: int, out_tok: int) -> float:
-    rate_in, rate_out = _MODEL_COST.get(model, (0.0, 0.0))
+    """
+    USD cost estimate. Understands ``provider:model`` tagging from the
+    vLLM integration and strips the provider prefix before rate lookup.
+    Local providers (``vllm_*``) always return 0.
+    """
+    provider, bare_model = _split_provider_model(model) if ":" in model else ("", model)
+    if provider.startswith("vllm"):
+        return 0.0
+    rate_in, rate_out = _MODEL_COST.get(bare_model, (0.0, 0.0))
     return (in_tok * rate_in + out_tok * rate_out) / 1000.0
 
 
@@ -602,6 +627,68 @@ def _system_metrics(
         error_trend=err_trend,
         bucket_centres_s=centres,
     )
+
+
+@dataclass
+class ProviderMetrics:
+    """Roll-up of AgentLog rows grouped by LLM provider.
+
+    The monitoring dashboard uses this to show a per-backend breakdown
+    (OpenAI vs vLLM vs Anthropic) without needing a schema migration —
+    the provider is encoded into ``AgentLog.model`` as ``"provider:model"``
+    by the openai_wrapper whenever the vLLM router is active. Rows
+    without a provider prefix (legacy) roll up under ``"unknown"``.
+    """
+    provider: str
+    request_count: int
+    success_rate: float
+    error_rate: float
+    p50_latency_ms: float
+    p95_latency_ms: float
+    p99_latency_ms: float
+    mean_latency_ms: float
+    tokens_total: int
+    tokens_per_sec: float
+    total_cost_usd: float
+    distinct_models: List[str] = field(default_factory=list)
+
+
+def _provider_metrics(
+    logs: List[AgentLogRow], window_s: int
+) -> List[ProviderMetrics]:
+    """Group AgentLog rows by provider and compute headline metrics."""
+    groups: Dict[str, List[AgentLogRow]] = {}
+    for r in logs:
+        provider, _ = _split_provider_model(r.model) if r.model else ("unknown", "")
+        groups.setdefault(provider, []).append(r)
+
+    out: List[ProviderMetrics] = []
+    window_s_safe = max(window_s, 1)
+    for provider, rows in sorted(groups.items()):
+        n = len(rows)
+        if n == 0:
+            continue
+        success = sum(1 for r in rows if r.success)
+        latencies = [r.latency_ms for r in rows if r.latency_ms > 0]
+        in_tok = sum(r.input_tokens for r in rows)
+        out_tok = sum(r.output_tokens for r in rows)
+        total_cost = sum(_cost_usd(r.model, r.input_tokens, r.output_tokens) for r in rows)
+        models = sorted({_split_provider_model(r.model)[1] for r in rows if r.model})
+        out.append(ProviderMetrics(
+            provider=provider,
+            request_count=n,
+            success_rate=success / n,
+            error_rate=(n - success) / n,
+            p50_latency_ms=percentile(latencies, 50),
+            p95_latency_ms=percentile(latencies, 95),
+            p99_latency_ms=percentile(latencies, 99),
+            mean_latency_ms=float(np.mean(latencies)) if latencies else 0.0,
+            tokens_total=in_tok + out_tok,
+            tokens_per_sec=round((in_tok + out_tok) / window_s_safe, 2),
+            total_cost_usd=round(total_cost, 4),
+            distinct_models=models[:5],
+        ))
+    return out
 
 
 @dataclass
@@ -1059,6 +1146,7 @@ async def compute_dashboard(
         agent_offline[name] = _offline_metrics_for_agent(name, logs, workflows)
 
     system = _system_metrics(workflows, logs, window_s, n_buckets)
+    providers = _provider_metrics(logs, window_s)
     alerts = derive_alerts(system, agent_metrics)
 
     return {
@@ -1068,6 +1156,7 @@ async def compute_dashboard(
         "n_buckets": n_buckets,
         "thresholds": asdict(ALERTS),
         "system": asdict(system),
+        "providers": [asdict(p) for p in providers],
         "agents": [asdict(a) for a in agent_metrics],
         "offline_metrics": {
             name: [asdict(m) for m in metrics]
@@ -1119,4 +1208,10 @@ FORMULA_HELP: Dict[str, str] = {
         "count(WorkflowTask.status ∈ {idle, queued, running}) inside the window.",
     "recent_traffic":
         "count(WorkflowTask.created_at ≥ now - 5 min) — last-5-minute arrivals.",
+    "providers":
+        "Group AgentLog rows by the 'provider' prefix of the model column "
+        "(openai_wrapper now writes 'provider:model', e.g. 'vllm_local:Qwen/"
+        "Qwen2.5-7B-Instruct'). Per-provider request count, p50/p95/p99 "
+        "latency, tokens/sec, success rate, and USD cost (local providers "
+        "always $0). Rows without a prefix roll up under 'unknown'.",
 }

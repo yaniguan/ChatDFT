@@ -57,7 +57,13 @@ from server.utils.rag_utils import (
     embed_text, log_agent_call,
 )
 
-# ── OpenAI ────────────────────────────────────────────────────────────────────
+# ── OpenAI (vision-only direct client) ───────────────────────────────────────
+# NOTE: Regular chat and embedding calls go through ``server.utils.openai_wrapper.chatgpt_call``
+# and ``server.utils.rag_utils.embed_text``, both of which route via
+# ``LLMRouter`` (OpenAI / vLLM / …).  We keep a direct ``AsyncOpenAI`` instance
+# ONLY for ``_describe_figure_vision`` below, because that call is
+# multi-modal (text + image_url) and relies on gpt-4o-mini's vision
+# capability — vLLM serving a non-vision model would reject the request.
 try:
     from openai import AsyncOpenAI
     _oa = AsyncOpenAI()

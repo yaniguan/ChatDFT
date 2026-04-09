@@ -1,27 +1,30 @@
 # server/utils/openai_wrapper.py
 # -*- coding: utf-8 -*-
 """
-Async OpenAI wrapper with:
-- Exponential-backoff retry (3 attempts)
-- Token usage extraction
-- JSON mode enforcement (with parse-validity tracking)
-- Embedding endpoint
-- Automatic AgentLog instrumentation for the monitoring dashboard
+LLM call wrapper with:
+- Multi-provider routing via ``server.utils.llm_providers.LLMRouter``
+  (OpenAI, vLLM, pluggable). Each provider has its own client, concurrency
+  cap, and retry budget. The router tries the primary provider first and
+  falls back to a secondary on failure, so vLLM being down never breaks
+  the dev workflow.
+- Token usage extraction, JSON-mode schema-validity tracking.
+- Automatic AgentLog instrumentation for the monitoring dashboard.
 
-Every call produced by ``chatgpt_call`` writes one row to the ``agent_log``
-table via ``server.utils.rag_utils.log_agent_call``. The ``agent_name`` can be
-provided explicitly; otherwise it is inferred from the caller module
-(e.g. ``server/chat/intent_agent.py`` → ``intent_agent``). This gives us
-per-agent latency / token / success / schema-valid data for the dashboard
-without having to modify every agent file.
+Every call written through ``chatgpt_call`` records one ``agent_log`` row
+with the ``provider:model`` tuple encoded in the ``model`` column
+(e.g. ``"vllm_local:Qwen/Qwen2.5-7B-Instruct"``). The dashboard parses that
+to produce a per-provider breakdown without a schema migration.
 
-``call_type`` encodes the outcome so the dashboard can compute
-schema-valid rate for JSON-producing agents:
+The signature of ``chatgpt_call`` is preserved exactly — existing callers
+(intent, hypothesis, plan, analyze, knowledge, qa, records, post_analysis)
+get vLLM routing for free once they are listed in ``server/llm.yaml``.
 
+``call_type`` values
+--------------------
 * ``llm_json``         — JSON mode, response parsed as valid JSON
 * ``llm_json_invalid`` — JSON mode, response did not parse (schema failure)
 * ``llm_text``         — text mode
-* ``llm_error``        — API error (success=False)
+* ``llm_error``        — provider-level failure (success=False)
 """
 
 from __future__ import annotations
@@ -36,16 +39,19 @@ from typing import Any, Dict, List, Optional
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Router is the single source of truth for which provider handles what.
+# Kept as a lazy import so tests can monkey-patch before first call.
+# ---------------------------------------------------------------------------
+from server.utils.llm_providers import LLMCallResult, get_llm_router
+
+# Backwards-compat re-exports kept for any call sites that imported them.
 try:
-    from openai import AsyncOpenAI, RateLimitError, APITimeoutError, APIStatusError
-    _client = AsyncOpenAI()
-    _OK = True
-except ImportError:
-    _client = None  # type: ignore
-    _OK = False
-    RateLimitError = Exception
-    APITimeoutError = Exception
-    APIStatusError = Exception
+    from openai import APIStatusError, APITimeoutError, RateLimitError  # noqa: F401
+except ImportError:  # pragma: no cover
+    RateLimitError = Exception       # type: ignore
+    APITimeoutError = Exception      # type: ignore
+    APIStatusError = Exception       # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +66,7 @@ def _infer_agent_name() -> str:
     """
     try:
         frame = inspect.currentframe()
-        # Skip this function and ``chatgpt_call``
+        # Skip this function and the wrapper that called it.
         for _ in range(2):
             if frame is None:
                 break
@@ -92,150 +98,165 @@ async def chatgpt_call(
     agent_name: Optional[str] = None,
     session_id: Optional[int] = None,
     log_to_agentlog: bool = True,
-    **kwargs,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """
-    Async LLM call with retry and automatic AgentLog instrumentation.
+    Async LLM call routed through the configured provider.
 
     Parameters
     ----------
     messages, model, temperature, max_tokens, json_mode, retries :
-        Standard OpenAI chat.completions arguments.
+        Standard OpenAI chat.completions arguments. ``model`` is treated as a
+        *hint* — ``LLMRouter`` may substitute the provider's own default model
+        if the hint belongs to a different backend (e.g. you pass ``gpt-4o``
+        but the routed provider is vLLM serving Qwen).
     agent_name :
-        Explicit agent identifier for the monitoring dashboard. If ``None``,
-        inferred from the caller module (see ``_infer_agent_name``).
+        Explicit agent identifier for routing + logging. If ``None``, inferred
+        from the caller module.
     session_id :
         Optional chat session id so AgentLog rows can be correlated with
         workflow tasks.
     log_to_agentlog :
-        Write an AgentLog row on completion. Default True; set False for
-        internal/test calls.
+        Write an AgentLog row on completion. Default True.
 
     Returns
     -------
-    The full response dict (``choices``, ``usage``, ``model`` ...).  On
-    complete failure returns ``{"error": "...", "choices": []}``.
+    The openai-style response dict. On total failure returns
+    ``{"error": "...", "choices": []}``.
     """
-    if not _OK or _client is None:
-        return {"error": "OpenAI client not available", "choices": []}
-
-    response_format = {"type": "json_object"} if json_mode else {"type": "text"}
-
-    # Resolve caller for logging
     resolved_agent = agent_name or _infer_agent_name()
-    t0 = time.time()
     input_preview = ""
     try:
         input_preview = json.dumps(messages, ensure_ascii=False)[:500]
     except Exception:
         pass
 
-    last_err: Optional[Exception] = None
-    response_dict: Optional[Dict[str, Any]] = None
-    retries_used = 0
+    router = get_llm_router()
 
-    for attempt in range(retries):
-        try:
-            resp = await _client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format=response_format,
-                **kwargs,
-            )
-            response_dict = resp.model_dump() if hasattr(resp, "model_dump") else resp.to_dict()
-            break
+    t0 = time.time()
+    try:
+        result: LLMCallResult = await router.chat_completion(
+            agent_name=resolved_agent,
+            messages=messages,
+            model_hint=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+            retries=retries,
+            **kwargs,
+        )
+    except Exception as e:  # pragma: no cover — router is defensive
+        log.exception("router.chat_completion crashed: %s", e)
+        latency_ms = int((time.time() - t0) * 1000)
+        _async_log_safe(
+            resolved_agent, "llm_error", model, 0, 0, latency_ms,
+            success=False, error_msg=str(e),
+            input_preview=input_preview, output_preview="",
+            session_id=session_id, log_to_agentlog=log_to_agentlog,
+        )
+        return {"error": str(e), "choices": []}
 
-        except RateLimitError as e:
-            wait = 2 ** (attempt + 1)
-            log.warning("Rate limit (attempt %d/%d), retrying in %ds", attempt + 1, retries, wait)
-            await asyncio.sleep(wait)
-            last_err = e
-            retries_used = attempt + 1
+    latency_ms = result.latency_ms or int((time.time() - t0) * 1000)
 
-        except APITimeoutError as e:
-            wait = 2 ** attempt
-            log.warning("Timeout (attempt %d/%d), retrying in %ds", attempt + 1, retries, wait)
-            await asyncio.sleep(wait)
-            last_err = e
-            retries_used = attempt + 1
-
-        except Exception as e:
-            log.error("chatgpt_call failed: %s", e, exc_info=True)
-            last_err = e
-            retries_used = attempt + 1
-            break   # non-retryable
-
-    latency_ms = int((time.time() - t0) * 1000)
-
-    # ── Determine call_type, schema validity, success ──────────────────────
+    # ── Determine call_type / schema validity ──────────────────────────────
     call_type = "llm_json" if json_mode else "llm_text"
     schema_valid = True
-    output_text = ""
+    output_text = result.text()
 
-    if response_dict is None:
-        # API failure
+    if not result.success:
         call_type = "llm_error"
         schema_valid = False
         success = False
-        error_msg = str(last_err) if last_err else "unknown error"
+        error_msg = result.error or "unknown error"
     else:
         success = True
         error_msg = None
-        try:
-            output_text = (
-                response_dict.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "") or ""
-            )
-        except Exception:
-            output_text = ""
-
-        if json_mode:
+        if json_mode and output_text:
             try:
                 json.loads(output_text)
-                schema_valid = True
             except Exception:
                 schema_valid = False
                 call_type = "llm_json_invalid"
-                # Keep success=True at the transport level but flag schema failure
                 error_msg = "schema_invalid"
+        elif json_mode and not output_text:
+            # Empty JSON body is always invalid in JSON mode
+            schema_valid = False
+            call_type = "llm_json_invalid"
+            error_msg = "empty_response"
 
-        # Build the return dict
-        response_dict.setdefault("_chatdft_meta", {}).update({
+        result.raw.setdefault("_chatdft_meta", {}).update({
             "agent_name": resolved_agent,
+            "provider": result.provider,
+            "model": result.model,
             "latency_ms": latency_ms,
             "schema_valid": schema_valid,
-            "retries_used": retries_used,
+            "retries_used": result.retries_used,
         })
 
-    # ── Fire-and-forget AgentLog write ─────────────────────────────────────
-    if log_to_agentlog:
-        usage = (response_dict or {}).get("usage") or {}
-        try:
-            from server.utils.rag_utils import log_agent_call
-            asyncio.create_task(log_agent_call(
-                agent_name=resolved_agent,
-                call_type=call_type,
-                model=model,
-                input_tokens=int(usage.get("prompt_tokens") or 0),
-                output_tokens=int(usage.get("completion_tokens") or 0),
-                latency_ms=latency_ms,
-                success=success and schema_valid,  # schema failure counts as unsuccessful
-                error_msg=error_msg,
-                input_preview=input_preview,
-                output_preview=output_text[:500],
-                session_id=session_id,
-                full_input={"retries_used": retries_used} if retries_used else None,
-            ))
-        except Exception as _e:
-            log.debug("AgentLog write skipped: %s", _e)
+    tokens = result.tokens() if result.success else {}
+    tagged_model = f"{result.provider}:{result.model}" if result.provider and result.provider != "none" else (result.model or model)
 
-    if response_dict is None:
-        return {"error": str(last_err), "choices": []}
-    return response_dict
+    _async_log_safe(
+        resolved_agent, call_type, tagged_model,
+        tokens.get("prompt_tokens", 0),
+        tokens.get("completion_tokens", 0),
+        latency_ms,
+        success=success and schema_valid,
+        error_msg=error_msg,
+        input_preview=input_preview,
+        output_preview=output_text[:500],
+        session_id=session_id,
+        log_to_agentlog=log_to_agentlog,
+        retries_used=result.retries_used,
+    )
 
+    if not result.success:
+        return {"error": result.error, "choices": []}
+    return result.raw
+
+
+def _async_log_safe(
+    agent_name: str,
+    call_type: str,
+    model: str,
+    in_tok: int,
+    out_tok: int,
+    latency_ms: int,
+    *,
+    success: bool,
+    error_msg: Optional[str],
+    input_preview: str,
+    output_preview: str,
+    session_id: Optional[int],
+    log_to_agentlog: bool,
+    retries_used: int = 0,
+) -> None:
+    """Fire-and-forget AgentLog write. Never raises."""
+    if not log_to_agentlog:
+        return
+    try:
+        from server.utils.rag_utils import log_agent_call
+        asyncio.create_task(log_agent_call(
+            agent_name=agent_name,
+            call_type=call_type,
+            model=model,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            latency_ms=latency_ms,
+            success=success,
+            error_msg=error_msg,
+            input_preview=input_preview,
+            output_preview=output_preview,
+            session_id=session_id,
+            full_input={"retries_used": retries_used} if retries_used else None,
+        ))
+    except Exception as _e:
+        log.debug("AgentLog write skipped: %s", _e)
+
+
+# ---------------------------------------------------------------------------
+# Helpers kept for backwards compat
+# ---------------------------------------------------------------------------
 
 def extract_text(response: Dict[str, Any]) -> str:
     """Extract the assistant message text from a chatgpt_call response."""
@@ -258,13 +279,16 @@ def extract_usage(response: Dict[str, Any]) -> Dict[str, int]:
 async def embed_texts(
     texts: List[str],
     model: str = "text-embedding-3-small",
+    *,
+    agent_name: Optional[str] = None,
 ) -> List[List[float]]:
     """
-    Embed a list of strings. Returns a list of float vectors.
-    Raises on failure (caller should handle).
-    """
-    if not _OK or _client is None:
-        raise RuntimeError("OpenAI client not available")
+    Embed a list of strings via the configured router.
 
-    resp = await _client.embeddings.create(input=texts, model=model)
-    return [item.embedding for item in resp.data]
+    Routes through the same provider as the caller agent (from
+    ``llm.yaml`` routing), so local vLLM embedding deployments can be
+    plumbed in without touching agent code. Raises on failure.
+    """
+    router = get_llm_router()
+    resolved = agent_name or _infer_agent_name()
+    return await router.embed(agent_name=resolved, texts=texts, model_hint=model)

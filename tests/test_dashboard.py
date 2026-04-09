@@ -22,6 +22,8 @@ from server.mlops.dashboard import (  # noqa: E402
     WorkflowTaskRow,
     _agent_metrics,
     _cost_usd,
+    _provider_metrics,
+    _split_provider_model,
     _system_metrics,
     _workflow_matches_agent,
     bucketise,
@@ -148,6 +150,93 @@ class TestCostUsd:
 
     def test_gpt_4o_mini_cheap(self):
         assert _cost_usd("gpt-4o-mini", 1000, 1000) == pytest.approx(0.00075, rel=1e-6)
+
+    def test_vllm_tagged_model_is_free(self):
+        # provider:model tagging from openai_wrapper — local providers always $0
+        assert _cost_usd("vllm_local:Qwen/Qwen2.5-7B-Instruct", 1000, 1000) == 0.0
+
+    def test_openai_tagged_model_strips_prefix(self):
+        # "openai:gpt-4o" should still resolve to the gpt-4o rate card
+        assert _cost_usd("openai:gpt-4o", 1000, 1000) == pytest.approx(0.020, rel=1e-6)
+
+
+class TestSplitProviderModel:
+    def test_tagged_with_provider(self):
+        assert _split_provider_model("openai:gpt-4o") == ("openai", "gpt-4o")
+        assert _split_provider_model("vllm_local:Qwen/Qwen2.5-7B-Instruct") == (
+            "vllm_local",
+            "Qwen/Qwen2.5-7B-Instruct",
+        )
+
+    def test_untagged_falls_back_to_unknown(self):
+        assert _split_provider_model("gpt-4o-mini") == ("unknown", "gpt-4o-mini")
+
+    def test_empty_returns_unknown_empty(self):
+        assert _split_provider_model("") == ("unknown", "")
+
+
+class TestProviderMetrics:
+    def _row(
+        self, model: str, success: bool = True, latency_ms: int = 500, in_tok: int = 400, out_tok: int = 100
+    ) -> AgentLogRow:
+        return AgentLogRow(
+            agent_name="intent_agent",
+            call_type="llm_json",
+            model=model,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            latency_ms=latency_ms,
+            success=success,
+            error_msg=None if success else "boom",
+            session_id=1,
+            created_at=time.time() - 30,
+        )
+
+    def test_groups_by_provider_prefix(self):
+        logs = [
+            self._row("openai:gpt-4o-mini"),
+            self._row("openai:gpt-4o-mini"),
+            self._row("vllm_local:Qwen/Qwen2.5-7B-Instruct"),
+            self._row("vllm_local:Qwen/Qwen2.5-7B-Instruct"),
+            self._row("vllm_local:Qwen/Qwen2.5-7B-Instruct"),
+        ]
+        metrics = _provider_metrics(logs, window_s=600)
+        by_name = {m.provider: m for m in metrics}
+        assert set(by_name) == {"openai", "vllm_local"}
+        assert by_name["openai"].request_count == 2
+        assert by_name["vllm_local"].request_count == 3
+        assert by_name["vllm_local"].total_cost_usd == 0.0  # local → free
+        assert by_name["openai"].total_cost_usd > 0.0
+
+    def test_legacy_untagged_rows_roll_up_under_unknown(self):
+        logs = [self._row("gpt-4o-mini"), self._row("gpt-4o")]
+        metrics = _provider_metrics(logs, window_s=600)
+        assert any(m.provider == "unknown" for m in metrics)
+
+    def test_percentiles_computed(self):
+        logs = [
+            self._row("openai:gpt-4o-mini", latency_ms=100),
+            self._row("openai:gpt-4o-mini", latency_ms=200),
+            self._row("openai:gpt-4o-mini", latency_ms=300),
+            self._row("openai:gpt-4o-mini", latency_ms=400),
+            self._row("openai:gpt-4o-mini", latency_ms=500),
+        ]
+        metrics = _provider_metrics(logs, window_s=600)
+        assert metrics[0].p50_latency_ms == pytest.approx(300, rel=0.1)
+        assert metrics[0].p99_latency_ms >= 490
+
+    def test_distinct_models_listed(self):
+        logs = [
+            self._row("vllm_local:Qwen/Qwen2.5-7B-Instruct"),
+            self._row("vllm_local:Qwen/Qwen2.5-14B-Instruct"),
+            self._row("vllm_local:Qwen/Qwen2.5-7B-Instruct"),
+        ]
+        metrics = _provider_metrics(logs, window_s=600)
+        assert len(metrics[0].distinct_models) == 2
+        assert "Qwen/Qwen2.5-7B-Instruct" in metrics[0].distinct_models
+
+    def test_empty_returns_empty_list(self):
+        assert _provider_metrics([], window_s=600) == []
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +520,8 @@ class TestComputeDashboardSmoke:
         assert "agents" in data
         assert "offline_metrics" in data
         assert "alerts" in data
+        assert "providers" in data
+        assert data["providers"] == []  # empty DB → no provider rows
         assert data["thresholds"]["p99_latency_ms"] == ALERTS.p99_latency_ms
         # every canonical agent should be represented
         names = {a["name"] for a in data["agents"]}
