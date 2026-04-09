@@ -7,7 +7,6 @@ These tests do NOT hit the database, so they run in <1 s on CI.
 
 from __future__ import annotations
 
-import math
 import os
 import sys
 import time
@@ -17,8 +16,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from server.mlops.dashboard import (  # noqa: E402
-    ALERTS,
     AGENT_REGISTRY,
+    ALERTS,
     AgentLogRow,
     WorkflowTaskRow,
     _agent_metrics,
@@ -31,10 +30,10 @@ from server.mlops.dashboard import (  # noqa: E402
     percentile,
 )
 
-
 # ---------------------------------------------------------------------------
 # percentile
 # ---------------------------------------------------------------------------
+
 
 class TestPercentile:
     def test_empty_returns_zero(self):
@@ -53,6 +52,7 @@ class TestPercentile:
 # ---------------------------------------------------------------------------
 # linear_slope_per_hour
 # ---------------------------------------------------------------------------
+
 
 class TestLinearSlopePerHour:
     def test_flat_series_returns_zero(self):
@@ -93,6 +93,7 @@ class TestLinearSlopePerHour:
 # bucketise
 # ---------------------------------------------------------------------------
 
+
 class TestBucketise:
     def test_buckets_into_correct_counts(self):
         # Half-open intervals: [0,2), [2,4), [4,6), [6,8), [8,10)
@@ -115,6 +116,7 @@ class TestBucketise:
 # ---------------------------------------------------------------------------
 # _cost_usd
 # ---------------------------------------------------------------------------
+
 
 class TestWorkflowMatchesAgent:
     def test_dotted_prefix_matches(self):
@@ -152,6 +154,7 @@ class TestCostUsd:
 # _system_metrics — aggregate workflow tasks
 # ---------------------------------------------------------------------------
 
+
 def _wf(id_: int, status: str, run_time: float = 1.0, created_offset: float = -60.0) -> WorkflowTaskRow:
     now = time.time()
     return WorkflowTaskRow(
@@ -167,9 +170,15 @@ def _wf(id_: int, status: str, run_time: float = 1.0, created_offset: float = -6
     )
 
 
-def _log(agent: str, success: bool, latency_ms: int = 1000,
-         call_type: str = "llm_json", model: str = "gpt-4o-mini",
-         session_id: int = 1, offset: float = -60.0) -> AgentLogRow:
+def _log(
+    agent: str,
+    success: bool,
+    latency_ms: int = 1000,
+    call_type: str = "llm_json",
+    model: str = "gpt-4o-mini",
+    session_id: int = 1,
+    offset: float = -60.0,
+) -> AgentLogRow:
     return AgentLogRow(
         agent_name=agent,
         call_type=call_type,
@@ -227,6 +236,7 @@ class TestSystemMetrics:
 # ---------------------------------------------------------------------------
 # _agent_metrics
 # ---------------------------------------------------------------------------
+
 
 class TestAgentMetrics:
     def test_llm_agent_from_agent_log(self):
@@ -294,21 +304,34 @@ class TestAgentMetrics:
 # derive_alerts
 # ---------------------------------------------------------------------------
 
+
 class TestDeriveAlerts:
     def test_quiet_system_emits_no_alerts(self):
         wf = [_wf(i, "done", run_time=0.5) for i in range(10)]
         sm = _system_metrics(wf, [], window_s=3600, n_buckets=6)
         # all agents empty
         from server.mlops.dashboard import AgentMetrics
+
         ams = [
             AgentMetrics(
-                name="intent_agent", role="", layer="chat",
-                llm_backed=True, json_producer=True,
-                request_count=0, success_rate=1.0, error_rate=0.0,
+                name="intent_agent",
+                role="",
+                layer="chat",
+                llm_backed=True,
+                json_producer=True,
+                request_count=0,
+                success_rate=1.0,
+                error_rate=0.0,
                 error_rate_slope_per_hour=0.0,
-                p50_latency_ms=0.0, p95_latency_ms=0.0, p99_latency_ms=0.0,
-                retry_rate=0.0, schema_valid_rate=None, timeout_rate=0.0,
-                handoff_success_rate=None, total_tokens=0, total_cost_usd=0.0,
+                p50_latency_ms=0.0,
+                p95_latency_ms=0.0,
+                p99_latency_ms=0.0,
+                retry_rate=0.0,
+                schema_valid_rate=None,
+                timeout_rate=0.0,
+                handoff_success_rate=None,
+                total_tokens=0,
+                total_cost_usd=0.0,
                 sample_window_s=3600,
             ),
         ]
@@ -326,15 +349,26 @@ class TestDeriveAlerts:
 
     def test_agent_error_rate_alert_fires(self):
         from server.mlops.dashboard import AgentMetrics
+
         am = AgentMetrics(
-            name="intent_agent", role="", layer="chat",
-            llm_backed=True, json_producer=True,
+            name="intent_agent",
+            role="",
+            layer="chat",
+            llm_backed=True,
+            json_producer=True,
             request_count=10,
-            success_rate=0.3, error_rate=0.7,
+            success_rate=0.3,
+            error_rate=0.7,
             error_rate_slope_per_hour=0.0,
-            p50_latency_ms=0.0, p95_latency_ms=0.0, p99_latency_ms=0.0,
-            retry_rate=0.0, schema_valid_rate=0.95, timeout_rate=0.0,
-            handoff_success_rate=None, total_tokens=0, total_cost_usd=0.0,
+            p50_latency_ms=0.0,
+            p95_latency_ms=0.0,
+            p99_latency_ms=0.0,
+            retry_rate=0.0,
+            schema_valid_rate=0.95,
+            timeout_rate=0.0,
+            handoff_success_rate=None,
+            total_tokens=0,
+            total_cost_usd=0.0,
             sample_window_s=3600,
         )
         sm = _system_metrics([], [], window_s=3600, n_buckets=6)
@@ -343,16 +377,27 @@ class TestDeriveAlerts:
 
     def test_schema_valid_rate_alert_fires(self):
         from server.mlops.dashboard import AgentMetrics
+
         am = AgentMetrics(
-            name="plan_agent", role="", layer="chat",
-            llm_backed=True, json_producer=True,
-            request_count=20, success_rate=1.0, error_rate=0.0,
+            name="plan_agent",
+            role="",
+            layer="chat",
+            llm_backed=True,
+            json_producer=True,
+            request_count=20,
+            success_rate=1.0,
+            error_rate=0.0,
             error_rate_slope_per_hour=0.0,
-            p50_latency_ms=100, p95_latency_ms=200, p99_latency_ms=300,
+            p50_latency_ms=100,
+            p95_latency_ms=200,
+            p99_latency_ms=300,
             retry_rate=0.0,
             schema_valid_rate=0.5,  # well below floor
-            timeout_rate=0.0, handoff_success_rate=None,
-            total_tokens=0, total_cost_usd=0.0, sample_window_s=3600,
+            timeout_rate=0.0,
+            handoff_success_rate=None,
+            total_tokens=0,
+            total_cost_usd=0.0,
+            sample_window_s=3600,
         )
         sm = _system_metrics([], [], window_s=3600, n_buckets=6)
         alerts = derive_alerts(sm, [am])
@@ -362,6 +407,7 @@ class TestDeriveAlerts:
 # ---------------------------------------------------------------------------
 # Smoke test on compute_dashboard — mocks DB
 # ---------------------------------------------------------------------------
+
 
 class TestComputeDashboardSmoke:
     def test_compute_dashboard_handles_empty_db(self, monkeypatch):
@@ -377,9 +423,7 @@ class TestComputeDashboardSmoke:
 
         monkeypatch.setattr(_dash, "_fetch_agent_logs", lambda window_s: _empty())
         monkeypatch.setattr(_dash, "_fetch_workflow_tasks", lambda window_s: _empty())
-        monkeypatch.setattr(
-            _dash, "_fetch_chat_messages_by_agent", lambda window_s: _empty_dict()
-        )
+        monkeypatch.setattr(_dash, "_fetch_chat_messages_by_agent", lambda window_s: _empty_dict())
 
         data = asyncio.run(_dash.compute_dashboard(window_minutes=60, n_buckets=6))
         assert data["ok"] is True
