@@ -94,11 +94,23 @@ def detect_format(content: str) -> str:
             return InputFormat.EXTXYZ
         return InputFormat.XYZ
 
+    # Material name: check BEFORE SMILES — surface notations like Cu(111) are not SMILES
+    if len(content) < 200:
+        # Surface notation: Element(Miller)
+        if re.search(r'[A-Z][a-z]?\(?\d{3,4}\)?', content):
+            return InputFormat.NAME
+        # Bulk material
+        if re.match(r'(?i)bulk\s+[A-Z]', content):
+            return InputFormat.NAME
+        # Contains spaces + chemistry words (not SMILES)
+        if " " in content and any(w in content.lower() for w in ["slab", "surface", "with", "on", "layer"]):
+            return InputFormat.NAME
+
     # SMILES: short string with organic chemistry characters
     if len(content) < 200 and not content.count("\n") and _looks_like_smiles(content):
         return InputFormat.SMILES
 
-    # Material name: short string with surface notation or element names
+    # Material name: fallback for other short strings
     if len(content) < 200:
         return InputFormat.NAME
 
