@@ -26,11 +26,20 @@ from datetime import datetime
 from typing import AsyncGenerator
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, ForeignKey,
-    Index, Integer, JSON, String, Text, UniqueConstraint,
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship
 
 # ---------------------------------------------------------------------------
 # pgvector — optional
@@ -176,6 +185,52 @@ class IntentPhrase(Base):
     __table_args__ = (
         UniqueConstraint("intent_stage", "intent_area", "specific_task", "phrase",
                          name="_intent_phrase_uc"),
+    )
+
+
+class IntentPair(Base):
+    """
+    Canonical (query → intent JSON) training pair for the intent agent.
+
+    Populated by ``scripts/generate_intent_pairs.py`` (Claude teacher),
+    by hand-labeling, and by the production data flywheel that captures
+    high-confidence calls. Used as supervised fine-tuning data for the
+    Qwen-7B replacement model and as the substrate for DPO preference
+    pair mining.
+
+    Fields
+    ------
+    query           : raw user query
+    query_embedding : pgvector embedding for semantic dedup + retrieval
+    intent_json     : the canonical intent dict, validated against
+                      ``server.chat.intent_schema.IntentSchema`` at write time
+    schema_version  : ``intent_schema.SCHEMA_VERSION`` when the row was written
+    source          : provenance — one of
+                      ``claude_teacher`` | ``human_labeled``
+                      | ``production_gpt4o`` | ``production_qwen``
+                      | ``user_corrected``
+    teacher_model   : exact model identifier (e.g. ``claude-opus-4-6``)
+    quality_score   : free-form quality signal in [0, 1]
+    stratum         : ``area/family/difficulty`` slug used by the generator
+    """
+    __tablename__ = "intent_pair"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    query           = Column(Text, nullable=False)
+    query_embedding = _vec_column()
+    intent_json     = Column(JSON, nullable=False)
+    schema_version  = Column(Integer, nullable=False, default=1)
+    source          = Column(String, nullable=False, default="claude_teacher")
+    teacher_model   = Column(String)
+    quality_score   = Column(Float, default=1.0)
+    stratum         = Column(String)
+    notes           = Column(Text)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_intent_pair_source", "source"),
+        Index("ix_intent_pair_stratum", "stratum"),
+        Index("ix_intent_pair_created_at", "created_at"),
     )
 
 

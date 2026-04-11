@@ -1,0 +1,290 @@
+# Intent-pair generation strata.
+#
+# scripts/generate_intent_pairs.py walks this list. Each entry produces
+# `--n-per-stratum` (query, intent) pairs from the teacher model. Add or
+# delete strata freely; bumping a difficulty or adding a new family is
+# the easiest way to expand training coverage in a targeted way.
+#
+# Schema:
+#   strata:
+#     - id:        unique slug ("electrochemistry/CO2RR/medium")
+#       area:      one of the 5 canonical IntentSchema area values
+#       family:    short reaction family label, free-form
+#       difficulty: simple | medium | hard
+#       anchors:   list of concrete topic seeds the teacher should draw from
+#       guidance:  optional one-line note about what to emphasize / avoid
+#
+# `area` MUST match an IntentSchema canonical value
+# (electrochemistry, thermal_catalysis, photocatalysis,
+#  heterogeneous_catalysis, homogeneous_catalysis). The generator
+# validates this on load.
+
+version: 1
+
+strata:
+  # ─────────────────────────────────────────────────────────────────────
+  # ELECTROCHEMISTRY
+  # ─────────────────────────────────────────────────────────────────────
+  - id: electrochemistry/CO2RR/simple
+    area: electrochemistry
+    family: CO2RR
+    difficulty: simple
+    anchors:
+      - "CO2 reduction to CO on Cu(111)"
+      - "CO2RR to formate on Sn"
+      - "single-atom Ni-N4 catalyst for CO2RR"
+    guidance: One reactant, one product, single facet, single condition.
+
+  - id: electrochemistry/CO2RR/medium
+    area: electrochemistry
+    family: CO2RR
+    difficulty: medium
+    anchors:
+      - "CO2 reduction to ethanol via C-C coupling on Cu(100)"
+      - "CO2RR to methanol on Cu/ZnO with applied potential"
+      - "selectivity comparison between Cu(100), Cu(111), and Cu(110) for CO2RR"
+    guidance: Include pH, potential, and at least 2 intermediates.
+
+  - id: electrochemistry/CO2RR/hard
+    area: electrochemistry
+    family: CO2RR
+    difficulty: hard
+    anchors:
+      - "C2+ product distribution from CO2RR on grain-boundary Cu under operando conditions"
+      - "spin-polarized CO2RR on FeN4 with explicit solvent"
+      - "tandem CO2RR mechanism on Ag–Cu bimetallic"
+    guidance: Multi-step pathways, coadsorption, ambiguous selectivity.
+
+  - id: electrochemistry/HER/simple
+    area: electrochemistry
+    family: HER
+    difficulty: simple
+    anchors:
+      - "HER on Pt(111) at U = 0 V"
+      - "HER on MoS2 edge sites"
+      - "Volmer–Heyrovsky pathway on Ni"
+
+  - id: electrochemistry/HER/medium
+    area: electrochemistry
+    family: HER
+    difficulty: medium
+    anchors:
+      - "HER on doped graphene with N substitution"
+      - "alkaline HER on Pt(111) at pH 14"
+      - "HER on MoP catalyst with hydride intermediate"
+
+  - id: electrochemistry/ORR/simple
+    area: electrochemistry
+    family: ORR
+    difficulty: simple
+    anchors:
+      - "4e- ORR on Pt(111) at pH 1"
+      - "ORR on Fe-N-C single-atom catalyst"
+
+  - id: electrochemistry/ORR/medium
+    area: electrochemistry
+    family: ORR
+    difficulty: medium
+    anchors:
+      - "ORR vs OER bifunctionality of LaMnO3"
+      - "associative vs dissociative ORR mechanism on Pt(111) at U = 0.9 V"
+      - "ORR scaling relation breaking on bimetallic surface"
+
+  - id: electrochemistry/NRR/medium
+    area: electrochemistry
+    family: NRR
+    difficulty: medium
+    anchors:
+      - "distal vs alternating NRR pathway on Ru(0001)"
+      - "NRR on FeMoCo-mimicking single-atom catalyst"
+      - "competition between NRR and HER on Mo2N"
+
+  - id: electrochemistry/OER/medium
+    area: electrochemistry
+    family: OER
+    difficulty: medium
+    anchors:
+      - "OER on IrO2(110) via lattice-oxygen mechanism"
+      - "OER overpotential prediction from descriptor scaling on RuO2"
+      - "Co3O4 spinel OER active site identification"
+
+  - id: electrochemistry/NO3RR/hard
+    area: electrochemistry
+    family: NO3RR
+    difficulty: hard
+    anchors:
+      - "nitrate reduction to ammonia on Cu(100) in alkaline electrolyte"
+      - "selectivity between NH3 and N2 in NO3RR on Fe single-atom catalyst"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # THERMAL CATALYSIS
+  # ─────────────────────────────────────────────────────────────────────
+  - id: thermal_catalysis/dehydrogenation/simple
+    area: thermal_catalysis
+    family: dehydrogenation
+    difficulty: simple
+    anchors:
+      - "propane dehydrogenation on Pt(111)"
+      - "n-butane dehydrogenation on Ag(111)"
+      - "ethane dehydrogenation on PtSn alloy"
+    guidance: NO electrode potential. Temperature in K.
+
+  - id: thermal_catalysis/dehydrogenation/medium
+    area: thermal_catalysis
+    family: dehydrogenation
+    difficulty: medium
+    anchors:
+      - "non-oxidative methane dehydrogenation to ethylene on Mo2C"
+      - "isobutane dehydrogenation on PtIn intermetallic at 873 K"
+
+  - id: thermal_catalysis/steam_reforming/simple
+    area: thermal_catalysis
+    family: steam_reforming
+    difficulty: simple
+    anchors:
+      - "steam methane reforming on Ni(111)"
+      - "ethanol steam reforming on Rh"
+      - "dry reforming of methane on Ni-CeO2"
+
+  - id: thermal_catalysis/CO_oxidation/simple
+    area: thermal_catalysis
+    family: CO_oxidation
+    difficulty: simple
+    anchors:
+      - "CO oxidation on Au(100) Langmuir-Hinshelwood"
+      - "CO oxidation on Pt(111) at 500 K"
+      - "Mars-van-Krevelen CO oxidation on CeO2"
+
+  - id: thermal_catalysis/ammonia_synthesis/medium
+    area: thermal_catalysis
+    family: ammonia_synthesis
+    difficulty: medium
+    anchors:
+      - "Haber-Bosch ammonia synthesis on Fe(110) at 700 K, 200 bar"
+      - "Ru/MgO for low-pressure ammonia synthesis"
+      - "associative N2 dissociation on Co3Mo3N"
+
+  - id: thermal_catalysis/hydrogenation/simple
+    area: thermal_catalysis
+    family: hydrogenation
+    difficulty: simple
+    anchors:
+      - "ethylene hydrogenation on Pt(111)"
+      - "selective acetylene hydrogenation on PdAg"
+
+  - id: thermal_catalysis/zeolite/medium
+    area: thermal_catalysis
+    family: zeolite_chemistry
+    difficulty: medium
+    anchors:
+      - "methanol-to-olefins on H-ZSM5"
+      - "alkane cracking on H-Y zeolite Brønsted site"
+      - "xylene isomerization on H-MOR"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # PHOTOCATALYSIS
+  # ─────────────────────────────────────────────────────────────────────
+  - id: photocatalysis/water_splitting/simple
+    area: photocatalysis
+    family: water_splitting
+    difficulty: simple
+    anchors:
+      - "photocatalytic water splitting on TiO2 anatase (101)"
+      - "Z-scheme water splitting with WO3/BiVO4"
+
+  - id: photocatalysis/CO2_reduction/medium
+    area: photocatalysis
+    family: photo_CO2_reduction
+    difficulty: medium
+    anchors:
+      - "photocatalytic CO2 reduction on g-C3N4"
+      - "plasmonic Au/TiO2 for visible-light CO2 reduction"
+      - "photothermal CO2 hydrogenation on Cu/TiO2"
+
+  - id: photocatalysis/N2_fixation/hard
+    area: photocatalysis
+    family: photo_N2_fixation
+    difficulty: hard
+    anchors:
+      - "photocatalytic nitrogen fixation on BiOBr with oxygen vacancies"
+      - "visible-light NRR on Mo-doped Bi2MoO6"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # HETEROGENEOUS (catch-all surface chemistry that doesn't fit above)
+  # ─────────────────────────────────────────────────────────────────────
+  - id: heterogeneous_catalysis/adsorption_energetics/simple
+    area: heterogeneous_catalysis
+    family: adsorption_energetics
+    difficulty: simple
+    anchors:
+      - "CO adsorption energy on Pt(111) FCC vs HCP hollow"
+      - "OH binding strength on Au(100)"
+      - "water adsorption on Cu(110)"
+
+  - id: heterogeneous_catalysis/electronic_structure/medium
+    area: heterogeneous_catalysis
+    family: electronic_structure_analysis
+    difficulty: medium
+    anchors:
+      - "d-band center of Cu(111) before and after CO adsorption"
+      - "PDOS analysis of *OH on Pt(111)"
+      - "Bader charge transfer analysis for *NO on Cu(100)"
+    guidance: stage = 'analysis' for these.
+
+  - id: heterogeneous_catalysis/structure_building/simple
+    area: heterogeneous_catalysis
+    family: structure_construction
+    difficulty: simple
+    anchors:
+      - "build a 4x4 Pt(111) slab with 4 layers and 15 A vacuum"
+      - "construct a Cu(100) 3x3 slab with CO adsorbate at the top site"
+      - "place a hydroxyl on Au(111) bridge site"
+    guidance: stage = 'structure_building'.
+
+  - id: heterogeneous_catalysis/benchmarking/medium
+    area: heterogeneous_catalysis
+    family: functional_benchmarking
+    difficulty: medium
+    anchors:
+      - "PBE vs SCAN vs r2SCAN for CO adsorption energy on Pt(111)"
+      - "RPBE vs PBE for H2 dissociation barrier on Cu(111)"
+      - "compare ENCUT 400 vs 520 eV for Pd(100) surface energy"
+    guidance: stage = 'benchmarking'.
+
+  # ─────────────────────────────────────────────────────────────────────
+  # HOMOGENEOUS
+  # ─────────────────────────────────────────────────────────────────────
+  - id: homogeneous_catalysis/cross_coupling/simple
+    area: homogeneous_catalysis
+    family: cross_coupling
+    difficulty: simple
+    anchors:
+      - "Suzuki coupling of phenylboronic acid + bromobenzene with Pd(PPh3)4"
+      - "Heck reaction of styrene + iodobenzene"
+      - "Sonogashira coupling with PdCl2/CuI"
+
+  - id: homogeneous_catalysis/hydrogenation/simple
+    area: homogeneous_catalysis
+    family: hydrogenation
+    difficulty: simple
+    anchors:
+      - "Wilkinson's catalyst hydrogenation of propene"
+      - "Ru-BINAP asymmetric hydrogenation of methyl acetoacetate"
+      - "Crabtree's catalyst directed hydrogenation"
+
+  - id: homogeneous_catalysis/hydroformylation/medium
+    area: homogeneous_catalysis
+    family: hydroformylation
+    difficulty: medium
+    anchors:
+      - "Rh-catalyzed hydroformylation of 1-octene"
+      - "linear vs branched selectivity in Co-catalyzed hydroformylation of propene"
+
+  - id: homogeneous_catalysis/oxidation/medium
+    area: homogeneous_catalysis
+    family: oxidation
+    difficulty: medium
+    anchors:
+      - "Sharpless asymmetric epoxidation of allyl alcohol"
+      - "Jacobsen-Katsuki epoxidation with Mn-salen"
+      - "Mn-corrole catalyzed C-H oxidation"

@@ -175,6 +175,9 @@ app.include_router(batch_ads_router)
 from server.api.batch_results import router as batch_results_router
 app.include_router(batch_results_router)
 
+from server.api.molecular_api import router as molecular_router
+app.include_router(molecular_router, tags=["molecular"])
+
 # ── Monitoring dashboard (agent + system health metrics) ───────────────────
 from server.api.dashboard import router as dashboard_router
 app.include_router(dashboard_router, tags=["dashboard"])

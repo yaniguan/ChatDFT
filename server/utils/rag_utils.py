@@ -55,15 +55,18 @@ except Exception as e:
     VECTOR_DIM = 1536
 
 # ---------------------------------------------------------------------------
-# OpenAI client (embeddings + chat)
+# LLM router (embeddings + chat)
 # ---------------------------------------------------------------------------
+# Embeddings go through the same provider router as chat so a local vLLM
+# embedding deployment can be wired in by changing ``server/llm.yaml`` alone.
 try:
-    from openai import AsyncOpenAI  # type: ignore
-    _oa = AsyncOpenAI()
-    _OA_OK = True
-except ImportError:
-    _oa = None
-    _OA_OK = False
+    from server.utils.llm_providers import get_llm_router
+    _ROUTER_OK = True
+except Exception as _e:  # pragma: no cover
+    log.warning("rag_utils: llm router import failed (%s) — embeddings disabled", _e)
+    _ROUTER_OK = False
+    def get_llm_router():  # type: ignore
+        raise RuntimeError("llm router unavailable")
 
 
 # ===========================================================================
@@ -75,25 +78,31 @@ _EMBED_LOCK = asyncio.Lock()                 # prevent race conditions on cache 
 
 
 async def embed_text(text: str, model: str = "text-embedding-3-small") -> List[float]:
-    """Return the embedding vector for *text*. Thread-safe in-memory cache."""
+    """
+    Return the embedding vector for *text*. Thread-safe in-memory cache.
+    Routed through ``LLMRouter`` so vLLM embedding backends work transparently.
+    """
     text = text.strip()
     if not text:
         return [0.0] * VECTOR_DIM
 
     key = hashlib.md5(text.encode()).hexdigest()
-    # Read without lock (dict reads are thread-safe in CPython)
     if key in _EMBED_CACHE:
         return _EMBED_CACHE[key]
 
-    if not _OA_OK or _oa is None:
+    if not _ROUTER_OK:
         return [0.0] * VECTOR_DIM
 
     try:
-        resp = await _oa.embeddings.create(input=text[:8000], model=model)
-        vec = resp.data[0].embedding
+        router = get_llm_router()
+        vecs = await router.embed(
+            agent_name="knowledge_agent",
+            texts=[text[:8000]],
+            model_hint=model,
+        )
+        vec = vecs[0]
         async with _EMBED_LOCK:
             _EMBED_CACHE[key] = vec
-            # Evict oldest entries if cache grows too large
             if len(_EMBED_CACHE) > 10000:
                 to_remove = list(_EMBED_CACHE.keys())[:2000]
                 for k in to_remove:

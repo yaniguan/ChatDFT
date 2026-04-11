@@ -1,0 +1,124 @@
+# configs/qwen_lora_overfit.yaml
+#
+# DELIBERATELY-OVERFITTING LoRA config — this is a pipeline sanity check,
+# NOT a production training run.
+#
+# Purpose
+# -------
+# When you change the SFT data format, the chat_template, the LoRA target
+# modules, the base model, or literally any training hyperparameter,
+# you want a fast "does the loop still work at all" test before you burn
+# 2-4 hours on a real run that might be silently broken.
+#
+# The recipe here trains on the ~200-row v1 corpus with enough epochs and
+# a high enough learning rate that loss MUST drive to near-zero if the
+# pipeline is correct. If you run this and see:
+#
+#   * train/loss plateau above ~0.1       → chat_template is wrong, or
+#                                           assistant spans aren't being
+#                                           unmasked for loss
+#   * train/loss NaN after step 1         → learning rate too high for
+#                                           the base model's precision
+#   * eval/loss diverges from train/loss  → NOT a problem on this config
+#                                           — overfit is the goal
+#
+# When this config succeeds (loss < 0.05 by epoch 5), the pipeline is
+# validated end-to-end. Switch to configs/qwen_lora.yaml for the real
+# training run against a larger corpus.
+#
+# Hardware
+# --------
+# A single 24 GB card (3090/4090) is enough at micro_batch_size=1 with
+# sequence packing. Adjust gradient_accumulation_steps up if you only
+# have 12 GB.
+
+# ── base model ───────────────────────────────────────────────────────────
+base_model: Qwen/Qwen2.5-7B-Instruct
+model_type: AutoModelForCausalLM
+tokenizer_type: AutoTokenizer
+trust_remote_code: false
+
+load_in_8bit: false
+load_in_4bit: false
+strict: false
+
+# ── data (same exporter output as the real run) ─────────────────────────
+datasets:
+  - path: artifacts/sft_v2/train.jsonl
+    type: chat_template
+    chat_template: qwen_25
+    field_messages: messages
+    message_field_role: role
+    message_field_content: content
+
+dataset_prepared_path: artifacts/qwen_lora_overfit_prepared
+val_set_size: 0
+
+test_datasets:
+  - path: artifacts/sft_v2/val.jsonl
+    type: chat_template
+    chat_template: qwen_25
+    field_messages: messages
+    message_field_role: role
+    message_field_content: content
+    split: train
+
+# Separate output dir so this doesn't clobber the production run's checkpoints.
+output_dir: artifacts/qwen_lora_overfit_out
+
+# ── sequence packing ─────────────────────────────────────────────────────
+sequence_len: 4096
+sample_packing: true
+pad_to_sequence_len: true
+
+# ── LoRA ─────────────────────────────────────────────────────────────────
+# Identical to production so the "it works here" signal is meaningful.
+adapter: lora
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+# ── schedule — TUNED FOR OVERFIT ─────────────────────────────────────────
+# * 10 epochs so the model sees each example many times.
+# * lr 1e-4 (half the production rate) to avoid loss spikes on a tiny
+#   dataset where one noisy sample can dominate a step.
+# * linear decay (not cosine) so loss keeps dropping even in the last
+#   epoch — you want visual evidence that it CAN drive to zero.
+num_epochs: 10
+micro_batch_size: 1
+gradient_accumulation_steps: 16           # effective batch 16
+optimizer: adamw_torch_fused
+lr_scheduler: linear
+learning_rate: 0.0001
+warmup_ratio: 0.01
+weight_decay: 0.0                         # no regularization — we WANT overfitting
+max_grad_norm: 1.0
+
+# ── precision / kernels ──────────────────────────────────────────────────
+bf16: auto
+tf32: false
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+flash_attention: true
+
+# ── logging / eval ───────────────────────────────────────────────────────
+# Tight logging so you can SEE loss dropping step by step.
+logging_steps: 1
+save_strategy: epoch
+save_total_limit: 1
+eval_strategy: epoch
+eval_steps: 1
+
+# ── misc ─────────────────────────────────────────────────────────────────
+seed: 42
+special_tokens:
+  pad_token: "<|endoftext|>"
