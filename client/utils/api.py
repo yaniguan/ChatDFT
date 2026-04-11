@@ -368,3 +368,15 @@ def hypothesis_feedback(session_id: int, result_type: str, species: str,
         "species": species, "surface": surface, "value": value,
         "converged": converged, "extra": extra or {},
     })
+
+# ── Monitoring dashboard ────────────────────────────────────────────────────
+def dashboard_overview(window_minutes: int = 60, n_buckets: int = 12) -> dict:
+    return get("/dashboard/overview", {
+        "window_minutes": window_minutes, "n_buckets": n_buckets,
+    })
+
+def dashboard_help() -> dict:
+    return get("/dashboard/help", {})
+
+def dashboard_alerts(window_minutes: int = 60) -> dict:
+    return get("/dashboard/alerts", {"window_minutes": window_minutes})
