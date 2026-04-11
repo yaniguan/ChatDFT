@@ -6,3 +6,11 @@ __pycache__/
 runs/
 *.log
 .claude/
+
+# intent-agent pipeline artifacts — regenerable from the intent_pair table
+# via `python -m scripts.export_sft_dataset` and the LoRA training scripts.
+# Only checked-in baselines (small JSON measurements) live in artifacts/.
+artifacts/sft_v*/
+artifacts/qwen_lora_out/
+artifacts/qwen_lora_overfit_out/
+artifacts/qwen_lora_*_prepared/

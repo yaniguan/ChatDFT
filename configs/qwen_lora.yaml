@@ -1,0 +1,135 @@
+# configs/qwen_lora.yaml
+#
+# Axolotl LoRA fine-tuning config for the ChatDFT intent_agent student.
+# Trains a Qwen2.5-7B-Instruct LoRA adapter on the SFT corpus exported by
+# `scripts/export_sft_dataset.py`.
+#
+# Why these settings
+# ------------------
+# * Qwen2.5-7B-Instruct is the production target — it's already pinned in
+#   server/llm.yaml as the vLLM-served model, so the trained adapter can
+#   be merged + served without changing the routing layer.
+# * LoRA (not full fine-tune): the intent task is a structured-extraction
+#   task with a fixed schema. Full fine-tune is overkill, hurts
+#   generalization, and takes 6x longer. r=16, alpha=32 is the standard
+#   "sufficient capacity for structured-output specialization" recipe.
+# * sample_packing=true is mandatory for cost — without it, every example
+#   uses a full 4096-token sequence and you waste 80% of the compute.
+# * eval against our held-out val.jsonl every 100 steps so you can spot
+#   over-fitting against an *out-of-stratum* signal, not just train loss.
+#
+# How to run
+# ----------
+# 1. Generate the SFT corpus first (Phase 1 + Phase 2):
+#       python -m scripts.generate_intent_pairs --n-per-stratum 8
+#       python -m scripts.export_sft_dataset --out artifacts/sft_v2
+#
+# 2. Install axolotl in a fresh env (NOT llm-agent — axolotl pins specific
+#    torch/transformers versions that conflict with the FastAPI stack):
+#       conda create -n axolotl python=3.10 -y
+#       conda activate axolotl
+#       pip install packaging ninja
+#       pip install "axolotl[flash-attn,deepspeed]"
+#
+# 3. Run training (single GPU; adjust micro_batch_size for your VRAM):
+#       bash scripts/train_qwen_lora.sh
+#
+# 4. The trained adapter lands in artifacts/qwen_lora_out/. Merge with the
+#    base model and serve via the same vLLM container that's already in
+#    infra/docker/vllm.docker-compose.yaml.
+#
+# Tested against axolotl >= 0.5.0.
+
+# ── base model ───────────────────────────────────────────────────────────
+base_model: Qwen/Qwen2.5-7B-Instruct
+model_type: AutoModelForCausalLM
+tokenizer_type: AutoTokenizer
+trust_remote_code: false
+
+# ── precision / quantization ─────────────────────────────────────────────
+# bf16 is right for A100/H100. For 4090 / 3090, switch to load_in_4bit + qlora.
+load_in_8bit: false
+load_in_4bit: false
+strict: false
+
+# ── data ─────────────────────────────────────────────────────────────────
+# The exporter writes JSONL where each line is
+# {"messages": [{"role": ..., "content": ...}, ...], "metadata": {...}}.
+# Axolotl's chat_template loader handles that natively when given
+# field_messages: messages.
+datasets:
+  - path: artifacts/sft_v2/train.jsonl
+    type: chat_template
+    chat_template: qwen_25
+    field_messages: messages
+    message_field_role: role
+    message_field_content: content
+
+dataset_prepared_path: artifacts/qwen_lora_prepared
+val_set_size: 0      # we provide our own held-out via test_datasets
+
+test_datasets:
+  - path: artifacts/sft_v2/val.jsonl
+    type: chat_template
+    chat_template: qwen_25
+    field_messages: messages
+    message_field_role: role
+    message_field_content: content
+    split: train
+
+output_dir: artifacts/qwen_lora_out
+
+# ── sequence packing ─────────────────────────────────────────────────────
+# 4k is plenty — the longest training example is the system prompt
+# (~3k chars / ~1k tokens) + the user payload + the intent JSON.
+sequence_len: 4096
+sample_packing: true
+pad_to_sequence_len: true
+
+# ── LoRA ─────────────────────────────────────────────────────────────────
+adapter: lora
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+# ── optimizer / schedule ─────────────────────────────────────────────────
+# Effective batch = micro_batch * grad_accum = 2 * 8 = 16.
+# 3 epochs is the right amount for ~5k examples on a structured-output task.
+gradient_accumulation_steps: 8
+micro_batch_size: 2
+num_epochs: 3
+optimizer: adamw_torch_fused
+lr_scheduler: cosine
+learning_rate: 0.0002
+warmup_ratio: 0.03
+weight_decay: 0.01
+max_grad_norm: 1.0
+
+# ── precision / kernels ──────────────────────────────────────────────────
+bf16: auto
+tf32: false
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+flash_attention: true
+
+# ── logging / checkpointing / eval ───────────────────────────────────────
+logging_steps: 5
+save_strategy: steps
+save_steps: 100
+save_total_limit: 3
+eval_strategy: steps
+eval_steps: 100
+
+# ── misc ─────────────────────────────────────────────────────────────────
+seed: 42
+special_tokens:
+  pad_token: "<|endoftext|>"

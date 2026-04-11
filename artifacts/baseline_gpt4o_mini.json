@@ -1,0 +1,36 @@
+{
+  "_doc": "Baseline eval of the GPT-4o-mini production intent agent against tests/intent_eval/eval_set.jsonl. Captured 2026-04-11 after two fixes: (a) chemical-alias + superset matching in the harness, (b) canonical-product inference in the system prompt. This is the number the fine-tuned Qwen-7B LoRA has to beat.",
+  "date": "2026-04-11",
+  "eval_set": "tests/intent_eval/eval_set.jsonl",
+  "eval_set_version": "v2 (30 cases, incl. 10 hard)",
+  "predictor": "live (/chat/intent via uvicorn server.main:app)",
+  "llm_route": "intent_agent: openai → gpt-4o-mini (default from llm.yaml)",
+  "n_cases": 30,
+  "field_accuracy": 0.8258,
+  "critical_em_rate": 0.4333,
+  "per_field_accuracy": {
+    "stage": 0.6333,
+    "area": 0.9,
+    "substrate": 0.68,
+    "facet": 0.9412,
+    "reactant": 0.8571,
+    "product": 1.0,
+    "conditions.pH": 1.0,
+    "conditions.potential_V_vs_RHE": 1.0,
+    "conditions.temperature": 1.0,
+    "conditions.pressure": 1.0,
+    "conditions.electrolyte": 0.0
+  },
+  "area_confusion": {
+    "electrochemistry": {"electrochemistry": 9, "heterogeneous_catalysis": 1},
+    "thermal_catalysis": {"thermal_catalysis": 4, "heterogeneous_catalysis": 2},
+    "homogeneous_catalysis": {"homogeneous_catalysis": 3},
+    "photocatalysis": {"photocatalysis": 3},
+    "heterogeneous_catalysis": {"heterogeneous_catalysis": 8}
+  },
+  "ship_thresholds": {
+    "field_accuracy_gte": 0.826,
+    "critical_em_rate_gte": 0.433,
+    "note": "LoRA must match or beat these to ship. Stage (0.63) and electrolyte (0.00) are the current weak spots with the most headroom."
+  }
+}

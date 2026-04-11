@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from server.db import SessionLocal, ChatMessage, Hypothesis, WorkflowTask, IntentPhrase
 from server.utils.rag_utils import rag_context
 from server.utils.openai_wrapper import chatgpt_call  # async
+from server.chat.intent_schema import validate_intent
 
 # NEW: 引入机制注册表
 try:
@@ -662,38 +663,87 @@ async def _expand_workflow_tasks(session, session_id: int, message_id: int, inte
 # -----------------------------
 # LLM 提示词（只输出 JSON）
 # -----------------------------
-def _intent_system_prompt() -> Any:
+def _intent_system_prompt() -> str:
+    """
+    Canonical intent-parser system prompt.
+
+    The schema described here is enforced at runtime by
+    ``server.chat.intent_schema.IntentSchema``. **Any change to this prompt
+    must be mirrored in that schema, and vice versa** — the two are tested
+    together in ``tests/test_intent_schema.py``.
+    """
     return (
         "You are an AI-for-Science intent parser for computational catalysis. "
         "Return a STRICT JSON object (no code fences, no prose) with EXACT keys:\n"
         "{stage, area, task, system, substrate, facet, adsorbates, reactant, product, "
         "conditions, metrics, reaction_network, deliverables, hypothesis, tags, constraints, summary}.\n"
+        "\n"
+        "Enum values (use the EXACT spelling — anything else is invalid):\n"
+        "- stage: one of "
+        "'catalysis' | 'screening' | 'benchmarking' | 'analysis' | 'structure_building'\n"
+        "- area:  one of "
+        "'electrochemistry' | 'thermal_catalysis' | 'photocatalysis' "
+        "| 'heterogeneous_catalysis' | 'homogeneous_catalysis'\n"
+        "\n"
+        "Area selection rules:\n"
+        "- 'electrochemistry'        — use ONLY when an electrode potential, "
+        "applied voltage, or PCET (proton-coupled electron transfer) is explicitly involved.\n"
+        "- 'thermal_catalysis'       — dehydrogenation, C-H activation, steam reforming, "
+        "hydrogenation, ammonia synthesis, alkane conversion, ANYTHING gas-phase on a "
+        "metal/oxide surface WITHOUT electrochemical potential.\n"
+        "- 'photocatalysis'          — photo-driven or photothermal reactions.\n"
+        "- 'heterogeneous_catalysis' — fallback for surface chemistry that does not fit the above.\n"
+        "- 'homogeneous_catalysis'   — molecular / organometallic catalysts in solution.\n"
+        "\n"
         "Schema:\n"
-        "- stage:str  (e.g., 'catalysis', 'screening', 'benchmarking')\n"
-        "- area:str   IMPORTANT: choose the most accurate from: "
-        "'electrochemistry' | 'thermal_catalysis' | 'photocatalysis' | 'heterogeneous_catalysis' | 'homogeneous_catalysis'. "
-        "Use 'thermal_catalysis' for dehydrogenation, C-H activation, steam reforming, hydrogenation WITHOUT electrochemical potential. "
-        "Use 'electrochemistry' ONLY when electrode potential / applied voltage is explicitly mentioned.\n"
-        "- task:str   (short description, e.g., 'study dehydrogenation mechanism')\n"
+        "- stage:str   (canonical enum, see above)\n"
+        "- area:str    (canonical enum, see above)\n"
+        "- task:str    NON-EMPTY short description, e.g. 'study dehydrogenation mechanism'\n"
+        "- summary:str NON-EMPTY 1-sentence summary\n"
         "- system:{catalyst:str, material:str, facet:str, molecule:[str]}  "
         "e.g. {catalyst:'Ag111', material:'Ag', facet:'111', molecule:['C4H10','C4H8']}\n"
-        "- substrate:str | null  (e.g., 'Ag(111)')\n"
+        "- substrate:str | null   (e.g. 'Ag(111)')\n"
         "- facet:str | null\n"
-        "- reactant:str  (starting molecule, e.g. 'C4H10')\n"
-        "- product:str   (target molecule, e.g. 'C4H8')\n"
-        "- adsorbates:[str]  (surface-adsorbed species including intermediates, e.g. ['C4H10*','C4H9*','C4H8*','H*'])\n"
+        "- reactant:str | null    (starting molecule, e.g. 'C4H10')\n"
+        "- product:str  | null    (target molecule, e.g. 'C4H8')\n"
+        "- adsorbates:[str]       (surface-adsorbed species, e.g. ['C4H10*','C4H9*','H*'])\n"
         "- conditions:{pH:number|null, potential_V_vs_RHE:number|null, solvent:str|null, "
         "temperature:number|null, pressure:number|null, electrolyte:str|null}\n"
         "- metrics:[{name:str, unit?:str, note?:str}]\n"
         "- reaction_network:{intermediates:[str], steps:[str], ts:[], coads:[], coads_pairs:[]}\n"
-        "  steps should be arrow-notation strings like 'C4H10* → C4H9* + H*'\n"
-        "- deliverables:{target_products:[str], figures?:[str]}\n"
-        "- hypothesis:str  (1–2 sentence scientific hypothesis about the mechanism)\n"
+        "  steps should be arrow-notation strings like 'C4H10* -> C4H9* + H*'\n"
+        "- deliverables:{target_products:[str], figures:[str]}\n"
+        "- hypothesis:str | null  (1–2 sentence scientific hypothesis about the mechanism)\n"
         "- tags:[str]\n"
-        "- constraints:{notes?:str}\n"
-        "- summary:str\n"
+        "- constraints:{notes?:str} (object; use {} if none)\n"
+        "\n"
         "All lists must be present (use [] if unknown). "
-        "CRITICAL: Set 'area' correctly — dehydrogenation on a metal surface = 'thermal_catalysis'."
+        "All required fields (stage, area, task, summary) must be non-empty. "
+        "CRITICAL: dehydrogenation on a metal surface is 'thermal_catalysis', NOT 'electrochemistry'.\n"
+        "\n"
+        "Canonical product inference:\n"
+        "For well-known named reactions, fill in the conventional primary "
+        "product(s) from the reaction name EVEN IF the query does not "
+        "explicitly state them. Do not leave `product` null when the "
+        "product is a textbook consequence of the reaction name:\n"
+        "- HER (hydrogen evolution)            → product = 'H2'\n"
+        "- ORR (oxygen reduction, 4e-)         → product = 'H2O'\n"
+        "- OER (oxygen evolution)              → product = 'O2'\n"
+        "- NRR (nitrogen reduction)            → product = 'NH3'\n"
+        "- CO2RR                               → product = the target C1/C2 named in the query "
+        "('methanol'→'CH3OH', 'ethanol'→'CH3CH2OH', 'formate'→'HCOO-', 'CO'→'CO'); "
+        "default 'CO' if unspecified\n"
+        "- NO3RR                               → product = 'NH3' (default) or 'N2'\n"
+        "- Steam methane reforming (SMR)       → product = 'CO + H2'\n"
+        "- Dry methane reforming               → product = 'CO + H2'\n"
+        "- Water splitting                     → product = 'H2 + O2'\n"
+        "- Ammonia synthesis / Haber-Bosch     → product = 'NH3'\n"
+        "- Methanol-to-olefins                 → product = 'C2H4' (or the specific olefin named)\n"
+        "- Hydrogenation                       → product = the hydrogenated form of the reactant\n"
+        "- Dehydrogenation                     → product = the dehydrogenated form\n"
+        "When the query names a specific downstream target (e.g. 'CO2 "
+        "reduction to methanol'), always prefer that explicit target "
+        "over the default."
     )
 
 def _make_user_prompt(user_text: str, guided: Dict[str, Any], fewshots: List[Dict[str, Any]], rag_text: str) -> List[Dict[str, str]]:
@@ -747,50 +797,79 @@ async def _api_intent_impl(request: Request) -> Dict[str, Any]:
         rag = ""
     rag_text, rag_refs = _normalize_rag(_clip(rag, 4000))
 
-    # 3) 构造紧凑消息体（不用 _make_user_prompt，自己控制体量）
-    sys_prompt = (
-        "You are an intent parser for computational catalysis. "
-        "Return STRICT JSON only. Keys: stage, area, task, system(catalyst, facet, material, molecule), "
-        "conditions(pH,potential,electrolyte,solvent,temperature,pressure), "
-        "reaction_network{steps[], intermediates[], ts[], coads[]}, tags, deliverables."
-    )
-    # guided/knowledge/history 略去或限长；这里仅用 guided 的短字段
+    # 3) Build messages using the canonical system prompt + compact user payload.
+    #    The system prompt is the single source of truth shared with IntentSchema.
     guided_small = {k: _clip(v, 300) if isinstance(v, str) else v for k, v in guided.items()}
-
     user_payload = {
         "query": _clip(user_text, 1000),
         "guided": guided_small,
-        "fewshots_hint": fewshots,      # 已限长
+        "fewshots_hint": fewshots,      # already length-limited
         "rag_hint": _clip(rag_text, 3500),
     }
     messages = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)}
+        {"role": "system", "content": _intent_system_prompt()},
+        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
     ]
     messages = _hard_trim_messages(messages, budget=16000)
 
-    # 3') 调 LLM（小模型、更小 max_tokens；失败后降载重试）
-    kwargs = {"model": "gpt-4o-mini", "temperature": 0.1, "max_tokens": 900}
+    # 3') Primary LLM call. ``model_hint`` is intentionally generic so the
+    #     llm.yaml routing layer picks the right backend (openai vs vllm_local
+    #     vs future fine-tuned Qwen). The router substitutes its own default
+    #     model when the hint does not belong to it.
+    primary_kwargs: Dict[str, Any] = {
+        "model": "gpt-4o-mini",
+        "temperature": 0.1,
+        "max_tokens": 900,
+        "json_mode": True,
+    }
     try:
-        raw = await chatgpt_call(messages, **kwargs)
-    except Exception as e:
-        # 极端情况下再降一档
+        raw = await chatgpt_call(messages, **primary_kwargs)
+    except Exception:
         messages = _hard_trim_messages(messages, budget=8000)
-        raw = await chatgpt_call(messages, **kwargs)
+        raw = await chatgpt_call(messages, **primary_kwargs)
 
-    intent = _json_from_llm_raw(raw)
-    if not isinstance(intent, dict) or not intent:
-        # 明确提醒只返回 JSON，再试一次
-        messages.append({"role": "user", "content": "Return JSON only. No prose, no code fences."})
+    parsed = _json_from_llm_raw(raw)
+    intent_model, err_summary = validate_intent(parsed)
+
+    # 3'') Schema-driven retry. If the first response failed validation, feed
+    #      the structured error back to the model with temperature=0 so it
+    #      can correct the specific fields rather than guessing again.
+    if intent_model is None:
+        log.info("intent schema validation failed on first attempt: %s", err_summary)
+        retry_kwargs = {**primary_kwargs, "temperature": 0.0}
+        retry_msg = (
+            "Your previous response failed schema validation:\n"
+            f"{err_summary}\n\n"
+            "Return a corrected JSON object that passes ALL validators. "
+            "Use the EXACT enum spellings for `stage` and `area`. "
+            "Both `task` and `summary` must be non-empty strings. "
+            "No prose, no code fences."
+        )
+        messages.append({"role": "user", "content": retry_msg})
         messages = _hard_trim_messages(messages, budget=12000)
-        raw = await chatgpt_call(messages, **kwargs)
-        intent = _json_from_llm_raw(raw)
+        raw = await chatgpt_call(messages, **retry_kwargs)
+        parsed = _json_from_llm_raw(raw)
+        intent_model, err_summary = validate_intent(parsed)
 
-    if not isinstance(intent, dict) or not intent:
+    if intent_model is None:
         preview = str(raw)
         if isinstance(preview, str) and len(preview) > 800:
             preview = preview[:800] + " ...[truncated]"
-        return JSONResponse({"ok": False, "error": "LLM returned non-JSON", "llm_preview": preview, "status": 502}, status_code=502)
+        log.warning("intent schema validation failed twice: %s", err_summary)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "LLM output failed IntentSchema validation",
+                "validation_errors": err_summary,
+                "llm_preview": preview,
+                "status": 502,
+            },
+            status_code=502,
+        )
+
+    # Dump validated model back to a plain dict so the rest of the pipeline
+    # (rule-merge, mechanism expansion, persistence) can keep mutating it.
+    intent: Dict[str, Any] = intent_model.model_dump(mode="json")
 
     # 3.5) 规则底座合并（保留你原来的逻辑）
     auto = _quick_parse_user_text(user_text)
@@ -837,19 +916,22 @@ async def _api_intent_impl(request: Request) -> Dict[str, Any]:
         log.exception("mechanism expansion failed: %s", e)
 
     # 4) 标准化
-    intent["stage"] = intent.get("stage") or guided.get("stage") or "catalysis"
-    # Infer area from text rather than defaulting to "electro"
-    _area_default = "heterogeneous_catalysis"
+    # NOTE: stage/area/task/summary are guaranteed non-empty by IntentSchema
+    # validation above, so the legacy keyword-based area fallback is no longer
+    # needed. We keep _utl in scope because the electronic-calc detection
+    # below still uses it.
     _utl = user_text.lower()
-    if any(k in _utl for k in ["electro", "potential", "voltage", "electrode", "pcet",
-                                  "her ", "orr ", "oer ", "co2rr", "nrr ", "no3rr"]):
-        _area_default = "electrochemistry"
-    elif any(k in _utl for k in ["dehydrog", "c-h activ", "steam reform", "alkane",
-                                   "butane", "propane", "methane", "thermal"]):
-        _area_default = "thermal_catalysis"
-    intent["area"]  = intent.get("area")  or guided.get("area")  or _area_default
-    intent["task"]  = intent.get("task")  or guided.get("task")  or user_text[:140]
-    intent["model"] = "gpt-4o-mini"
+
+    # Record the actual provider:model that produced this intent (not the
+    # hint we passed in). Used by the data flywheel to attribute training
+    # signal correctly.
+    _meta = (raw or {}).get("_chatdft_meta") if isinstance(raw, dict) else None
+    if isinstance(_meta, dict):
+        provider = _meta.get("provider") or "openai"
+        model_name = _meta.get("model") or primary_kwargs.get("model") or "gpt-4o-mini"
+        intent["model"] = f"{provider}:{model_name}" if provider != "none" else model_name
+    else:
+        intent["model"] = primary_kwargs.get("model", "gpt-4o-mini")
 
     # ── Electronic structure calculation detection ────────────────────────────
     # Detect which types of electronic structure calculations the user wants.
