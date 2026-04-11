@@ -24,10 +24,12 @@ This module also provides molecular quality filters (PAINS, Brenk, Lipinski).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
+
+from science.molecular.generation.smiles_vae import _check_torch
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Molecular quality scoring (RDKit-based)
 # ---------------------------------------------------------------------------
+
 
 def compute_sa_score(smiles: str) -> float:
     """
@@ -44,11 +47,15 @@ def compute_sa_score(smiles: str) -> float:
     Uses RDKit's SA_Score module.
     """
     try:
+        import os
+        import sys
+
         from rdkit import Chem
         from rdkit.Chem import RDConfig
-        import sys, os
+
         sys.path.append(os.path.join(RDConfig.RDContribDir, "SA_Score"))
         import sascorer
+
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return 10.0
@@ -63,6 +70,7 @@ def _estimate_sa_score(smiles: str) -> float:
     try:
         from rdkit import Chem
         from rdkit.Chem import Descriptors
+
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return 10.0
@@ -85,6 +93,7 @@ def compute_qed(smiles: str) -> float:
     try:
         from rdkit import Chem
         from rdkit.Chem import QED
+
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return 0.0
@@ -102,6 +111,7 @@ def check_lipinski(smiles: str) -> Dict[str, bool]:
     try:
         from rdkit import Chem
         from rdkit.Chem import Descriptors
+
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return {"pass": False}
@@ -130,8 +140,10 @@ def check_pains(smiles: str) -> bool:
     try:
         from rdkit import Chem
         from rdkit.Chem.FilterCatalog import (
-            FilterCatalog, FilterCatalogParams,
+            FilterCatalog,
+            FilterCatalogParams,
         )
+
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return True
@@ -147,24 +159,27 @@ def check_pains(smiles: str) -> bool:
 # Multi-objective scoring
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class MoleculeScore:
     """Multi-objective score for a generated molecule."""
+
     smiles: str
-    scores: Dict[str, float]     # objective_name → score
+    scores: Dict[str, float]  # objective_name → score
     weighted_score: float = 0.0  # single aggregated score
     is_valid: bool = True
     is_novel: bool = True
     passes_filters: bool = True
-    pareto_rank: int = 0         # 0 = Pareto-optimal
+    pareto_rank: int = 0  # 0 = Pareto-optimal
 
 
 @dataclass
 class ObjectiveConfig:
     """Configuration for a single objective."""
+
     name: str
     weight: float = 1.0
-    minimize: bool = False       # True for SA score, toxicity
+    minimize: bool = False  # True for SA score, toxicity
     threshold: Optional[float] = None  # hard constraint
     scorer: Optional[Callable[[str], float]] = None
 
@@ -229,8 +244,11 @@ class MultiObjectiveScorer:
         is_valid = validate_smiles(smiles)
         if not is_valid:
             return MoleculeScore(
-                smiles=smiles, scores={}, weighted_score=0.0,
-                is_valid=False, passes_filters=False,
+                smiles=smiles,
+                scores={},
+                weighted_score=0.0,
+                is_valid=False,
+                passes_filters=False,
             )
 
         scores = {}
@@ -287,7 +305,7 @@ class MultiObjectiveScorer:
             return
 
         # Extract score vectors
-        obj_names = [o.name for o in self.objectives]
+        [o.name for o in self.objectives]
         vectors = []
         for r in valid:
             vec = []
@@ -337,9 +355,9 @@ class MultiObjectiveScorer:
 
         lines = [
             f"Generated: {len(results)} molecules",
-            f"  Valid: {len(valid)} ({len(valid)/max(len(results),1):.1%})",
-            f"  Novel: {len(novel)} ({len(novel)/max(len(valid),1):.1%})",
-            f"  Passing filters: {len(passing)} ({len(passing)/max(len(valid),1):.1%})",
+            f"  Valid: {len(valid)} ({len(valid) / max(len(results), 1):.1%})",
+            f"  Novel: {len(novel)} ({len(novel) / max(len(valid), 1):.1%})",
+            f"  Passing filters: {len(passing)} ({len(passing) / max(len(valid), 1):.1%})",
             f"  Pareto-optimal: {len(pareto)}",
         ]
 
@@ -361,6 +379,7 @@ class MultiObjectiveScorer:
 # ---------------------------------------------------------------------------
 # Latent space optimisation (Bayesian optimisation in VAE latent space)
 # ---------------------------------------------------------------------------
+
 
 def optimise_latent_space(
     vae,
@@ -386,7 +405,7 @@ def optimise_latent_space(
     _check_torch()
     import torch
 
-    rng = np.random.default_rng(seed)
+    np.random.default_rng(seed)
     device = next(vae.parameters()).device
 
     all_results = []
@@ -396,16 +415,16 @@ def optimise_latent_space(
         # Sample z vectors
         if best_z is not None and iteration > 0:
             # Exploit: perturb best z vectors
-            noise = torch.randn(n_samples_per_iter // 2, vae.cfg.latent_dim,
-                              device=device) * 0.3
+            noise = torch.randn(n_samples_per_iter // 2, vae.cfg.latent_dim, device=device) * 0.3
             exploit_z = best_z.unsqueeze(0).expand(n_samples_per_iter // 2, -1) + noise
             # Explore: fresh samples
-            explore_z = torch.randn(n_samples_per_iter - n_samples_per_iter // 2,
-                                   vae.cfg.latent_dim, device=device) * temperature
+            explore_z = (
+                torch.randn(n_samples_per_iter - n_samples_per_iter // 2, vae.cfg.latent_dim, device=device)
+                * temperature
+            )
             z = torch.cat([exploit_z, explore_z])
         else:
-            z = torch.randn(n_samples_per_iter, vae.cfg.latent_dim,
-                          device=device) * temperature
+            z = torch.randn(n_samples_per_iter, vae.cfg.latent_dim, device=device) * temperature
 
         # Decode
         smiles_list = vae.decode_from_z(z)
@@ -415,8 +434,7 @@ def optimise_latent_space(
         all_results.extend(batch_results)
 
         # Update best z
-        valid_results = [(r, z[i]) for i, r in enumerate(batch_results)
-                        if r.is_valid and r.passes_filters]
+        valid_results = [(r, z[i]) for i, r in enumerate(batch_results) if r.is_valid and r.passes_filters]
         if valid_results:
             best_result = max(valid_results, key=lambda x: x[0].weighted_score)
             best_z = best_result[1]

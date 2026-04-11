@@ -30,14 +30,12 @@ Dataset statistics (for interview reference):
 from __future__ import annotations
 
 import csv
-import hashlib
-import io
 import logging
 import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -47,17 +45,19 @@ log = logging.getLogger(__name__)
 # Dataset metadata
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DatasetInfo:
     """Metadata for a MoleculeNet dataset."""
+
     name: str
-    task_type: str           # "classification" or "regression"
-    n_tasks: int             # number of prediction targets
+    task_type: str  # "classification" or "regression"
+    n_tasks: int  # number of prediction targets
     task_names: List[str]
-    metric: str              # primary evaluation metric
-    url: str                 # DeepChem CSV URL
+    metric: str  # primary evaluation metric
+    url: str  # DeepChem CSV URL
     description: str = ""
-    n_molecules: int = 0     # populated after loading
+    n_molecules: int = 0  # populated after loading
     class_balance: Dict[str, float] = field(default_factory=dict)
 
 
@@ -76,9 +76,18 @@ DATASET_REGISTRY: Dict[str, DatasetInfo] = {
         task_type="classification",
         n_tasks=12,
         task_names=[
-            "NR-AR", "NR-AR-LBD", "NR-AhR", "NR-Aromatase", "NR-ER",
-            "NR-ER-LBD", "NR-PPAR-gamma", "SR-ARE", "SR-ATAD5",
-            "SR-HSE", "SR-MMP", "SR-p53",
+            "NR-AR",
+            "NR-AR-LBD",
+            "NR-AhR",
+            "NR-Aromatase",
+            "NR-ER",
+            "NR-ER-LBD",
+            "NR-PPAR-gamma",
+            "SR-ARE",
+            "SR-ATAD5",
+            "SR-HSE",
+            "SR-MMP",
+            "SR-p53",
         ],
         metric="auroc",
         url="https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/tox21.csv.gz",
@@ -145,12 +154,14 @@ DATASET_REGISTRY: Dict[str, DatasetInfo] = {
 # Data containers
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class MoleculeDatapoint:
     """Single molecule with SMILES and target(s)."""
+
     smiles: str
-    targets: np.ndarray       # shape (n_tasks,) — NaN for missing labels
-    weight: float = 1.0       # sample weight (for class balancing)
+    targets: np.ndarray  # shape (n_tasks,) — NaN for missing labels
+    weight: float = 1.0  # sample weight (for class balancing)
 
     @property
     def is_valid(self) -> bool:
@@ -160,9 +171,10 @@ class MoleculeDatapoint:
 @dataclass
 class MoleculeDataset:
     """A dataset of molecules with metadata."""
+
     data: List[MoleculeDatapoint]
     info: DatasetInfo
-    split: str = "full"       # "full", "train", "val", "test"
+    split: str = "full"  # "full", "train", "val", "test"
 
     @property
     def smiles(self) -> List[str]:
@@ -195,8 +207,7 @@ class MoleculeDataset:
                 neg = np.nansum(t[:, i] == 0)
                 ratio = pos / max(neg, 1)
                 lines.append(
-                    f"  {name}: {int(pos)} pos / {int(neg)} neg "
-                    f"(ratio={ratio:.3f}, missing={int(n - valid.sum())})"
+                    f"  {name}: {int(pos)} pos / {int(neg)} neg (ratio={ratio:.3f}, missing={int(n - valid.sum())})"
                 )
         else:
             for i, name in enumerate(self.info.task_names):
@@ -218,7 +229,12 @@ _DATA_CACHE_DIR = Path(os.environ.get("CHATDFT_DATA_DIR", "./data/molecular"))
 
 
 def _download_csv(url: str, name: str) -> str:
-    """Download a CSV file, cache locally. Return file path."""
+    """Download a CSV file, cache locally. Return file path.
+
+    Only http/https URLs are accepted — ``urllib.urlretrieve`` otherwise
+    happily follows ``file://``, ``ftp://`` or other schemes, which is the
+    CWE-22 path-traversal risk Bandit's B310 rule warns about.
+    """
     cache_dir = _DATA_CACHE_DIR / "raw"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -228,9 +244,15 @@ def _download_csv(url: str, name: str) -> str:
     if path.exists():
         log.debug("Using cached %s", path)
     else:
+        import urllib.parse
+
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"_download_csv: only http(s) URLs allowed, got scheme {parsed.scheme!r} from {url!r}")
         log.info("Downloading %s from %s", name, url)
         import urllib.request
-        urllib.request.urlretrieve(url, str(path))
+
+        urllib.request.urlretrieve(url, str(path))  # nosec B310
         log.info("Saved to %s", path)
 
     return str(path)
@@ -280,10 +302,7 @@ def load_dataset(
     name = name.lower()
     info = DATASET_REGISTRY.get(name)
     if info is None:
-        raise ValueError(
-            f"Unknown dataset: {name}. "
-            f"Available: {list(DATASET_REGISTRY.keys())}"
-        )
+        raise ValueError(f"Unknown dataset: {name}. Available: {list(DATASET_REGISTRY.keys())}")
 
     if data_dir:
         global _DATA_CACHE_DIR
@@ -315,10 +334,12 @@ def load_dataset(
                 except ValueError:
                     targets.append(float("nan"))
 
-        data.append(MoleculeDatapoint(
-            smiles=smi,
-            targets=np.array(targets, dtype=np.float32),
-        ))
+        data.append(
+            MoleculeDatapoint(
+                smiles=smi,
+                targets=np.array(targets, dtype=np.float32),
+            )
+        )
 
     info.n_molecules = len(data)
 
@@ -339,6 +360,7 @@ def load_dataset(
 # ---------------------------------------------------------------------------
 # Scaffold splitting
 # ---------------------------------------------------------------------------
+
 
 def scaffold_split(
     dataset: MoleculeDataset,
@@ -417,7 +439,10 @@ def scaffold_split(
 
     log.info(
         "Scaffold split: train=%d, val=%d, test=%d (scaffolds=%d)",
-        len(train), len(val), len(test), len(scaffold_sets),
+        len(train),
+        len(val),
+        len(test),
+        len(scaffold_sets),
     )
     return train, val, test
 
@@ -445,8 +470,8 @@ def random_split(
 
     return (
         _subset(idx[:n_train], "train"),
-        _subset(idx[n_train:n_train + n_val], "val"),
-        _subset(idx[n_train + n_val:], "test"),
+        _subset(idx[n_train : n_train + n_val], "val"),
+        _subset(idx[n_train + n_val :], "test"),
     )
 
 
@@ -454,9 +479,8 @@ def random_split(
 # Class balancing for imbalanced datasets
 # ---------------------------------------------------------------------------
 
-def compute_class_weights(
-    dataset: MoleculeDataset, task_idx: int = 0
-) -> Dict[int, float]:
+
+def compute_class_weights(dataset: MoleculeDataset, task_idx: int = 0) -> Dict[int, float]:
     """
     Compute inverse-frequency class weights.
 
@@ -471,9 +495,7 @@ def compute_class_weights(
     return weights
 
 
-def apply_class_weights(
-    dataset: MoleculeDataset, task_idx: int = 0
-) -> MoleculeDataset:
+def apply_class_weights(dataset: MoleculeDataset, task_idx: int = 0) -> MoleculeDataset:
     """Apply inverse-frequency weights to each sample."""
     weights = compute_class_weights(dataset, task_idx)
     for dp in dataset.data:
@@ -515,7 +537,7 @@ def smote_oversample(
         return X, y
 
     minority_cls = classes[np.argmin(counts)]
-    majority_cls = classes[np.argmax(counts)]
+    classes[np.argmax(counts)]
     n_majority = counts.max()
     n_minority = counts.min()
     n_synthetic = n_majority - n_minority
@@ -530,6 +552,7 @@ def smote_oversample(
 
     # Find k nearest neighbours for each minority sample
     from scipy.spatial.distance import cdist
+
     dists = cdist(minority_X, minority_X, metric="euclidean")
     np.fill_diagonal(dists, np.inf)
     nn_indices = np.argsort(dists, axis=1)[:, :k]
@@ -555,6 +578,7 @@ def smote_oversample(
 # ---------------------------------------------------------------------------
 # Focal loss (for extremely imbalanced datasets like Tox21, MUV)
 # ---------------------------------------------------------------------------
+
 
 def focal_loss_weights(
     y_true: np.ndarray,
@@ -587,6 +611,7 @@ def focal_loss_weights(
 # Quick dataset summary for benchmarking
 # ---------------------------------------------------------------------------
 
+
 def list_datasets() -> List[str]:
     """Return available dataset names."""
     return list(DATASET_REGISTRY.keys())
@@ -599,8 +624,5 @@ def dataset_summary() -> str:
         "|---------|------|-------|--------|-------------|",
     ]
     for info in DATASET_REGISTRY.values():
-        lines.append(
-            f"| {info.name} | {info.task_type} | {info.n_tasks} | "
-            f"{info.metric} | {info.description} |"
-        )
+        lines.append(f"| {info.name} | {info.task_type} | {info.n_tasks} | {info.metric} | {info.description} |")
     return "\n".join(lines)

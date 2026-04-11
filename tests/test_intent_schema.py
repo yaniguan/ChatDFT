@@ -6,6 +6,7 @@ Unit tests for ``server.chat.intent_schema``.
 These tests guard the contract between the intent agent prompt and the
 downstream pipeline. They run in CI without any API access.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -21,6 +22,7 @@ from server.chat.intent_schema import (
 # ---------------------------------------------------------------------------
 # happy path
 # ---------------------------------------------------------------------------
+
 
 def test_canonical_intent_validates():
     raw = {
@@ -68,6 +70,7 @@ def test_dump_roundtrip_preserves_extras():
 # normalization — the LLM gets to be sloppy, the schema fixes it up
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "raw_area,expected",
     [
@@ -85,12 +88,14 @@ def test_dump_roundtrip_preserves_extras():
     ],
 )
 def test_area_normalization(raw_area, expected):
-    model, err = validate_intent({
-        "stage": "catalysis",
-        "area": raw_area,
-        "task": "x",
-        "summary": "y",
-    })
+    model, err = validate_intent(
+        {
+            "stage": "catalysis",
+            "area": raw_area,
+            "task": "x",
+            "summary": "y",
+        }
+    )
     assert err is None, f"unexpected error: {err}"
     assert model.area == expected
 
@@ -106,12 +111,14 @@ def test_area_normalization(raw_area, expected):
     ],
 )
 def test_stage_normalization(raw_stage, expected):
-    model, err = validate_intent({
-        "stage": raw_stage,
-        "area": "electrochemistry",
-        "task": "x",
-        "summary": "y",
-    })
+    model, err = validate_intent(
+        {
+            "stage": raw_stage,
+            "area": "electrochemistry",
+            "task": "x",
+            "summary": "y",
+        }
+    )
     assert err is None
     assert model.stage == expected
 
@@ -120,13 +127,16 @@ def test_stage_normalization(raw_stage, expected):
 # validation errors
 # ---------------------------------------------------------------------------
 
+
 def test_unknown_area_fails():
-    model, err = validate_intent({
-        "stage": "catalysis",
-        "area": "cosmic_rays",
-        "task": "x",
-        "summary": "y",
-    })
+    model, err = validate_intent(
+        {
+            "stage": "catalysis",
+            "area": "cosmic_rays",
+            "task": "x",
+            "summary": "y",
+        }
+    )
     assert model is None
     assert err is not None
     assert "area" in err
@@ -142,12 +152,14 @@ def test_missing_required_fields_fails():
 
 
 def test_empty_task_fails():
-    model, err = validate_intent({
-        "stage": "catalysis",
-        "area": "electrochemistry",
-        "task": "",
-        "summary": "y",
-    })
+    model, err = validate_intent(
+        {
+            "stage": "catalysis",
+            "area": "electrochemistry",
+            "task": "",
+            "summary": "y",
+        }
+    )
     assert model is None
     assert err is not None
     assert "task" in err
@@ -167,14 +179,17 @@ def test_non_dict_input_fails_gracefully():
 # coercion of permissive sub-fields
 # ---------------------------------------------------------------------------
 
+
 def test_metrics_string_list_is_coerced():
-    model, err = validate_intent({
-        "stage": "catalysis",
-        "area": "electrochemistry",
-        "task": "x",
-        "summary": "y",
-        "metrics": ["limiting_potential", "selectivity"],
-    })
+    model, err = validate_intent(
+        {
+            "stage": "catalysis",
+            "area": "electrochemistry",
+            "task": "x",
+            "summary": "y",
+            "metrics": ["limiting_potential", "selectivity"],
+        }
+    )
     assert err is None
     assert len(model.metrics) == 2
     assert model.metrics[0].name == "limiting_potential"
@@ -182,37 +197,43 @@ def test_metrics_string_list_is_coerced():
 
 
 def test_constraints_string_becomes_notes():
-    model, err = validate_intent({
-        "stage": "catalysis",
-        "area": "electrochemistry",
-        "task": "x",
-        "summary": "y",
-        "constraints": "must use SCAN functional",
-    })
+    model, err = validate_intent(
+        {
+            "stage": "catalysis",
+            "area": "electrochemistry",
+            "task": "x",
+            "summary": "y",
+            "constraints": "must use SCAN functional",
+        }
+    )
     assert err is None
     assert model.constraints == {"notes": "must use SCAN functional"}
 
 
 def test_molecule_scalar_is_listed():
-    model, err = validate_intent({
-        "stage": "catalysis",
-        "area": "electrochemistry",
-        "task": "x",
-        "summary": "y",
-        "system": {"molecule": "CO2"},
-    })
+    model, err = validate_intent(
+        {
+            "stage": "catalysis",
+            "area": "electrochemistry",
+            "task": "x",
+            "summary": "y",
+            "system": {"molecule": "CO2"},
+        }
+    )
     assert err is None
     assert model.system.molecule == ["CO2"]
 
 
 def test_conditions_string_number_is_coerced():
-    model, err = validate_intent({
-        "stage": "catalysis",
-        "area": "electrochemistry",
-        "task": "x",
-        "summary": "y",
-        "conditions": {"potential_V_vs_RHE": "-0.8"},
-    })
+    model, err = validate_intent(
+        {
+            "stage": "catalysis",
+            "area": "electrochemistry",
+            "task": "x",
+            "summary": "y",
+            "conditions": {"potential_V_vs_RHE": "-0.8"},
+        }
+    )
     assert err is None
     assert model.conditions.potential_V_vs_RHE == -0.8
 
@@ -220,6 +241,7 @@ def test_conditions_string_number_is_coerced():
 # ---------------------------------------------------------------------------
 # canonical value contracts (catch refactor accidents)
 # ---------------------------------------------------------------------------
+
 
 def test_canonical_enum_values_are_stable():
     """If you renamed an enum value, the prompt + downstream code likely break too."""

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -35,9 +35,11 @@ log = logging.getLogger(__name__)
 # Individual metrics
 # ---------------------------------------------------------------------------
 
+
 def auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     """Area Under ROC Curve."""
     from sklearn.metrics import roc_auc_score
+
     valid = ~(np.isnan(y_true) | np.isnan(y_score))
     if valid.sum() < 5 or len(np.unique(y_true[valid])) < 2:
         return float("nan")
@@ -47,6 +49,7 @@ def auroc(y_true: np.ndarray, y_score: np.ndarray) -> float:
 def auprc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     """Area Under Precision-Recall Curve (better for imbalanced data)."""
     from sklearn.metrics import average_precision_score
+
     valid = ~(np.isnan(y_true) | np.isnan(y_score))
     if valid.sum() < 5 or len(np.unique(y_true[valid])) < 2:
         return float("nan")
@@ -62,6 +65,7 @@ def mcc(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     Unlike accuracy, MCC is informative even with 95:5 class ratio.
     """
     from sklearn.metrics import matthews_corrcoef
+
     valid = ~(np.isnan(y_true) | np.isnan(y_pred))
     if valid.sum() < 5:
         return float("nan")
@@ -71,6 +75,7 @@ def mcc(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 def f1(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """F1 score."""
     from sklearn.metrics import f1_score
+
     valid = ~(np.isnan(y_true) | np.isnan(y_pred))
     if valid.sum() < 5:
         return float("nan")
@@ -106,6 +111,7 @@ def r_squared(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 def spearman_rho(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Spearman rank correlation."""
     from scipy.stats import spearmanr
+
     valid = ~(np.isnan(y_true) | np.isnan(y_pred))
     if valid.sum() < 5:
         return float("nan")
@@ -117,11 +123,13 @@ def spearman_rho(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 # Evaluation result containers
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TaskMetrics:
     """Metrics for a single prediction task."""
+
     task_name: str
-    task_type: str                 # "classification" or "regression"
+    task_type: str  # "classification" or "regression"
     metrics: Dict[str, float]
     n_samples: int
     confidence_intervals: Dict[str, Tuple[float, float]] = field(default_factory=dict)
@@ -130,11 +138,12 @@ class TaskMetrics:
 @dataclass
 class ModelEvaluation:
     """Complete evaluation of a single model."""
+
     model_name: str
     dataset_name: str
-    split_method: str              # "scaffold" or "random"
+    split_method: str  # "scaffold" or "random"
     task_results: List[TaskMetrics]
-    aggregate_metrics: Dict[str, float]   # mean across tasks
+    aggregate_metrics: Dict[str, float]  # mean across tasks
     train_time_s: float = 0.0
     n_params: int = 0
 
@@ -169,6 +178,7 @@ class ModelEvaluation:
 # ---------------------------------------------------------------------------
 # Bootstrap confidence intervals
 # ---------------------------------------------------------------------------
+
 
 def bootstrap_ci(
     y_true: np.ndarray,
@@ -211,6 +221,7 @@ def bootstrap_ci(
 # ---------------------------------------------------------------------------
 # Full evaluation pipeline
 # ---------------------------------------------------------------------------
+
 
 def evaluate_classification(
     y_true: np.ndarray,
@@ -285,6 +296,7 @@ def evaluate_regression(
 # Statistical significance testing
 # ---------------------------------------------------------------------------
 
+
 def paired_test(
     scores_a: List[float],
     scores_b: List[float],
@@ -298,7 +310,7 @@ def paired_test(
 
     Returns (statistic, p_value, conclusion).
     """
-    from scipy.stats import wilcoxon, ttest_rel
+    from scipy.stats import ttest_rel, wilcoxon
 
     a = np.array(scores_a)
     b = np.array(scores_b)
@@ -326,9 +338,11 @@ def paired_test(
 # Benchmark comparison table
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class BenchmarkResult:
     """Results from benchmarking multiple models on one dataset."""
+
     dataset_name: str
     split_method: str
     evaluations: List[ModelEvaluation]
@@ -367,8 +381,7 @@ class BenchmarkResult:
                     break
 
             lines.append(
-                f"| {rank} | {ev.model_name} | {val:.4f} | {ci_str} | "
-                f"{ev.n_params:,} | {ev.train_time_s:.1f}s |"
+                f"| {rank} | {ev.model_name} | {val:.4f} | {ci_str} | {ev.n_params:,} | {ev.train_time_s:.1f}s |"
             )
 
         return "\n".join(lines)

@@ -32,7 +32,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from scipy.spatial.distance import cdist
 
 log = logging.getLogger(__name__)
 
@@ -40,12 +39,13 @@ log = logging.getLogger(__name__)
 @dataclass
 class ADResult:
     """Applicability domain assessment for a single molecule."""
+
     smiles: str
     in_domain: bool
-    confidence: float             # 0.0 = definitely OOD, 1.0 = definitely in-domain
-    tanimoto_score: float         # max similarity to training set
-    mahalanobis_distance: float   # distance from training centroid
-    ensemble_std: float           # prediction disagreement
+    confidence: float  # 0.0 = definitely OOD, 1.0 = definitely in-domain
+    tanimoto_score: float  # max similarity to training set
+    mahalanobis_distance: float  # distance from training centroid
+    ensemble_std: float  # prediction disagreement
     details: Dict[str, float] = None
 
     def __post_init__(self):
@@ -56,6 +56,7 @@ class ADResult:
 # ---------------------------------------------------------------------------
 # 1. Tanimoto Distance AD
 # ---------------------------------------------------------------------------
+
 
 class TanimotoAD:
     """
@@ -106,6 +107,7 @@ class TanimotoAD:
 # ---------------------------------------------------------------------------
 # 2. Mahalanobis Distance AD
 # ---------------------------------------------------------------------------
+
 
 class MahalanobisAD:
     """
@@ -165,6 +167,7 @@ class MahalanobisAD:
 # 3. Ensemble Disagreement AD
 # ---------------------------------------------------------------------------
 
+
 class EnsembleAD:
     """
     Applicability domain based on ensemble prediction disagreement.
@@ -209,6 +212,7 @@ class EnsembleAD:
 # Combined AD Assessor
 # ---------------------------------------------------------------------------
 
+
 class ApplicabilityDomainAssessor:
     """
     Combined applicability domain assessment using all three methods.
@@ -235,7 +239,7 @@ class ApplicabilityDomainAssessor:
         tanimoto_threshold: float = 0.3,
         mahalanobis_percentile: float = 95.0,
         ensemble_std_threshold: float = 0.2,
-        voting: str = "majority",   # "majority" or "all"
+        voting: str = "majority",  # "majority" or "all"
     ):
         self.tanimoto = TanimotoAD(threshold=tanimoto_threshold)
         self.mahalanobis = MahalanobisAD(percentile_threshold=mahalanobis_percentile)
@@ -284,7 +288,11 @@ class ApplicabilityDomainAssessor:
         # Ensemble: lower std = more confident
         conf_tan = min(tan_score / max(self.tanimoto.threshold, 1e-9), 2.0) / 2.0
         conf_mah = max(1.0 - mah_dist / max(self.mahalanobis.threshold * 2, 1e-9), 0.0)
-        conf_ens = max(1.0 - ens_std / max(self.ensemble.std_threshold * 2, 1e-9), 0.0) if ensemble_predictions is not None else 0.5
+        conf_ens = (
+            max(1.0 - ens_std / max(self.ensemble.std_threshold * 2, 1e-9), 0.0)
+            if ensemble_predictions is not None
+            else 0.5
+        )
 
         confidence = (conf_tan + conf_mah + conf_ens) / 3.0
 
@@ -316,7 +324,12 @@ class ApplicabilityDomainAssessor:
         results = []
         for i in range(len(smiles_list)):
             ens = ensemble_predictions[i] if ensemble_predictions is not None else None
-            results.append(self.assess(
-                smiles_list[i], fingerprints[i], descriptors[i], ens,
-            ))
+            results.append(
+                self.assess(
+                    smiles_list[i],
+                    fingerprints[i],
+                    descriptors[i],
+                    ens,
+                )
+            )
         return results

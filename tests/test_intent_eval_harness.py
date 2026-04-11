@@ -7,6 +7,7 @@ The harness's *live predictor* path is intentionally NOT exercised here —
 it would require a running server and a real LLM. These tests cover the
 pure scoring layer that grades a predicted dict against a sparse gold dict.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -26,6 +27,7 @@ from tests.intent_eval.harness import (
 # ---------------------------------------------------------------------------
 # eval set integrity
 # ---------------------------------------------------------------------------
+
 
 def test_eval_set_loads_and_is_well_formed():
     cases = load_eval_set()
@@ -54,6 +56,7 @@ def test_eval_set_ids_are_unique():
 # ---------------------------------------------------------------------------
 # score_case primitives
 # ---------------------------------------------------------------------------
+
 
 def test_perfect_match_scores_all_correct():
     gold = {
@@ -145,6 +148,7 @@ def test_missing_predicted_field_scores_false():
 # aggregate
 # ---------------------------------------------------------------------------
 
+
 def test_aggregate_with_perfect_oracle():
     """A predictor that returns the gold dict verbatim should score 100%."""
     cases = load_eval_set()
@@ -199,6 +203,7 @@ def test_aggregate_with_area_only_predictor():
 # misc
 # ---------------------------------------------------------------------------
 
+
 def test_default_eval_set_path_exists():
     assert DEFAULT_EVAL_SET.exists()
     assert DEFAULT_EVAL_SET.suffix == ".jsonl"
@@ -207,6 +212,7 @@ def test_default_eval_set_path_exists():
 # ---------------------------------------------------------------------------
 # chemical-aware scoring (for reactant / product fields)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "gold,pred",

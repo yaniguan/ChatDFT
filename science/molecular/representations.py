@@ -23,8 +23,8 @@ disconnected fragments, empty molecules).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import List, Optional
 
 import numpy as np
 
@@ -41,7 +41,6 @@ try:
         AllChem,
         Descriptors,
         rdMolDescriptors,
-        Fragments,
     )
     from rdkit.Chem.Scaffolds import MurckoScaffold
 
@@ -90,9 +89,7 @@ def get_scaffold(smiles: str) -> Optional[str]:
     if mol is None:
         return None
     try:
-        scaffold = MurckoScaffold.MakeScaffoldGeneric(
-            MurckoScaffold.GetScaffoldForMol(mol)
-        )
+        scaffold = MurckoScaffold.MakeScaffoldGeneric(MurckoScaffold.GetScaffoldForMol(mol))
         return Chem.MolToSmiles(scaffold)
     except Exception:
         return Chem.MolToSmiles(mol)
@@ -104,8 +101,20 @@ def get_scaffold(smiles: str) -> Optional[str]:
 
 # Element features for fallback (no RDKit)
 _ELEMENT_FEATURES = {
-    "C": 0, "N": 1, "O": 2, "S": 3, "F": 4, "Cl": 5, "Br": 6, "I": 7,
-    "P": 8, "Si": 9, "B": 10, "Se": 11, "Te": 12, "H": 13,
+    "C": 0,
+    "N": 1,
+    "O": 2,
+    "S": 3,
+    "F": 4,
+    "Cl": 5,
+    "Br": 6,
+    "I": 7,
+    "P": 8,
+    "Si": 9,
+    "B": 10,
+    "Se": 11,
+    "Te": 12,
+    "H": 13,
 }
 
 
@@ -140,9 +149,7 @@ def morgan_fingerprint(
         return np.zeros(n_bits, dtype=np.float32)
 
     if use_counts:
-        fp = rdMolDescriptors.GetMorganFingerprintAsBitVect(
-            mol, radius, nBits=n_bits
-        )
+        fp = rdMolDescriptors.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)
     else:
         fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)
 
@@ -170,14 +177,39 @@ def batch_morgan_fingerprints(
 
 # Core descriptor set — interpretable and commonly used in ADME
 DESCRIPTOR_NAMES = [
-    "MolWt", "LogP", "TPSA", "NumHDonors", "NumHAcceptors",
-    "NumRotatableBonds", "NumAromaticRings", "NumAliphaticRings",
-    "NumSaturatedRings", "NumHeteroatoms", "NumValenceElectrons",
-    "FractionCSP3", "HeavyAtomCount", "NHOHCount", "NOCount",
-    "RingCount", "MolMR", "LabuteASA", "BalabanJ", "BertzCT",
-    "HallKierAlpha", "Kappa1", "Kappa2", "Kappa3",
-    "Chi0", "Chi0n", "Chi0v", "Chi1", "Chi1n", "Chi1v",
-    "MaxAbsEStateIndex", "MaxEStateIndex", "MinAbsEStateIndex",
+    "MolWt",
+    "LogP",
+    "TPSA",
+    "NumHDonors",
+    "NumHAcceptors",
+    "NumRotatableBonds",
+    "NumAromaticRings",
+    "NumAliphaticRings",
+    "NumSaturatedRings",
+    "NumHeteroatoms",
+    "NumValenceElectrons",
+    "FractionCSP3",
+    "HeavyAtomCount",
+    "NHOHCount",
+    "NOCount",
+    "RingCount",
+    "MolMR",
+    "LabuteASA",
+    "BalabanJ",
+    "BertzCT",
+    "HallKierAlpha",
+    "Kappa1",
+    "Kappa2",
+    "Kappa3",
+    "Chi0",
+    "Chi0n",
+    "Chi0v",
+    "Chi1",
+    "Chi1n",
+    "Chi1v",
+    "MaxAbsEStateIndex",
+    "MaxEStateIndex",
+    "MinAbsEStateIndex",
     "MinEStateIndex",
 ]
 
@@ -218,9 +250,7 @@ def rdkit_descriptors(smiles: str) -> np.ndarray:
 
 def batch_rdkit_descriptors(smiles_list: List[str]) -> np.ndarray:
     """Compute RDKit descriptors for a batch. Shape: (N, n_descriptors)."""
-    return np.array(
-        [rdkit_descriptors(s) for s in smiles_list], dtype=np.float32
-    )
+    return np.array([rdkit_descriptors(s) for s in smiles_list], dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -237,8 +267,7 @@ _CHARGES = [-2, -1, 0, 1, 2]
 _HYBRIDIZATIONS = ["SP", "SP2", "SP3", "SP3D"]
 _NUM_HS = [0, 1, 2, 3, 4]
 
-ATOM_FEATURE_DIM = len(_ATOM_SYMBOLS) + len(_DEGREES) + len(_CHARGES) + \
-                   len(_HYBRIDIZATIONS) + 2 + len(_NUM_HS)  # 35
+ATOM_FEATURE_DIM = len(_ATOM_SYMBOLS) + len(_DEGREES) + len(_CHARGES) + len(_HYBRIDIZATIONS) + 2 + len(_NUM_HS)  # 35
 
 # Bond features: [bond_type_onehot(4), is_conjugated, is_in_ring, stereo_onehot(4)]
 # Total: 10 features per bond
@@ -274,6 +303,7 @@ class MolGraph:
     n_atoms : int
         Number of atoms.
     """
+
     x: np.ndarray
     edge_index: np.ndarray
     edge_attr: np.ndarray
@@ -284,6 +314,7 @@ class MolGraph:
     def to_torch(self):
         """Convert to PyTorch tensors."""
         import torch
+
         return {
             "x": torch.tensor(self.x, dtype=torch.float32),
             "edge_index": torch.tensor(self.edge_index, dtype=torch.long),
@@ -351,8 +382,12 @@ def smiles_to_graph(smiles: str, y: Optional[float] = None) -> Optional[MolGraph
         edge_attr = np.zeros((0, BOND_FEATURE_DIM), dtype=np.float32)
 
     return MolGraph(
-        x=x, edge_index=edge_index, edge_attr=edge_attr,
-        smiles=smiles, n_atoms=n_atoms, y=y,
+        x=x,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        smiles=smiles,
+        n_atoms=n_atoms,
+        y=y,
     )
 
 
@@ -397,11 +432,12 @@ def batch_smiles_to_graphs(
 @dataclass
 class MolecularFeatures:
     """Combined molecular features for a single molecule."""
+
     smiles: str
-    fingerprint: np.ndarray       # (2048,)
-    descriptors: np.ndarray       # (n_desc,)
-    graph: Optional[MolGraph]     # for GNN
-    scaffold: Optional[str]       # Bemis-Murcko scaffold
+    fingerprint: np.ndarray  # (2048,)
+    descriptors: np.ndarray  # (n_desc,)
+    graph: Optional[MolGraph]  # for GNN
+    scaffold: Optional[str]  # Bemis-Murcko scaffold
     is_valid: bool = True
 
 
@@ -439,16 +475,48 @@ def featurize_molecule(
 
 # Character-level SMILES vocabulary
 SMILES_CHARS = [
-    "<pad>", "<sos>", "<eos>", "<unk>",
-    "C", "c", "N", "n", "O", "o", "S", "s", "F", "I",
-    "H", "B", "P", "K",
+    "<pad>",
+    "<sos>",
+    "<eos>",
+    "<unk>",
+    "C",
+    "c",
+    "N",
+    "n",
+    "O",
+    "o",
+    "S",
+    "s",
+    "F",
+    "I",
+    "H",
+    "B",
+    "P",
+    "K",
     "l",  # for Cl
     "r",  # for Br
-    "(", ")", "[", "]",
-    "=", "#", "+", "-", ".",
-    "/", "\\",
+    "(",
+    ")",
+    "[",
+    "]",
+    "=",
+    "#",
+    "+",
+    "-",
+    ".",
+    "/",
+    "\\",
     "@",
-    "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "0",
     "%",
 ]
 

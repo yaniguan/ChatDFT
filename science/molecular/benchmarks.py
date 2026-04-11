@@ -29,37 +29,28 @@ The numbers from this module are what you quote in interviews.
 from __future__ import annotations
 
 import logging
-import time
 from typing import Dict, List, Optional
 
 import numpy as np
 
 from science.molecular.datasets import (
-    MoleculeDataset,
     load_dataset,
     scaffold_split,
-    apply_class_weights,
     smote_oversample,
-    list_datasets,
 )
 from science.molecular.evaluation import (
     BenchmarkResult,
     ModelEvaluation,
     evaluate_classification,
     evaluate_regression,
-    TaskMetrics,
     paired_test,
 )
 from science.molecular.qsar_models import (
-    BaseQSARModel,
     build_model,
-    list_models,
-    TrainResult,
 )
 from science.molecular.representations import (
     batch_morgan_fingerprints,
     batch_rdkit_descriptors,
-    batch_smiles_to_graphs,
 )
 
 log = logging.getLogger(__name__)
@@ -68,6 +59,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Single dataset benchmark
 # ---------------------------------------------------------------------------
+
 
 def run_benchmark(
     dataset_name: str,
@@ -100,11 +92,15 @@ def run_benchmark(
 
     # 1. Load dataset
     if verbose:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Benchmarking: {dataset_name}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
-    dataset = load_dataset(dataset_name)
+    # load_dataset here is ``science.molecular.datasets.load_dataset`` (imported above),
+    # not HuggingFace's ``datasets.load_dataset``. Bandit's B615 rule matches by
+    # function name and cannot distinguish — the call only reads from our own
+    # local CSV cache, so revision pinning does not apply.
+    dataset = load_dataset(dataset_name)  # nosec B615
     if verbose:
         print(dataset.summary())
 
@@ -118,21 +114,21 @@ def run_benchmark(
         print("Featurizing...")
 
     train_fp = batch_morgan_fingerprints(train.smiles, fp_radius, fp_bits)
-    val_fp = batch_morgan_fingerprints(val.smiles, fp_radius, fp_bits)
     test_fp = batch_morgan_fingerprints(test.smiles, fp_radius, fp_bits)
 
     train_desc = batch_rdkit_descriptors(train.smiles)
-    val_desc = batch_rdkit_descriptors(val.smiles)
     test_desc = batch_rdkit_descriptors(test.smiles)
 
-    # Combined features for classical models
+    # Combined features for classical models. val split is not used at
+    # benchmark time by the current model set — drop it from the featurizer
+    # loop to avoid wasted rdkit work. Re-add when a model needs early
+    # stopping against a val set.
     train_X = np.hstack([train_fp, train_desc])
-    val_X = np.hstack([val_fp, val_desc])
     test_X = np.hstack([test_fp, test_desc])
 
-    # Graphs for GNN models
-    train_graphs = batch_smiles_to_graphs(train.smiles)
-    test_graphs = batch_smiles_to_graphs(test.smiles)
+    # NOTE: graph featurization for GNN models is scaffolded but not yet
+    # wired into the benchmark loop; re-enable batch_smiles_to_graphs()
+    # when a GNN model is added to the ``models`` list.
 
     task_type = dataset.info.task_type
     evaluations = []
@@ -163,16 +159,18 @@ def run_benchmark(
                 cur_test_y = test_y[test_valid]
 
                 # SMOTE for imbalanced classification
-                if (use_smote and task_type == "classification"
-                        and model_name not in ("mpnn", "gat", "transformer")):
+                if use_smote and task_type == "classification" and model_name not in ("mpnn", "gat", "transformer"):
                     cur_train_X, cur_train_y = smote_oversample(
-                        cur_train_X, cur_train_y, seed=seed,
+                        cur_train_X,
+                        cur_train_y,
+                        seed=seed,
                     )
 
                 # Train
                 if model_name in ("mpnn", "gat"):
                     # Build graphs with aligned y values (skip invalid SMILES)
                     from science.molecular.representations import smiles_to_graph
+
                     cur_train_graphs, cur_train_y_g = [], []
                     for i in range(len(train.data)):
                         if not train_valid[i]:
@@ -198,11 +196,9 @@ def run_benchmark(
                     result = model.fit(cur_train_graphs, cur_train_y_g)
                     y_score = model.predict_proba(cur_test_graphs)
                 elif model_name == "transformer":
-                    cur_train_smiles = [s for i, s in enumerate(train.smiles)
-                                       if train_valid[i]]
-                    cur_test_smiles = [s for i, s in enumerate(test.smiles)
-                                      if test_valid[i]]
-                    result = model.fit(cur_train_smiles, cur_train_y[:len(cur_train_smiles)])
+                    cur_train_smiles = [s for i, s in enumerate(train.smiles) if train_valid[i]]
+                    cur_test_smiles = [s for i, s in enumerate(test.smiles) if test_valid[i]]
+                    result = model.fit(cur_train_smiles, cur_train_y[: len(cur_train_smiles)])
                     y_score = model.predict_proba(cur_test_smiles)
                 else:
                     # No sample weights after SMOTE (SMOTE already balances)
@@ -211,22 +207,25 @@ def run_benchmark(
 
                 # Evaluate
                 if task_type == "classification":
-                    y_score = np.clip(y_score[:len(cur_test_y)], 0, 1)
+                    y_score = np.clip(y_score[: len(cur_test_y)], 0, 1)
                     task_result = evaluate_classification(
-                        cur_test_y, y_score, task_name=task_name,
+                        cur_test_y,
+                        y_score,
+                        task_name=task_name,
                     )
                 else:
-                    y_score = y_score[:len(cur_test_y)]
+                    y_score = y_score[: len(cur_test_y)]
                     task_result = evaluate_regression(
-                        cur_test_y, y_score, task_name=task_name,
+                        cur_test_y,
+                        y_score,
+                        task_name=task_name,
                     )
 
                 task_results.append(task_result)
 
                 if verbose:
                     primary = list(task_result.metrics.values())[0]
-                    print(f"  {task_name}: {list(task_result.metrics.keys())[0]}="
-                          f"{primary:.4f}")
+                    print(f"  {task_name}: {list(task_result.metrics.keys())[0]}={primary:.4f}")
 
             if not task_results:
                 continue
@@ -234,20 +233,21 @@ def run_benchmark(
             # Aggregate metrics across tasks
             all_metrics = {}
             for key in task_results[0].metrics:
-                vals = [tr.metrics[key] for tr in task_results
-                        if not np.isnan(tr.metrics.get(key, float("nan")))]
+                vals = [tr.metrics[key] for tr in task_results if not np.isnan(tr.metrics.get(key, float("nan")))]
                 if vals:
                     all_metrics[key] = float(np.mean(vals))
 
-            evaluations.append(ModelEvaluation(
-                model_name=model_name,
-                dataset_name=dataset_name,
-                split_method="scaffold",
-                task_results=task_results,
-                aggregate_metrics=all_metrics,
-                train_time_s=result.train_time_s,
-                n_params=result.n_params,
-            ))
+            evaluations.append(
+                ModelEvaluation(
+                    model_name=model_name,
+                    dataset_name=dataset_name,
+                    split_method="scaffold",
+                    task_results=task_results,
+                    aggregate_metrics=all_metrics,
+                    train_time_s=result.train_time_s,
+                    n_params=result.n_params,
+                )
+            )
 
         except Exception as e:
             log.warning("Model %s failed: %s", model_name, e)
@@ -270,6 +270,7 @@ def run_benchmark(
 # ---------------------------------------------------------------------------
 # Full MoleculeNet benchmark (multiple datasets)
 # ---------------------------------------------------------------------------
+
 
 def run_full_moleculenet_benchmark(
     datasets: Optional[List[str]] = None,
@@ -305,13 +306,12 @@ def run_full_moleculenet_benchmark(
         print("=" * 60)
         for ds, bm in results.items():
             if bm.evaluations:
-                best = max(bm.evaluations,
-                          key=lambda e: list(e.aggregate_metrics.values())[0]
-                          if e.aggregate_metrics else 0)
+                best = max(
+                    bm.evaluations, key=lambda e: list(e.aggregate_metrics.values())[0] if e.aggregate_metrics else 0
+                )
                 primary_metric = list(best.aggregate_metrics.keys())[0]
                 primary_val = list(best.aggregate_metrics.values())[0]
-                print(f"  {ds}: best={best.model_name} "
-                      f"({primary_metric}={primary_val:.4f})")
+                print(f"  {ds}: best={best.model_name} ({primary_metric}={primary_val:.4f})")
 
     return results
 
@@ -319,6 +319,7 @@ def run_full_moleculenet_benchmark(
 # ---------------------------------------------------------------------------
 # Comparison utilities
 # ---------------------------------------------------------------------------
+
 
 def compare_models(
     result: BenchmarkResult,
@@ -391,7 +392,7 @@ def format_publication_table(results: Dict[str, BenchmarkResult]) -> str:
                     primary = list(tr.metrics.keys())[0]
                     if primary in tr.confidence_intervals:
                         lo, hi = tr.confidence_intervals[primary]
-                        ci_str = f" ±{(hi-lo)/2:.3f}"
+                        ci_str = f" ±{(hi - lo) / 2:.3f}"
                         break
                 row.append(f"{val:.3f}{ci_str}")
             else:
