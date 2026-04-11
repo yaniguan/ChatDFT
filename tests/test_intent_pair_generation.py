@@ -8,6 +8,7 @@ parsing, validation gating, dedup. The Anthropic teacher and the
 embedding/DB I/O paths are intentionally NOT exercised here; they
 require live services.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,6 +40,7 @@ from server.chat.intent_schema import AREA_VALUES, SCHEMA_VERSION
 # ---------------------------------------------------------------------------
 # strata loading
 # ---------------------------------------------------------------------------
+
 
 def test_default_strata_yaml_loads():
     strata = load_strata()
@@ -96,6 +98,7 @@ def test_load_strata_rejects_duplicate_ids(tmp_path):
 # prompt construction
 # ---------------------------------------------------------------------------
 
+
 def test_build_teacher_system_prompt_includes_schema_and_addendum():
     prompt = build_teacher_system_prompt()
     # IntentSchema-derived fragments
@@ -128,8 +131,12 @@ def test_build_stratum_prompt_embeds_anchors_and_guidance():
 
 def test_build_stratum_prompt_handles_empty_anchors():
     s = Stratum(
-        id="x", area="thermal_catalysis", family="x",
-        difficulty="medium", anchors=[], guidance=None,
+        id="x",
+        area="thermal_catalysis",
+        family="x",
+        difficulty="medium",
+        anchors=[],
+        guidance=None,
     )
     prompt = build_stratum_prompt(s, n_pairs=2)
     assert "(none)" in prompt
@@ -140,30 +147,32 @@ def test_build_stratum_prompt_handles_empty_anchors():
 # parse_teacher_response
 # ---------------------------------------------------------------------------
 
-_GOOD_RESPONSE = json.dumps({
-    "pairs": [
-        {
-            "query": "Compute CO2RR free energy diagram on Cu(111).",
-            "intent": {
-                "stage": "catalysis",
-                "area": "electrochemistry",
-                "task": "CO2RR free energy diagram on Cu(111)",
-                "summary": "Free energy diagram for CO2RR on Cu(111).",
-                "substrate": "Cu(111)",
+_GOOD_RESPONSE = json.dumps(
+    {
+        "pairs": [
+            {
+                "query": "Compute CO2RR free energy diagram on Cu(111).",
+                "intent": {
+                    "stage": "catalysis",
+                    "area": "electrochemistry",
+                    "task": "CO2RR free energy diagram on Cu(111)",
+                    "summary": "Free energy diagram for CO2RR on Cu(111).",
+                    "substrate": "Cu(111)",
+                },
             },
-        },
-        {
-            "query": "Estimate the limiting potential for CO2 to CO on Sn.",
-            "intent": {
-                "stage": "catalysis",
-                "area": "electrochemistry",
-                "task": "CO2 to CO on Sn",
-                "summary": "Limiting potential for CO2 to CO on Sn.",
-                "substrate": "Sn",
+            {
+                "query": "Estimate the limiting potential for CO2 to CO on Sn.",
+                "intent": {
+                    "stage": "catalysis",
+                    "area": "electrochemistry",
+                    "task": "CO2 to CO on Sn",
+                    "summary": "Limiting potential for CO2 to CO on Sn.",
+                    "substrate": "Sn",
+                },
             },
-        },
-    ]
-})
+        ]
+    }
+)
 
 
 def test_parse_clean_response():
@@ -186,14 +195,16 @@ def test_parse_response_with_leading_prose():
 
 
 def test_parse_response_skips_malformed_items():
-    blob = json.dumps({
-        "pairs": [
-            {"query": "valid one", "intent": {"stage": "catalysis"}},
-            {"query": ""},  # empty query — drop
-            {"intent": {}},  # missing query — drop
-            "not a dict",   # wrong type — drop
-        ]
-    })
+    blob = json.dumps(
+        {
+            "pairs": [
+                {"query": "valid one", "intent": {"stage": "catalysis"}},
+                {"query": ""},  # empty query — drop
+                {"intent": {}},  # missing query — drop
+                "not a dict",  # wrong type — drop
+            ]
+        }
+    )
     pairs = parse_teacher_response(blob)
     assert len(pairs) == 1
     assert pairs[0].query == "valid one"
@@ -212,6 +223,7 @@ def test_parse_response_raises_on_missing_pairs_key():
 # ---------------------------------------------------------------------------
 # validate_pairs
 # ---------------------------------------------------------------------------
+
 
 def test_validate_pairs_separates_valid_from_invalid():
     raw = [
@@ -280,6 +292,7 @@ def test_validate_pairs_dump_is_json_serializable():
 # dedup_by_embedding
 # ---------------------------------------------------------------------------
 
+
 def test_cosine_self_similarity_is_one():
     assert _cosine([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]) == pytest.approx(1.0)
 
@@ -295,7 +308,7 @@ def test_cosine_handles_zero_vector():
 
 def test_dedup_drops_in_batch_duplicates():
     base = [1.0, 0.0, 0.0]
-    near = [0.99, 0.01, 0.0]      # cosine ≈ 0.9999, should be dropped
+    near = [0.99, 0.01, 0.0]  # cosine ≈ 0.9999, should be dropped
     far = [0.0, 1.0, 0.0]
     candidates = [
         ValidatedPair(query="a", intent={}, stratum_id="x", embedding=base),
@@ -311,10 +324,8 @@ def test_dedup_drops_in_batch_duplicates():
 def test_dedup_drops_against_existing_embeddings():
     existing = [[1.0, 0.0, 0.0]]
     candidates = [
-        ValidatedPair(query="dup", intent={}, stratum_id="x",
-                      embedding=[0.999, 0.001, 0.0]),
-        ValidatedPair(query="new", intent={}, stratum_id="x",
-                      embedding=[0.0, 0.0, 1.0]),
+        ValidatedPair(query="dup", intent={}, stratum_id="x", embedding=[0.999, 0.001, 0.0]),
+        ValidatedPair(query="new", intent={}, stratum_id="x", embedding=[0.0, 0.0, 1.0]),
     ]
     accepted, dropped = dedup_by_embedding(candidates, existing, threshold=0.92)
     assert [p.query for p in accepted] == ["new"]
@@ -345,6 +356,7 @@ def test_dedup_raises_on_missing_embedding():
 # schema version contract
 # ---------------------------------------------------------------------------
 
+
 def test_schema_version_is_exposed_and_positive():
     assert isinstance(SCHEMA_VERSION, int)
     assert SCHEMA_VERSION >= 1
@@ -353,6 +365,7 @@ def test_schema_version_is_exposed_and_positive():
 # ---------------------------------------------------------------------------
 # Phase 1.5: --from-history mode
 # ---------------------------------------------------------------------------
+
 
 def test_chunk_splits_evenly():
     assert list(_chunk([1, 2, 3, 4, 5, 6], 2)) == [[1, 2], [3, 4], [5, 6]]
@@ -397,19 +410,21 @@ def test_build_history_prompt_uses_pairs_envelope():
     prompt = build_history_prompt(["q1"])
     assert '"pairs"' in prompt
     # parse_teacher_response should accept the matching response shape.
-    fake_response = json.dumps({
-        "pairs": [
-            {
-                "query": "q1",
-                "intent": {
-                    "stage": "catalysis",
-                    "area": "electrochemistry",
-                    "task": "t",
-                    "summary": "s",
-                },
-            }
-        ]
-    })
+    fake_response = json.dumps(
+        {
+            "pairs": [
+                {
+                    "query": "q1",
+                    "intent": {
+                        "stage": "catalysis",
+                        "area": "electrochemistry",
+                        "task": "t",
+                        "summary": "s",
+                    },
+                }
+            ]
+        }
+    )
     pairs = parse_teacher_response(fake_response)
     assert len(pairs) == 1
     assert pairs[0].query == "q1"
@@ -435,6 +450,7 @@ def test_history_validate_uses_history_stratum_id():
 # ---------------------------------------------------------------------------
 # Phase 2: build_teacher factory routing
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def clear_api_keys(monkeypatch):
@@ -509,6 +525,7 @@ def test_teacher_client_base_is_abstract():
 # ---------------------------------------------------------------------------
 # Phase 2: per-call chunking (_split_n_pairs)
 # ---------------------------------------------------------------------------
+
 
 def test_split_n_pairs_total_preserved():
     """

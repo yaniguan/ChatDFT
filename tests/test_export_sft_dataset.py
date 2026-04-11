@@ -9,6 +9,7 @@ stats computation) and the file-writing pipeline. The DB fetch path
 real ``intent_pair`` rows. Run that path through an integration test or
 a manual export against the dev DB.
 """
+
 from __future__ import annotations
 
 import json
@@ -59,6 +60,7 @@ def _row(
 # format_user_payload — must mirror production
 # ---------------------------------------------------------------------------
 
+
 def test_format_user_payload_shape_matches_production():
     """
     intent_agent._api_intent_impl builds:
@@ -77,6 +79,7 @@ def test_format_user_payload_shape_matches_production():
 # ---------------------------------------------------------------------------
 # format_sft_record
 # ---------------------------------------------------------------------------
+
 
 def test_format_sft_record_has_three_messages_in_correct_order():
     rec = format_sft_record(_row(id=1))
@@ -97,8 +100,7 @@ def test_format_sft_record_assistant_is_intent_json():
 
 
 def test_format_sft_record_metadata_carries_provenance():
-    row = _row(id=42, source="claude_teacher_history",
-               stratum="history/0007", quality=0.95)
+    row = _row(id=42, source="claude_teacher_history", stratum="history/0007", quality=0.95)
     rec = format_sft_record(row)
     md = rec["metadata"]
     assert md["intent_pair_id"] == 42
@@ -112,6 +114,7 @@ def test_format_sft_record_metadata_carries_provenance():
 # ---------------------------------------------------------------------------
 # stable_split
 # ---------------------------------------------------------------------------
+
 
 def test_stable_split_is_deterministic():
     """Same id, same val_fraction → same bucket every time."""
@@ -158,6 +161,7 @@ def test_stable_split_rejects_invalid_fraction():
 # split_and_format
 # ---------------------------------------------------------------------------
 
+
 def test_split_and_format_partitions_all_rows():
     rows = [_row(id=i) for i in range(50)]
     splits = split_and_format(rows, val_fraction=0.2)
@@ -186,6 +190,7 @@ def test_split_and_format_preserves_per_row_content():
 # write_jsonl
 # ---------------------------------------------------------------------------
 
+
 def test_write_jsonl_creates_directory_and_writes_lines(tmp_path):
     records = [{"messages": []}, {"messages": [{"role": "user", "content": "hi"}]}]
     out = tmp_path / "nested" / "subdir" / "train.jsonl"
@@ -209,6 +214,7 @@ def test_write_jsonl_handles_empty_list(tmp_path):
 # compute_stats
 # ---------------------------------------------------------------------------
 
+
 def test_compute_stats_aggregates_sources_areas_strata():
     rows = [
         _row(id=1, source="claude_teacher", area="electrochemistry"),
@@ -231,8 +237,14 @@ def test_compute_stats_aggregates_sources_areas_strata():
 
 def test_compute_stats_handles_missing_intent_fields():
     row = IntentPairRow(
-        id=1, query="x", intent_json={}, schema_version=1, source="x",
-        teacher_model=None, quality_score=None, stratum=None,
+        id=1,
+        query="x",
+        intent_json={},
+        schema_version=1,
+        source="x",
+        teacher_model=None,
+        quality_score=None,
+        stratum=None,
     )
     stats = compute_stats([row])
     assert stats["n_rows"] == 1
@@ -244,6 +256,7 @@ def test_compute_stats_handles_missing_intent_fields():
 # ---------------------------------------------------------------------------
 # end-to-end: split → write → reload
 # ---------------------------------------------------------------------------
+
 
 def test_e2e_split_write_reload_roundtrip(tmp_path):
     rows = [_row(id=i, query=f"q{i}") for i in range(40)]

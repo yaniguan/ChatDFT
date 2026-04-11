@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import List, Tuple
 
 import numpy as np
 
@@ -36,6 +36,7 @@ try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
+
     _HAS_TORCH = True
 except ImportError:
     _HAS_TORCH = False
@@ -50,17 +51,19 @@ def _check_torch():
 # Model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class VAEConfig:
     """Configuration for SMILES VAE."""
-    vocab_size: int = 45       # from representations.VOCAB_SIZE
+
+    vocab_size: int = 45  # from representations.VOCAB_SIZE
     embed_dim: int = 128
     hidden_dim: int = 256
     latent_dim: int = 64
     n_layers: int = 2
     dropout: float = 0.1
     max_len: int = 128
-    beta: float = 1.0          # KL weight (β-VAE)
+    beta: float = 1.0  # KL weight (β-VAE)
     teacher_forcing: float = 1.0
 
 
@@ -71,8 +74,11 @@ class SMILESEncoder(nn.Module):
         super().__init__()
         self.embed = nn.Embedding(cfg.vocab_size, cfg.embed_dim, padding_idx=0)
         self.gru = nn.GRU(
-            cfg.embed_dim, cfg.hidden_dim, cfg.n_layers,
-            batch_first=True, dropout=cfg.dropout if cfg.n_layers > 1 else 0,
+            cfg.embed_dim,
+            cfg.hidden_dim,
+            cfg.n_layers,
+            batch_first=True,
+            dropout=cfg.dropout if cfg.n_layers > 1 else 0,
         )
         self.fc_mu = nn.Linear(cfg.hidden_dim, cfg.latent_dim)
         self.fc_logvar = nn.Linear(cfg.hidden_dim, cfg.latent_dim)
@@ -81,7 +87,7 @@ class SMILESEncoder(nn.Module):
         # tokens: (B, L)
         x = self.embed(tokens)
         _, h = self.gru(x)  # h: (n_layers, B, hidden)
-        h = h[-1]           # last layer: (B, hidden)
+        h = h[-1]  # last layer: (B, hidden)
         mu = self.fc_mu(h)
         logvar = self.fc_logvar(h)
         return mu, logvar
@@ -96,8 +102,11 @@ class SMILESDecoder(nn.Module):
         self.embed = nn.Embedding(cfg.vocab_size, cfg.embed_dim, padding_idx=0)
         self.z_to_h = nn.Linear(cfg.latent_dim, cfg.hidden_dim * cfg.n_layers)
         self.gru = nn.GRU(
-            cfg.embed_dim, cfg.hidden_dim, cfg.n_layers,
-            batch_first=True, dropout=cfg.dropout if cfg.n_layers > 1 else 0,
+            cfg.embed_dim,
+            cfg.hidden_dim,
+            cfg.n_layers,
+            batch_first=True,
+            dropout=cfg.dropout if cfg.n_layers > 1 else 0,
         )
         self.out = nn.Linear(cfg.hidden_dim, cfg.vocab_size)
 
@@ -120,8 +129,9 @@ class SMILESDecoder(nn.Module):
 
         # Autoregressive generation
         from science.molecular.representations import CHAR_TO_IDX
+
         sos = CHAR_TO_IDX["<sos>"]
-        eos = CHAR_TO_IDX["<eos>"]
+        CHAR_TO_IDX["<eos>"]
 
         token = torch.full((B, 1), sos, dtype=torch.long, device=z.device)
         outputs = []
@@ -166,7 +176,7 @@ class SMILESVAE(nn.Module):
 
     def generate(self, n: int = 1, temperature: float = 1.0) -> List[str]:
         """Generate SMILES by sampling from the prior."""
-        from science.molecular.representations import detokenize_smiles, CHAR_TO_IDX
+        from science.molecular.representations import detokenize_smiles
 
         self.eval()
         device = next(self.parameters()).device
@@ -177,9 +187,7 @@ class SMILESVAE(nn.Module):
 
             # Sample from softmax
             probs = F.softmax(logits / max(temperature, 0.01), dim=-1)
-            tokens = torch.multinomial(
-                probs.view(-1, probs.shape[-1]), 1
-            ).view(n, -1)
+            tokens = torch.multinomial(probs.view(-1, probs.shape[-1]), 1).view(n, -1)
 
         smiles = [detokenize_smiles(t.cpu().numpy()) for t in tokens]
         return smiles
@@ -204,14 +212,15 @@ class SMILESVAE(nn.Module):
 # Training
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class VAETrainResult:
     n_epochs: int
     final_recon_loss: float
     final_kl_loss: float
     final_total_loss: float
-    valid_rate: float           # % of generated SMILES that are valid
-    unique_rate: float          # % of valid SMILES that are unique
+    valid_rate: float  # % of generated SMILES that are valid
+    unique_rate: float  # % of valid SMILES that are unique
     train_time_s: float = 0.0
     loss_curve: List[float] = field(default_factory=list)
 
@@ -247,6 +256,7 @@ def train_vae(
     """
     _check_torch()
     import time
+
     from science.molecular.representations import tokenize_smiles, validate_smiles
 
     if cfg is None:
@@ -275,7 +285,7 @@ def train_vae(
             kl_weight = cfg.beta
 
         for start in range(0, len(tokens_tensor), batch_size):
-            batch = tokens_tensor[perm[start:start + batch_size]].to(device)
+            batch = tokens_tensor[perm[start : start + batch_size]].to(device)
 
             logits, mu, logvar = model(batch)
 
@@ -306,8 +316,7 @@ def train_vae(
         loss_curve.append(avg_recon + kl_weight * avg_kl)
 
         if verbose and epoch % 10 == 0:
-            log.info("Epoch %d: recon=%.4f kl=%.4f kl_w=%.3f",
-                     epoch, avg_recon, avg_kl, kl_weight)
+            log.info("Epoch %d: recon=%.4f kl=%.4f kl_w=%.3f", epoch, avg_recon, avg_kl, kl_weight)
 
     # Evaluate generation quality
     generated = model.generate(n=100)

@@ -30,6 +30,7 @@ Scoring rules
     - ``area_confusion``        — gold-area → predicted-area count map
     - ``critical_em``           — exact-match on (stage, area, substrate)
 """
+
 from __future__ import annotations
 
 import json
@@ -42,6 +43,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class EvalCase:
@@ -57,7 +59,7 @@ class CaseResult:
     query: str
     gold: Dict[str, Any]
     predicted: Dict[str, Any]
-    field_scores: Dict[str, bool]      # flat dotted-path → bool
+    field_scores: Dict[str, bool]  # flat dotted-path → bool
     critical_em: bool
     error: Optional[str] = None
 
@@ -76,9 +78,7 @@ class AggregateReport:
             "n_cases": self.n_cases,
             "field_accuracy": round(self.field_accuracy, 4),
             "critical_em_rate": round(self.critical_em_rate, 4),
-            "per_field_accuracy": {
-                k: round(v, 4) for k, v in self.per_field_accuracy.items()
-            },
+            "per_field_accuracy": {k: round(v, 4) for k, v in self.per_field_accuracy.items()},
             "area_confusion": self.area_confusion,
             "n_failures": len(self.failures),
         }
@@ -131,26 +131,26 @@ _NUMERIC_TOLERANCE = 1e-3
 # common DFT reactants/products are listed. Add more as needed — new entries
 # should NEVER be destructive (mapping two distinct species to one canonical).
 _CHEMICAL_ALIASES: Dict[str, set[str]] = {
-    "h2":     {"h2", "dihydrogen", "hydrogen", "molecular hydrogen"},
-    "o2":     {"o2", "dioxygen", "oxygen", "molecular oxygen"},
-    "n2":     {"n2", "dinitrogen", "nitrogen"},
-    "h2o":    {"h2o", "water", "h₂o"},
-    "co":     {"co", "carbon monoxide"},
-    "co2":    {"co2", "carbon dioxide", "co₂"},
-    "ch4":    {"ch4", "methane"},
-    "nh3":    {"nh3", "ammonia"},
-    "ch3oh":  {"ch3oh", "methanol", "ch₃oh", "ch3 oh"},
-    "c2h4":   {"c2h4", "ethene", "ethylene"},
-    "c2h6":   {"c2h6", "ethane"},
-    "c3h6":   {"c3h6", "propene", "propylene"},
-    "c3h8":   {"c3h8", "propane"},
-    "c4h8":   {"c4h8", "butene", "1-butene", "2-butene"},
-    "c4h10":  {"c4h10", "butane", "n-butane"},
-    "hcoo-":  {"hcoo-", "hcoo", "formate", "hcoo⁻", "formic acid"},
-    "hcooh":  {"hcooh", "formic acid", "hcoo2h"},
+    "h2": {"h2", "dihydrogen", "hydrogen", "molecular hydrogen"},
+    "o2": {"o2", "dioxygen", "oxygen", "molecular oxygen"},
+    "n2": {"n2", "dinitrogen", "nitrogen"},
+    "h2o": {"h2o", "water", "h₂o"},
+    "co": {"co", "carbon monoxide"},
+    "co2": {"co2", "carbon dioxide", "co₂"},
+    "ch4": {"ch4", "methane"},
+    "nh3": {"nh3", "ammonia"},
+    "ch3oh": {"ch3oh", "methanol", "ch₃oh", "ch3 oh"},
+    "c2h4": {"c2h4", "ethene", "ethylene"},
+    "c2h6": {"c2h6", "ethane"},
+    "c3h6": {"c3h6", "propene", "propylene"},
+    "c3h8": {"c3h8", "propane"},
+    "c4h8": {"c4h8", "butene", "1-butene", "2-butene"},
+    "c4h10": {"c4h10", "butane", "n-butane"},
+    "hcoo-": {"hcoo-", "hcoo", "formate", "hcoo⁻", "formic acid"},
+    "hcooh": {"hcooh", "formic acid", "hcoo2h"},
     "ch3ch2oh": {"ch3ch2oh", "c2h5oh", "ethanol"},
-    "no3-":   {"no3-", "no3", "nitrate", "no₃⁻"},
-    "h+":     {"h+", "proton", "h⁺"},
+    "no3-": {"no3-", "no3", "nitrate", "no₃⁻"},
+    "h+": {"h+", "proton", "h⁺"},
 }
 
 
@@ -316,10 +316,7 @@ def aggregate(results: Iterable[CaseResult]) -> AggregateReport:
             key = pred_area or "<missing>"
             row[key] = row.get(key, 0) + 1
 
-    per_field_accuracy = {
-        k: per_field_correct[k] / per_field_total[k]
-        for k in per_field_total
-    }
+    per_field_accuracy = {k: per_field_correct[k] / per_field_total[k] for k in per_field_total}
     field_accuracy = total_correct / total_scored if total_scored else 0.0
     critical_em_rate = critical_hits / n
 
@@ -395,6 +392,7 @@ def live_predictor(
 # Runner
 # ---------------------------------------------------------------------------
 
+
 def run(
     cases: List[EvalCase],
     predictor: Predictor,
@@ -425,6 +423,7 @@ def run(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _parse_argv(argv: List[str]) -> Dict[str, Any]:
     args: Dict[str, Any] = {
@@ -487,22 +486,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args["show_failures"]:
         print("\n--- failures ---")
         for f in report.failures:
-            print(f"[{f.id}] gold={f.gold} predicted_area={f.predicted.get('area')!r}"
-                  f" predicted_stage={f.predicted.get('stage')!r}")
+            print(
+                f"[{f.id}] gold={f.gold} predicted_area={f.predicted.get('area')!r}"
+                f" predicted_stage={f.predicted.get('stage')!r}"
+            )
             if f.error:
                 print(f"  error: {f.error}")
 
     if report.field_accuracy < args["min_field_accuracy"]:
         print(
-            f"FAIL: field_accuracy {report.field_accuracy:.3f} "
-            f"< threshold {args['min_field_accuracy']}",
+            f"FAIL: field_accuracy {report.field_accuracy:.3f} < threshold {args['min_field_accuracy']}",
             file=sys.stderr,
         )
         return 1
     if report.critical_em_rate < args["min_critical_em"]:
         print(
-            f"FAIL: critical_em_rate {report.critical_em_rate:.3f} "
-            f"< threshold {args['min_critical_em']}",
+            f"FAIL: critical_em_rate {report.critical_em_rate:.3f} < threshold {args['min_critical_em']}",
             file=sys.stderr,
         )
         return 1

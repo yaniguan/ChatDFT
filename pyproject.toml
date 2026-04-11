@@ -78,3 +78,18 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
+
+[tool.coverage.run]
+# ``science/molecular/*`` is excluded from coverage measurement because the
+# QSAR code needs rdkit / xgboost / lightgbm / sklearn, which are not in the
+# [dev] extras that CI installs. Its dedicated ``tests/test_molecular.py``
+# exercises the package but only runs in a local env with those deps
+# installed.
+#
+# This is an explicit hole — coverage on molecular/ should be re-enabled
+# once the dev extras (or a dedicated ``[molecular]`` extra) ship those
+# libraries into CI.
+omit = [
+    "science/molecular/*",
+    "science/molecular/**/*",
+]

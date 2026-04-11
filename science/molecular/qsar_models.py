@@ -36,7 +36,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -50,8 +50,9 @@ log = logging.getLogger(__name__)
 @dataclass
 class TrainResult:
     """Result of a single model training run."""
+
     model_name: str
-    task_type: str             # "classification" or "regression"
+    task_type: str  # "classification" or "regression"
     train_time_s: float
     n_train: int
     n_params: int = 0
@@ -66,8 +67,7 @@ class BaseQSARModel(ABC):
     task_type: str = "classification"
 
     @abstractmethod
-    def fit(self, X: np.ndarray, y: np.ndarray,
-            sample_weight: Optional[np.ndarray] = None) -> TrainResult:
+    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight: Optional[np.ndarray] = None) -> TrainResult:
         """Train the model."""
 
     @abstractmethod
@@ -90,6 +90,7 @@ class BaseQSARModel(ABC):
 # ---------------------------------------------------------------------------
 # 1. SVM
 # ---------------------------------------------------------------------------
+
 
 class SVMModel(BaseQSARModel):
     """
@@ -118,8 +119,8 @@ class SVMModel(BaseQSARModel):
         self.model = None
 
     def fit(self, X, y, sample_weight=None):
-        from sklearn.svm import SVC, SVR
         from sklearn.preprocessing import StandardScaler
+        from sklearn.svm import SVC, SVR
 
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X)
@@ -127,20 +128,27 @@ class SVMModel(BaseQSARModel):
         t0 = time.time()
         if self.task_type == "classification":
             self.model = SVC(
-                C=self.C, gamma=self.gamma, kernel=self.kernel,
-                class_weight=self.class_weight, probability=True,
+                C=self.C,
+                gamma=self.gamma,
+                kernel=self.kernel,
+                class_weight=self.class_weight,
+                probability=True,
                 random_state=42,
             )
             self.model.fit(X_scaled, y, sample_weight=sample_weight)
         else:
             self.model = SVR(
-                C=self.C, gamma=self.gamma, kernel=self.kernel,
+                C=self.C,
+                gamma=self.gamma,
+                kernel=self.kernel,
             )
             self.model.fit(X_scaled, y, sample_weight=sample_weight)
 
         return TrainResult(
-            model_name=self.name, task_type=self.task_type,
-            train_time_s=time.time() - t0, n_train=len(y),
+            model_name=self.name,
+            task_type=self.task_type,
+            train_time_s=time.time() - t0,
+            n_train=len(y),
             n_params=self.n_parameters(),
             hyperparameters=self.get_params(),
         )
@@ -168,6 +176,7 @@ class SVMModel(BaseQSARModel):
 # ---------------------------------------------------------------------------
 # 2. Random Forest
 # ---------------------------------------------------------------------------
+
 
 class RandomForestModel(BaseQSARModel):
     """
@@ -204,21 +213,27 @@ class RandomForestModel(BaseQSARModel):
                 max_depth=self.max_depth,
                 min_samples_leaf=self.min_samples_leaf,
                 class_weight=self.class_weight,
-                random_state=42, n_jobs=-1, oob_score=True,
+                random_state=42,
+                n_jobs=-1,
+                oob_score=True,
             )
         else:
             self.model = RandomForestRegressor(
                 n_estimators=self.n_estimators,
                 max_depth=self.max_depth,
                 min_samples_leaf=self.min_samples_leaf,
-                random_state=42, n_jobs=-1, oob_score=True,
+                random_state=42,
+                n_jobs=-1,
+                oob_score=True,
             )
         self.model.fit(X, y, sample_weight=sample_weight)
 
         metrics = {"oob_score": self.model.oob_score_}
         return TrainResult(
-            model_name=self.name, task_type=self.task_type,
-            train_time_s=time.time() - t0, n_train=len(y),
+            model_name=self.name,
+            task_type=self.task_type,
+            train_time_s=time.time() - t0,
+            n_train=len(y),
             n_params=self.n_parameters(),
             hyperparameters=self.get_params(),
             train_metrics=metrics,
@@ -249,14 +264,13 @@ class RandomForestModel(BaseQSARModel):
     def n_parameters(self):
         if self.model is None:
             return 0
-        return sum(
-            t.tree_.node_count for t in self.model.estimators_
-        )
+        return sum(t.tree_.node_count for t in self.model.estimators_)
 
 
 # ---------------------------------------------------------------------------
 # 3. XGBoost
 # ---------------------------------------------------------------------------
+
 
 class XGBoostModel(BaseQSARModel):
     """
@@ -326,8 +340,10 @@ class XGBoostModel(BaseQSARModel):
         self.model.fit(X, y, sample_weight=sample_weight)
 
         return TrainResult(
-            model_name=self.name, task_type=self.task_type,
-            train_time_s=time.time() - t0, n_train=len(y),
+            model_name=self.name,
+            task_type=self.task_type,
+            train_time_s=time.time() - t0,
+            n_train=len(y),
             n_params=self.n_parameters(),
             hyperparameters=self.get_params(),
         )
@@ -354,12 +370,13 @@ class XGBoostModel(BaseQSARModel):
         }
 
     def n_parameters(self):
-        return self.n_estimators * (2 ** self.max_depth)  # approximate
+        return self.n_estimators * (2**self.max_depth)  # approximate
 
 
 # ---------------------------------------------------------------------------
 # 4. LightGBM
 # ---------------------------------------------------------------------------
+
 
 class LightGBMModel(BaseQSARModel):
     """
@@ -418,8 +435,10 @@ class LightGBMModel(BaseQSARModel):
         self.model.fit(X, y, sample_weight=sample_weight)
 
         return TrainResult(
-            model_name=self.name, task_type=self.task_type,
-            train_time_s=time.time() - t0, n_train=len(y),
+            model_name=self.name,
+            task_type=self.task_type,
+            train_time_s=time.time() - t0,
+            n_train=len(y),
             n_params=self.n_parameters(),
             hyperparameters=self.get_params(),
         )
@@ -447,6 +466,7 @@ class LightGBMModel(BaseQSARModel):
 # ---------------------------------------------------------------------------
 # 5. MPNN (Message Passing Neural Network — Chemprop-style)
 # ---------------------------------------------------------------------------
+
 
 class MPNNModel(BaseQSARModel):
     """
@@ -496,19 +516,18 @@ class MPNNModel(BaseQSARModel):
                 self.atom_embed = nn.Linear(atom_dim, hidden_dim)
                 self.bond_embed = nn.Linear(bond_dim, hidden_dim)
 
-                self.message_layers = nn.ModuleList([
-                    nn.Sequential(
-                        nn.Linear(hidden_dim * 2 + hidden_dim, hidden_dim),
-                        nn.ReLU(),
-                        nn.Dropout(dropout),
-                    )
-                    for _ in range(n_layers)
-                ])
+                self.message_layers = nn.ModuleList(
+                    [
+                        nn.Sequential(
+                            nn.Linear(hidden_dim * 2 + hidden_dim, hidden_dim),
+                            nn.ReLU(),
+                            nn.Dropout(dropout),
+                        )
+                        for _ in range(n_layers)
+                    ]
+                )
 
-                self.update_layers = nn.ModuleList([
-                    nn.GRUCell(hidden_dim, hidden_dim)
-                    for _ in range(n_layers)
-                ])
+                self.update_layers = nn.ModuleList([nn.GRUCell(hidden_dim, hidden_dim) for _ in range(n_layers)])
 
                 out_dim = 1
                 self.ffn = nn.Sequential(
@@ -542,9 +561,7 @@ class MPNNModel(BaseQSARModel):
 
                 return self.ffn(out).squeeze(-1)
 
-        self.model = MPNNBlock(
-            atom_dim, bond_dim, self.hidden_dim, self.n_layers, self.dropout
-        ).to(self.device)
+        self.model = MPNNBlock(atom_dim, bond_dim, self.hidden_dim, self.n_layers, self.dropout).to(self.device)
 
     def fit(self, X_graphs, y, sample_weight=None):
         """
@@ -569,9 +586,7 @@ class MPNNModel(BaseQSARModel):
         self._build_model(atom_dim, bond_dim)
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, patience=10, factor=0.5
-        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5)
 
         if self.task_type == "classification":
             pos_weight = None
@@ -590,11 +605,9 @@ class MPNNModel(BaseQSARModel):
             epoch_loss = 0.0
 
             for start in range(0, len(X_graphs), self.batch_size):
-                batch_idx = perm[start:start + self.batch_size]
+                batch_idx = perm[start : start + self.batch_size]
                 batch_graphs = [X_graphs[i] for i in batch_idx]
-                batch_y = torch.tensor(
-                    y[batch_idx], dtype=torch.float32, device=self.device
-                )
+                batch_y = torch.tensor(y[batch_idx], dtype=torch.float32, device=self.device)
 
                 x, ei, ea, batch_vec = self._collate(batch_graphs)
                 pred = self.model(x, ei, ea, batch_vec)
@@ -609,8 +622,10 @@ class MPNNModel(BaseQSARModel):
             scheduler.step(epoch_loss)
 
         return TrainResult(
-            model_name=self.name, task_type=self.task_type,
-            train_time_s=time.time() - t0, n_train=len(y),
+            model_name=self.name,
+            task_type=self.task_type,
+            train_time_s=time.time() - t0,
+            n_train=len(y),
             n_params=self.n_parameters(),
             hyperparameters=self.get_params(),
         )
@@ -638,18 +653,18 @@ class MPNNModel(BaseQSARModel):
             ea = torch.cat(eas).to(self.device)
         else:
             ei = torch.zeros((2, 0), dtype=torch.long, device=self.device)
-            ea = torch.zeros((0, graphs[0].edge_attr.shape[1]),
-                           dtype=torch.float32, device=self.device)
+            ea = torch.zeros((0, graphs[0].edge_attr.shape[1]), dtype=torch.float32, device=self.device)
 
         return x, ei, ea, batch
 
     def predict(self, X_graphs):
         import torch
+
         self.model.eval()
         preds = []
         with torch.no_grad():
             for start in range(0, len(X_graphs), self.batch_size):
-                batch = X_graphs[start:start + self.batch_size]
+                batch = X_graphs[start : start + self.batch_size]
                 x, ei, ea, bv = self._collate(batch)
                 out = self.model(x, ei, ea, bv)
                 if self.task_type == "classification":
@@ -659,11 +674,12 @@ class MPNNModel(BaseQSARModel):
 
     def predict_proba(self, X_graphs):
         import torch
+
         self.model.eval()
         preds = []
         with torch.no_grad():
             for start in range(0, len(X_graphs), self.batch_size):
-                batch = X_graphs[start:start + self.batch_size]
+                batch = X_graphs[start : start + self.batch_size]
                 x, ei, ea, bv = self._collate(batch)
                 out = self.model(x, ei, ea, bv)
                 if self.task_type == "classification":
@@ -689,6 +705,7 @@ class MPNNModel(BaseQSARModel):
 # ---------------------------------------------------------------------------
 # 6. GAT (Graph Attention Network)
 # ---------------------------------------------------------------------------
+
 
 class GATModel(BaseQSARModel):
     """
@@ -758,8 +775,10 @@ class GATModel(BaseQSARModel):
                 # Softmax per destination node
                 alpha = torch.zeros(N, self.n_heads, device=x.device) - 1e9
                 alpha.scatter_reduce_(
-                    0, dst.unsqueeze(1).expand(-1, self.n_heads),
-                    e, reduce="amax",
+                    0,
+                    dst.unsqueeze(1).expand(-1, self.n_heads),
+                    e,
+                    reduce="amax",
                 )
                 e = e - alpha[dst]
                 e = torch.exp(e)
@@ -779,13 +798,10 @@ class GATModel(BaseQSARModel):
             def __init__(self, atom_dim, hidden_dim, n_heads, n_layers, dropout):
                 super().__init__()
                 self.embed = nn.Linear(atom_dim, hidden_dim)
-                self.gat_layers = nn.ModuleList([
-                    GATLayer(hidden_dim, hidden_dim, n_heads, dropout)
-                    for _ in range(n_layers)
-                ])
-                self.norms = nn.ModuleList([
-                    nn.LayerNorm(hidden_dim) for _ in range(n_layers)
-                ])
+                self.gat_layers = nn.ModuleList(
+                    [GATLayer(hidden_dim, hidden_dim, n_heads, dropout) for _ in range(n_layers)]
+                )
+                self.norms = nn.ModuleList([nn.LayerNorm(hidden_dim) for _ in range(n_layers)])
                 self.ffn = nn.Sequential(
                     nn.Linear(hidden_dim, hidden_dim),
                     nn.ReLU(),
@@ -809,9 +825,7 @@ class GATModel(BaseQSARModel):
 
                 return self.ffn(out).squeeze(-1)
 
-        self.model = GATNet(
-            atom_dim, self.hidden_dim, self.n_heads, self.n_layers, self.dropout
-        ).to(self.device)
+        self.model = GATNet(atom_dim, self.hidden_dim, self.n_heads, self.n_layers, self.dropout).to(self.device)
 
     def fit(self, X_graphs, y, sample_weight=None):
         import torch
@@ -823,8 +837,7 @@ class GATModel(BaseQSARModel):
         self._build_model(X_graphs[0].x.shape[1])
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
-        loss_fn = (nn.BCEWithLogitsLoss() if self.task_type == "classification"
-                   else nn.MSELoss())
+        loss_fn = nn.BCEWithLogitsLoss() if self.task_type == "classification" else nn.MSELoss()
 
         t0 = time.time()
         self.model.train()
@@ -832,7 +845,7 @@ class GATModel(BaseQSARModel):
         for epoch in range(self.n_epochs):
             perm = np.random.permutation(len(X_graphs))
             for start in range(0, len(X_graphs), self.batch_size):
-                bi = perm[start:start + self.batch_size]
+                bi = perm[start : start + self.batch_size]
                 batch_y = torch.tensor(y[bi], dtype=torch.float32, device=self.device)
                 x, ei, _, bv = self._collate([X_graphs[i] for i in bi])
                 pred = self.model(x, ei, bv)
@@ -842,14 +855,17 @@ class GATModel(BaseQSARModel):
                 optimizer.step()
 
         return TrainResult(
-            model_name=self.name, task_type=self.task_type,
-            train_time_s=time.time() - t0, n_train=len(y),
+            model_name=self.name,
+            task_type=self.task_type,
+            train_time_s=time.time() - t0,
+            n_train=len(y),
             n_params=self.n_parameters(),
         )
 
     def _collate(self, graphs):
         """Same collate as MPNN."""
         import torch
+
         xs, eis, eas, batches = [], [], [], []
         offset = 0
         for i, g in enumerate(graphs):
@@ -872,11 +888,12 @@ class GATModel(BaseQSARModel):
 
     def predict(self, X_graphs):
         import torch
+
         self.model.eval()
         preds = []
         with torch.no_grad():
             for start in range(0, len(X_graphs), self.batch_size):
-                batch = X_graphs[start:start + self.batch_size]
+                batch = X_graphs[start : start + self.batch_size]
                 x, ei, _, bv = self._collate(batch)
                 out = self.model(x, ei, bv)
                 if self.task_type == "classification":
@@ -886,11 +903,12 @@ class GATModel(BaseQSARModel):
 
     def predict_proba(self, X_graphs):
         import torch
+
         self.model.eval()
         preds = []
         with torch.no_grad():
             for start in range(0, len(X_graphs), self.batch_size):
-                batch = X_graphs[start:start + self.batch_size]
+                batch = X_graphs[start : start + self.batch_size]
                 x, ei, _, bv = self._collate(batch)
                 out = self.model(x, ei, bv)
                 if self.task_type == "classification":
@@ -910,6 +928,7 @@ class GATModel(BaseQSARModel):
 # ---------------------------------------------------------------------------
 # 7. SMILES Transformer
 # ---------------------------------------------------------------------------
+
 
 class TransformerModel(BaseQSARModel):
     """
@@ -951,6 +970,7 @@ class TransformerModel(BaseQSARModel):
     def _build_model(self):
         import torch
         import torch.nn as nn
+
         from science.molecular.representations import VOCAB_SIZE
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -961,8 +981,10 @@ class TransformerModel(BaseQSARModel):
                 self.tok_embed = nn.Embedding(vocab_size, d_model, padding_idx=0)
                 self.pos_embed = nn.Embedding(max_len, d_model)
                 encoder_layer = nn.TransformerEncoderLayer(
-                    d_model=d_model, nhead=n_heads,
-                    dim_feedforward=d_model * 4, dropout=dropout,
+                    d_model=d_model,
+                    nhead=n_heads,
+                    dim_feedforward=d_model * 4,
+                    dropout=dropout,
                     batch_first=True,
                 )
                 self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
@@ -976,7 +998,7 @@ class TransformerModel(BaseQSARModel):
             def forward(self, tokens):
                 B, L = tokens.shape
                 positions = torch.arange(L, device=tokens.device).unsqueeze(0).expand(B, -1)
-                pad_mask = (tokens == 0)  # True where padding
+                pad_mask = tokens == 0  # True where padding
 
                 x = self.tok_embed(tokens) + self.pos_embed(positions)
                 x = self.encoder(x, src_key_padding_mask=pad_mask)
@@ -988,8 +1010,12 @@ class TransformerModel(BaseQSARModel):
                 return self.ffn(x).squeeze(-1)
 
         self.model = SMILESTransformer(
-            VOCAB_SIZE, self.d_model, self.n_heads, self.n_layers,
-            self.max_len, self.dropout,
+            VOCAB_SIZE,
+            self.d_model,
+            self.n_heads,
+            self.n_layers,
+            self.max_len,
+            self.dropout,
         ).to(self.device)
 
     def fit(self, X_smiles, y, sample_weight=None):
@@ -1005,13 +1031,13 @@ class TransformerModel(BaseQSARModel):
         """
         import torch
         import torch.nn as nn
+
         from science.molecular.representations import tokenize_smiles
 
         self._build_model()
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
 
-        loss_fn = (nn.BCEWithLogitsLoss() if self.task_type == "classification"
-                   else nn.MSELoss())
+        loss_fn = nn.BCEWithLogitsLoss() if self.task_type == "classification" else nn.MSELoss()
 
         # Tokenize all SMILES
         tokens = np.array([tokenize_smiles(s, self.max_len) for s in X_smiles])
@@ -1022,7 +1048,7 @@ class TransformerModel(BaseQSARModel):
         for epoch in range(self.n_epochs):
             perm = np.random.permutation(len(X_smiles))
             for start in range(0, len(X_smiles), self.batch_size):
-                bi = perm[start:start + self.batch_size]
+                bi = perm[start : start + self.batch_size]
                 batch_tok = torch.tensor(tokens[bi], dtype=torch.long, device=self.device)
                 batch_y = torch.tensor(y[bi], dtype=torch.float32, device=self.device)
 
@@ -1034,13 +1060,16 @@ class TransformerModel(BaseQSARModel):
                 optimizer.step()
 
         return TrainResult(
-            model_name=self.name, task_type=self.task_type,
-            train_time_s=time.time() - t0, n_train=len(y),
+            model_name=self.name,
+            task_type=self.task_type,
+            train_time_s=time.time() - t0,
+            n_train=len(y),
             n_params=self.n_parameters(),
         )
 
     def predict(self, X_smiles):
         import torch
+
         from science.molecular.representations import tokenize_smiles
 
         self.model.eval()
@@ -1049,8 +1078,9 @@ class TransformerModel(BaseQSARModel):
         with torch.no_grad():
             for start in range(0, len(X_smiles), self.batch_size):
                 batch = torch.tensor(
-                    tokens[start:start + self.batch_size],
-                    dtype=torch.long, device=self.device,
+                    tokens[start : start + self.batch_size],
+                    dtype=torch.long,
+                    device=self.device,
                 )
                 out = self.model(batch)
                 if self.task_type == "classification":
@@ -1060,6 +1090,7 @@ class TransformerModel(BaseQSARModel):
 
     def predict_proba(self, X_smiles):
         import torch
+
         from science.molecular.representations import tokenize_smiles
 
         self.model.eval()
@@ -1068,8 +1099,9 @@ class TransformerModel(BaseQSARModel):
         with torch.no_grad():
             for start in range(0, len(X_smiles), self.batch_size):
                 batch = torch.tensor(
-                    tokens[start:start + self.batch_size],
-                    dtype=torch.long, device=self.device,
+                    tokens[start : start + self.batch_size],
+                    dtype=torch.long,
+                    device=self.device,
                 )
                 out = self.model(batch)
                 if self.task_type == "classification":
