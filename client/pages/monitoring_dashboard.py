@@ -139,6 +139,7 @@ alerts = data.get("alerts", [])
 thresholds = data.get("thresholds", {})
 offline = data.get("offline_metrics", {})
 formulas = data.get("formulas", {})
+providers = data.get("providers", [])
 
 st.caption(
     f"Generated at **{data.get('generated_at', '—')}** · "
@@ -226,6 +227,40 @@ if system.get("error_trend") and system.get("finish_trend"):
 
 with st.expander("Raw system metrics"):
     st.json(system)
+
+
+# ---------------------------------------------------------------------------
+# Provider breakdown (OpenAI / vLLM / …)
+# ---------------------------------------------------------------------------
+
+st.header("LLM providers")
+if providers:
+    prov_df = pd.DataFrame([
+        {
+            "Provider": p["provider"],
+            "Requests": p["request_count"],
+            "Success": _fmt_pct(p["success_rate"]),
+            "p50": _fmt_ms(p["p50_latency_ms"]),
+            "p95": _fmt_ms(p["p95_latency_ms"]),
+            "p99": _fmt_ms(p["p99_latency_ms"]),
+            "Tokens": f"{p['tokens_total']:,}",
+            "Tokens/s": f"{p['tokens_per_sec']:.1f}",
+            "Cost": _fmt_money(p["total_cost_usd"]),
+            "Models": ", ".join(p.get("distinct_models", [])) or "—",
+        }
+        for p in providers
+    ])
+    st.dataframe(prov_df, hide_index=True, use_container_width=True)
+    st.caption(
+        "Encoded from `agent_log.model` as `provider:model` by "
+        "`openai_wrapper.chatgpt_call`. Rows without a prefix roll up under "
+        "`unknown` (legacy). Local providers (vllm_*) always show $0."
+    )
+else:
+    st.info(
+        "No provider-tagged AgentLog rows yet. "
+        "Start a few agent runs after the vLLM integration lands to populate this view."
+    )
 
 
 # ---------------------------------------------------------------------------

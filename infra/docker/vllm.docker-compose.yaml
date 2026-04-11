@@ -1,0 +1,72 @@
+# infra/docker/vllm.docker-compose.yaml
+#
+# Local vLLM server for ChatDFT agents. Exposes an OpenAI-compatible HTTP
+# API on port 8001, which ChatDFT's LLMRouter uses when you flip one or more
+# agents to ``vllm_local`` in ``server/llm.yaml``.
+#
+# Usage
+# -----
+#   GPU (recommended):
+#       docker compose -f infra/docker/vllm.docker-compose.yaml up -d
+#
+#   CPU-only smoke test (slow, not for real traffic — uncomment the
+#   ``deploy.resources`` block to remove GPU reservation):
+#       VLLM_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+#         docker compose -f infra/docker/vllm.docker-compose.yaml up -d
+#
+# Environment overrides
+# ---------------------
+#   VLLM_MODEL              — HF model name (default Qwen/Qwen2.5-7B-Instruct)
+#   VLLM_PORT               — host port (default 8001)
+#   VLLM_MAX_MODEL_LEN      — context window (default 8192)
+#   VLLM_GPU_MEMORY_UTIL    — fraction of GPU mem to reserve (default 0.85)
+#   HF_TOKEN                — Hugging Face token for gated models
+#
+# After startup, verify with:
+#   curl http://localhost:8001/health
+#   curl http://localhost:8001/v1/models
+#
+# Then point ChatDFT at it by flipping routes in server/llm.yaml:
+#   routing:
+#     intent_agent: vllm_local
+#     plan_agent:   vllm_local
+#     qa_agent:     vllm_local
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: chatdft-vllm
+    restart: unless-stopped
+    ipc: host   # shared memory for NCCL / multi-GPU
+    ports:
+      - "${VLLM_PORT:-8001}:8000"
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+    volumes:
+      - vllm-hf-cache:/root/.cache/huggingface
+    command: >-
+      --model ${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      --host 0.0.0.0
+      --port 8000
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
+      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTIL:-0.85}
+      --enforce-eager
+      --served-model-name ${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s   # model load can be slow
+
+volumes:
+  vllm-hf-cache:
+    driver: local

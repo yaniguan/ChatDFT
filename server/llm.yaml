@@ -1,0 +1,49 @@
+# ChatDFT LLM routing configuration.
+#
+# This file is loaded by ``server/utils/llm_config.py`` at startup. All values
+# here can be overridden by environment variables — see that module for the
+# full list. The defaults below keep every agent on the standard OpenAI API,
+# so ChatDFT works out of the box with just ``OPENAI_API_KEY`` set.
+#
+# To route high-volume, low-reasoning agents to a local vLLM server, spin up
+# the vLLM container (``docker compose -f infra/docker/vllm.docker-compose.yaml
+# up``) and change ``routing:`` entries from ``openai`` to ``vllm_local``.
+#
+# See docs/vllm.md for the full playbook.
+
+providers:
+  openai:
+    type: openai
+    api_key_env: OPENAI_API_KEY
+    model: gpt-4o-mini         # default when the caller doesn't pass a model
+    timeout_s: 60
+    max_concurrent: 16
+
+  vllm_local:
+    type: vllm
+    base_url: http://localhost:8001/v1
+    api_key: EMPTY              # vLLM ignores the value but requires non-empty
+    model: Qwen/Qwen2.5-7B-Instruct
+    timeout_s: 120
+    max_concurrent: 32          # client-side cap; vLLM batches server-side
+    health_check_url: http://localhost:8001/health
+
+# Provider used when an agent is not explicitly routed below.
+default_provider: openai
+
+# Provider to retry on when the primary fails. Set to null to disable.
+fallback_provider: openai
+
+# Per-agent routing overrides. Uncomment the vllm_local lines to offload
+# cheap/high-volume agents to a local vLLM server. Heavy reasoning
+# (hypothesis, analyze) should usually stay on OpenAI unless you have a
+# capable local model.
+routing:
+  intent_agent: openai          # ← flip to vllm_local for cheap JSON parsing
+  plan_agent: openai            # ← flip to vllm_local for task graph generation
+  qa_agent: openai              # ← flip to vllm_local for freeform QA
+  post_analysis_agent: openai   # ← flip to vllm_local for result summarisation
+  knowledge_agent: openai       # embeddings — keep on openai for RAG quality
+  hypothesis_agent: openai      # heavy reasoning — keep on openai
+  analyze_agent: openai         # heavy reasoning — keep on openai
+  records_agent: openai
