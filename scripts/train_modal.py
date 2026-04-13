@@ -170,25 +170,70 @@ output_vol = modal.Volume.from_name(
 def train_lora(
     config_rel_path: str,
     preprocess_only: bool = False,
+    resume_from_checkpoint: str = "",
 ) -> dict:
-    """Run ``axolotl preprocess`` + ``axolotl train``."""
+    """
+    Run ``axolotl preprocess`` + ``axolotl train``.
+
+    Checkpoints are persisted to the output Volume continuously via a
+    background thread that calls ``output_vol.commit()`` every 60 seconds.
+    If this function gets killed mid-training (Modal spend cap, laptop
+    sleep, preemption), the most recently saved axolotl step-checkpoint
+    survives and you can resume via ``--resume-from-checkpoint``.
+    """
     import os
     import subprocess
+    import sys
+    import threading
+    import time
 
     os.chdir(REMOTE_ROOT)
 
-    print(f"→ axolotl preprocess {config_rel_path}")
-    subprocess.check_call(["axolotl", "preprocess", config_rel_path])
+    # ── background committer ─────────────────────────────────────────────
+    # axolotl writes to ./artifacts/qwen_lora_out (mounted Volume). The
+    # Volume only sees the files durably after commit(). Without this, a
+    # mid-training kill loses EVERY checkpoint — that's what bit us on
+    # the first real run. Commit every 60 s so we never lose more than
+    # a minute of progress.
+    _stop = threading.Event()
 
-    if preprocess_only:
-        return {"status": "preprocessed_only", "config": config_rel_path}
+    def _commit_loop():
+        while not _stop.wait(60):
+            try:
+                output_vol.commit()
+            except Exception as e:
+                print(f"[commit loop] commit failed: {e}", flush=True)
 
-    print(f"→ axolotl train {config_rel_path}")
-    subprocess.check_call(["axolotl", "train", config_rel_path])
+    committer = threading.Thread(target=_commit_loop, daemon=True)
+    committer.start()
 
-    # Commit so the adapter survives across function invocations and is
-    # visible to eval_lora + the local `modal volume get` command.
-    output_vol.commit()
+    # Use `python -m axolotl.cli.*` instead of the `axolotl` CLI entry
+    # point — the winglian/axolotl Docker image doesn't always register
+    # the console_scripts entry point, but the Python module path works
+    # reliably across all axolotl versions.
+    py = sys.executable
+
+    try:
+        print(f"→ axolotl preprocess {config_rel_path}")
+        subprocess.check_call([py, "-m", "axolotl.cli.preprocess", config_rel_path])
+
+        if preprocess_only:
+            return {"status": "preprocessed_only", "config": config_rel_path}
+
+        cmd = [py, "-m", "axolotl.cli.train", config_rel_path]
+        if resume_from_checkpoint:
+            cmd.extend(["--resume_from_checkpoint", resume_from_checkpoint])
+            print(f"→ axolotl train (resume from {resume_from_checkpoint})")
+        else:
+            print(f"→ axolotl train {config_rel_path}")
+        subprocess.check_call(cmd)
+    finally:
+        # Stop the committer and do one final commit so the last checkpoint
+        # is durably persisted whether we succeeded or crashed.
+        _stop.set()
+        committer.join(timeout=5)
+        time.sleep(0.1)
+        output_vol.commit()
 
     return {
         "status": "trained",
@@ -392,9 +437,16 @@ def main(
     train_only: bool = False,
     eval_only: bool = False,
     preprocess_only: bool = False,
+    resume: str = "",
 ):
     """
     Entry point called by ``modal run scripts/train_modal.py [--flag ...]``.
+
+    ``--resume PATH`` resumes training from a checkpoint dir inside the
+    output Volume (e.g. ``artifacts/qwen_lora_overfit_out/checkpoint-40``).
+    Useful when a previous run got killed mid-epoch by the Modal spend
+    cap or similar — the background-commit loop ensures step-level
+    checkpoints survive.
     """
     _preflight()
 
@@ -425,8 +477,12 @@ def main(
     # ── train ────────────────────────────────────────────────────────────
     if not eval_only:
         print("─── remote: train_lora ───────────────────────────────────")
+        if resume:
+            print(f"  resuming from: {resume}")
         train_result = train_lora.remote(
-            config, preprocess_only=preprocess_only
+            config,
+            preprocess_only=preprocess_only,
+            resume_from_checkpoint=resume,
         )
         print(f"✓ train: {train_result}")
         if preprocess_only:
