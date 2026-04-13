@@ -8,6 +8,7 @@ control flow:
   * each documented stop condition fires correctly
   * per-agent budgets are respected
 """
+
 from __future__ import annotations
 
 import os
@@ -25,6 +26,7 @@ from server.orchestrator.loop import ChatDFTOrchestrator  # noqa: E402
 # ---------------------------------------------------------------------------
 # Helpers — mock execute + mock refine
 # ---------------------------------------------------------------------------
+
 
 def _mock_execute_factory(value_seq: List[float], converged_seq: List[bool] | None = None):
     """
@@ -44,6 +46,7 @@ def _mock_execute_factory(value_seq: List[float], converged_seq: List[bool] | No
             "post": {"E_ads": v, "converged": c},
             "job_dir": f"/tmp/test/{task.get('id', 0)}",
         }
+
     return _exec
 
 
@@ -62,6 +65,7 @@ def _mock_refine_factory(action_batches: List[List[ProposedAction]]):
             stop = "" if batch else "test_exhausted"
             return ("test refinement", batch, [], stop)
         return ("", [], [], "test_exhausted")
+
     return _refine
 
 
@@ -74,8 +78,7 @@ def _hypothesis_graph() -> Dict[str, Any]:
         "intermediates": ["CO*", "COOH*"],
         "reaction_network": ["CO2 + * -> CO2*", "CO2* + H -> COOH*"],
         "predictions": [
-            {"species": "CO*", "surface": "Pt(111)", "trend": "exothermic",
-             "range_lo": -1.5, "range_hi": -0.5},
+            {"species": "CO*", "surface": "Pt(111)", "trend": "exothermic", "range_lo": -1.5, "range_hi": -0.5},
         ],
     }
 
@@ -98,26 +101,41 @@ def _initial_task() -> Dict[str, Any]:
 # Test cases
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_max_iterations_stops_loop() -> None:
     exec_mock = _mock_execute_factory([-0.9])
-    refine_mock = _mock_refine_factory([
-        [ProposedAction(kind="extend", subkind="intermediate",
-                        target="OOH*", params={"species": "OOH*", "surface": "Pt(111)"},
-                        rationale="extend network", priority=0.6, cost_estimate=2)],
-    ] * 50)  # always propose more
+    refine_mock = _mock_refine_factory(
+        [
+            [
+                ProposedAction(
+                    kind="extend",
+                    subkind="intermediate",
+                    target="OOH*",
+                    params={"species": "OOH*", "surface": "Pt(111)"},
+                    rationale="extend network",
+                    priority=0.6,
+                    cost_estimate=2,
+                )
+            ],
+        ]
+        * 50
+    )  # always propose more
 
-    with patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock), \
-         patch("server.orchestrator.loop.refine_hypothesis", refine_mock):
+    with (
+        patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock),
+        patch("server.orchestrator.loop.refine_hypothesis", refine_mock),
+    ):
         orch = ChatDFTOrchestrator(
-            run_id=1, session_id=1,
+            run_id=1,
+            session_id=1,
             intent=_intent(),
             hypothesis_md="initial",
             hypothesis_graph=_hypothesis_graph(),
             initial_plan_tasks=[_initial_task()],
             max_iterations=3,
-            confidence_threshold=0.99,        # never reached in test
-            no_new_actions_threshold=99,       # never reached
+            confidence_threshold=0.99,  # never reached in test
+            no_new_actions_threshold=99,  # never reached
         )
         state = await orch.run()
 
@@ -133,10 +151,13 @@ async def test_no_new_actions_stops_loop() -> None:
     # Second refine returns nothing → streak 2 → trigger stop
     refine_mock = _mock_refine_factory([])
 
-    with patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock), \
-         patch("server.orchestrator.loop.refine_hypothesis", refine_mock):
+    with (
+        patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock),
+        patch("server.orchestrator.loop.refine_hypothesis", refine_mock),
+    ):
         orch = ChatDFTOrchestrator(
-            run_id=2, session_id=1,
+            run_id=2,
+            session_id=1,
             intent=_intent(),
             hypothesis_md="initial",
             hypothesis_graph=_hypothesis_graph(),
@@ -156,10 +177,13 @@ async def test_results_feed_into_reward_signal() -> None:
     exec_mock = _mock_execute_factory([-0.9])  # within predicted [-1.5, -0.5]
     refine_mock = _mock_refine_factory([])  # stop after 1 task
 
-    with patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock), \
-         patch("server.orchestrator.loop.refine_hypothesis", refine_mock):
+    with (
+        patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock),
+        patch("server.orchestrator.loop.refine_hypothesis", refine_mock),
+    ):
         orch = ChatDFTOrchestrator(
-            run_id=3, session_id=1,
+            run_id=3,
+            session_id=1,
             intent=_intent(),
             hypothesis_md="initial",
             hypothesis_graph=_hypothesis_graph(),
@@ -186,30 +210,35 @@ async def test_parameter_budget_caps_at_three_rounds() -> None:
     # Provide enough mock results for every executed task
     exec_mock = _mock_execute_factory([-0.9] * 50)
     verify_action = ProposedAction(
-        kind="verify", subkind="reconverge",
-        target="task#1", params={"target_task_id": 1},
-        rationale="tighten convergence", priority=0.5, cost_estimate=1,
+        kind="verify",
+        subkind="reconverge",
+        target="task#1",
+        params={"target_task_id": 1},
+        rationale="tighten convergence",
+        priority=0.5,
+        cost_estimate=1,
     )
     refine_mock = _mock_refine_factory([[verify_action]] * 50)
 
-    with patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock), \
-         patch("server.orchestrator.loop.refine_hypothesis", refine_mock):
+    with (
+        patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock),
+        patch("server.orchestrator.loop.refine_hypothesis", refine_mock),
+    ):
         orch = ChatDFTOrchestrator(
-            run_id=4, session_id=1,
+            run_id=4,
+            session_id=1,
             intent=_intent(),
             hypothesis_md="initial",
             hypothesis_graph=_hypothesis_graph(),
             initial_plan_tasks=[_initial_task()],
             max_iterations=20,
-            confidence_threshold=0.999,    # never reached
+            confidence_threshold=0.999,  # never reached
             no_new_actions_threshold=2,
         )
         state = await orch.run()
 
     param_budget = state.budgets["parameter"]
-    assert param_budget.rounds_used == 3, (
-        f"parameter budget should top out at 3 rounds, got {param_budget.rounds_used}"
-    )
+    assert param_budget.rounds_used == 3, f"parameter budget should top out at 3 rounds, got {param_budget.rounds_used}"
     # After param exhaustion all further verifies are rejected → no_new_actions hits
     assert state.stop_reason == "no_new_actions_streak"
 
@@ -218,16 +247,23 @@ async def test_parameter_budget_caps_at_three_rounds() -> None:
 async def test_user_stop_request_takes_effect_at_iteration_boundary() -> None:
     exec_mock = _mock_execute_factory([-0.9])
     extend_action = ProposedAction(
-        kind="extend", subkind="intermediate",
-        target="OOH*", params={"species": "OOH*", "surface": "Pt(111)"},
-        rationale="extend", priority=0.6, cost_estimate=2,
+        kind="extend",
+        subkind="intermediate",
+        target="OOH*",
+        params={"species": "OOH*", "surface": "Pt(111)"},
+        rationale="extend",
+        priority=0.6,
+        cost_estimate=2,
     )
     refine_mock = _mock_refine_factory([[extend_action]] * 50)
 
-    with patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock), \
-         patch("server.orchestrator.loop.refine_hypothesis", refine_mock):
+    with (
+        patch("server.orchestrator.loop._execute_task_via_pipeline", exec_mock),
+        patch("server.orchestrator.loop.refine_hypothesis", refine_mock),
+    ):
         orch = ChatDFTOrchestrator(
-            run_id=5, session_id=1,
+            run_id=5,
+            session_id=1,
             intent=_intent(),
             hypothesis_md="initial",
             hypothesis_graph=_hypothesis_graph(),

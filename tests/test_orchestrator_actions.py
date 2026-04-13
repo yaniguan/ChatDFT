@@ -1,4 +1,5 @@
 """Tests for the action whitelist + validators."""
+
 from __future__ import annotations
 
 import os
@@ -79,8 +80,12 @@ def test_validate_missing_rationale_rejected() -> None:
 
 def test_priority_clamped_to_unit_interval() -> None:
     raw = {
-        "kind": "verify", "subkind": "reconverge", "target": "x",
-        "params": {"target_task_id": 1}, "rationale": "ok", "priority": 99.0,
+        "kind": "verify",
+        "subkind": "reconverge",
+        "target": "x",
+        "params": {"target_task_id": 1},
+        "rationale": "ok",
+        "priority": 99.0,
     }
     action, _ = validate_action(raw)
     assert action is not None
@@ -89,9 +94,12 @@ def test_priority_clamped_to_unit_interval() -> None:
 
 def test_batch_drops_duplicates() -> None:
     base = {
-        "kind": "verify", "subkind": "reconverge",
-        "target": "CO* on Pt(111)", "rationale": "dup",
-        "params": {"target_task_id": 5}, "priority": 0.4,
+        "kind": "verify",
+        "subkind": "reconverge",
+        "target": "CO* on Pt(111)",
+        "rationale": "dup",
+        "params": {"target_task_id": 5},
+        "priority": 0.4,
     }
     accepted, errors = validate_action_batch([base, dict(base)])
     assert len(accepted) == 1
@@ -101,9 +109,12 @@ def test_batch_drops_duplicates() -> None:
 def test_batch_enforces_max_actions() -> None:
     items = [
         {
-            "kind": "verify", "subkind": "reconverge",
-            "target": f"task#{i}", "rationale": f"r{i}",
-            "params": {"target_task_id": i}, "priority": 0.5,
+            "kind": "verify",
+            "subkind": "reconverge",
+            "target": f"task#{i}",
+            "rationale": f"r{i}",
+            "params": {"target_task_id": i},
+            "priority": 0.5,
             "cost_estimate": 1,
         }
         for i in range(MAX_ACTIONS_PER_ROUND + 3)
@@ -116,11 +127,13 @@ def test_batch_enforces_max_actions() -> None:
 def test_batch_enforces_total_cost() -> None:
     items = [
         {
-            "kind": "scan", "subkind": "coverage",
+            "kind": "scan",
+            "subkind": "coverage",
             "target": f"H/Cu coverage scan #{i}",
             "params": {"species": "H*", "surface": "Cu(111)", "values": [0.25, 0.5, 0.75, 1.0]},
             "rationale": "scan",
-            "priority": 0.5, "cost_estimate": 4,
+            "priority": 0.5,
+            "cost_estimate": 4,
         }
         for i in range(5)
     ]
@@ -132,12 +145,30 @@ def test_batch_enforces_total_cost() -> None:
 
 def test_batch_sorted_by_priority_desc() -> None:
     items = [
-        {"kind": "verify", "subkind": "reconverge", "target": "low",
-         "params": {"target_task_id": 1}, "rationale": "low", "priority": 0.1},
-        {"kind": "verify", "subkind": "reconverge", "target": "high",
-         "params": {"target_task_id": 2}, "rationale": "high", "priority": 0.9},
-        {"kind": "verify", "subkind": "reconverge", "target": "mid",
-         "params": {"target_task_id": 3}, "rationale": "mid", "priority": 0.5},
+        {
+            "kind": "verify",
+            "subkind": "reconverge",
+            "target": "low",
+            "params": {"target_task_id": 1},
+            "rationale": "low",
+            "priority": 0.1,
+        },
+        {
+            "kind": "verify",
+            "subkind": "reconverge",
+            "target": "high",
+            "params": {"target_task_id": 2},
+            "rationale": "high",
+            "priority": 0.9,
+        },
+        {
+            "kind": "verify",
+            "subkind": "reconverge",
+            "target": "mid",
+            "params": {"target_task_id": 3},
+            "rationale": "mid",
+            "priority": 0.5,
+        },
     ]
     accepted, _ = validate_action_batch(items)
     priorities = [a.priority for a in accepted]
