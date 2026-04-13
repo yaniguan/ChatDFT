@@ -182,6 +182,10 @@ app.include_router(molecular_router, tags=["molecular"])
 from server.api.dashboard import router as dashboard_router
 app.include_router(dashboard_router, tags=["dashboard"])
 
+# ── Closed-loop orchestrator (intent → hypothesis → plan → execute → refine) ─
+from server.orchestrator.routes import router as orchestrator_router
+app.include_router(orchestrator_router, tags=["orchestrator"])
+
 
 
 # ====== Added endpoints and helpers (async-ready, drop-in) ======
