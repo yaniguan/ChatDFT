@@ -917,6 +917,96 @@ class PlanTaskState(Base):
 
 
 # ===========================================================================
+# ORCHESTRATOR LAYER  (closed-loop runs)
+# ===========================================================================
+
+
+class OrchestrationRun(Base):
+    """
+    One closed-loop run. Owns a sequence of OrchestrationStep rows that
+    record per-iteration evidence (executed task, reward, refiner output).
+    """
+    __tablename__ = "orchestration_run"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    session_id    = Column(Integer, ForeignKey("chat_session.id", ondelete="CASCADE"), index=True)
+    status        = Column(String, default="running")     # running | done | stopped | error
+    stop_reason   = Column(String, nullable=True)
+    iteration     = Column(Integer, default=0)
+    confidence    = Column(Float,   default=0.5)
+    reward_ema    = Column(Float,   default=0.0)
+
+    config        = Column(JSON, default=dict)            # max_iter, thresholds, auto_submit, ...
+    intent        = Column(JSON, default=dict)            # snapshot at start
+    final_state   = Column(JSON, default=dict)            # state.to_dict() at finish
+
+    started_at    = Column(DateTime, default=datetime.utcnow)
+    ended_at      = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_orchrun_session", "session_id"),
+        Index("idx_orchrun_status",  "status"),
+    )
+
+
+class OrchestrationStep(Base):
+    """One iteration of a closed-loop run."""
+    __tablename__ = "orchestration_step"
+
+    id                 = Column(Integer, primary_key=True, autoincrement=True)
+    run_id             = Column(Integer, ForeignKey("orchestration_run.id", ondelete="CASCADE"),
+                                index=True, nullable=False)
+    iteration          = Column(Integer, nullable=False)
+
+    executed_task_id   = Column(Integer, nullable=True)
+    executed_agent     = Column(String,  nullable=True)
+    success            = Column(Boolean, nullable=True)
+    reward             = Column(Float,   nullable=True)
+    confidence_after   = Column(Float,   nullable=True)
+
+    proposed_actions   = Column(JSON, default=list)       # list of action dicts (accepted)
+    rejected_actions   = Column(JSON, default=list)       # list of {raw, errors}
+    notes              = Column(Text,  nullable=True)
+
+    started_at         = Column(DateTime, default=datetime.utcnow)
+    ended_at           = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_orchstep_run", "run_id"),
+        UniqueConstraint("run_id", "iteration", name="uq_orchstep_run_iter"),
+    )
+
+
+class RewardSignalRow(Base):
+    """
+    Persistent reward signals (separate table from in-memory RewardTracker).
+    Used by the dashboard + by future calls to weight RAG retrieval.
+    """
+    __tablename__ = "reward_signal"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    run_id        = Column(Integer, ForeignKey("orchestration_run.id", ondelete="CASCADE"), index=True)
+    session_id    = Column(Integer, ForeignKey("chat_session.id", ondelete="CASCADE"), index=True)
+    iteration     = Column(Integer, nullable=True)
+
+    species       = Column(String,  nullable=True)
+    surface       = Column(String,  nullable=True)
+    reaction_type = Column(String,  nullable=True)
+    predicted_trend = Column(String, nullable=True)
+    dft_value     = Column(Float,   nullable=True)
+    reward        = Column(Float,   nullable=False)
+    converged     = Column(Boolean, default=True)
+    details       = Column(Text,    nullable=True)
+
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_reward_run",     "run_id"),
+        Index("idx_reward_session", "session_id"),
+    )
+
+
+# ===========================================================================
 # Helpers
 # ===========================================================================
 

@@ -3,10 +3,159 @@
 End-to-end guide for training and evaluating the Qwen2.5-7B LoRA that
 replaces the GPT-4o-mini intent parser. This doc assumes you've already
 run Phase 1 (data generation) successfully — if `artifacts/sft_v2/` does
-not exist, see [`docs/intent_pair_generation.md`] (or just re-run
-`scripts/generate_intent_pairs.py`).
+not exist, regenerate it with:
 
-## The short version
+```bash
+DATABASE_URL=postgresql+asyncpg://yaniguan@localhost/chatdft_ase \
+  python -m scripts.export_sft_dataset --out artifacts/sft_v2
+```
+
+You have **two** training paths. Pick one:
+
+* **Path A — Modal (recommended if you don't have a GPU)**: one
+  command from your Mac, no Docker, no axolotl install, no GPU env
+  setup. See [Path A — one-command remote training via Modal](#path-a--one-command-remote-training-via-modal).
+
+* **Path B — your own GPU box**: full control, no cloud costs per
+  run, but you have to set up the axolotl env yourself. See
+  [Path B — training on a GPU workstation](#path-b--training-on-a-gpu-workstation).
+
+## The 30-second version
+
+```bash
+# Path A — Modal
+pip install modal && modal setup               # one time
+modal run scripts/train_modal.py --overfit     # ~25 min sanity check
+modal run scripts/train_modal.py               # ~90 min real run
+
+# Path B — your own GPU
+python -m scripts.verify_sft_dataset artifacts/sft_v2   # on the GPU box
+AXOLOTL_CONFIG=configs/qwen_lora_overfit.yaml \
+  bash scripts/train_qwen_lora.sh                       # overfit check
+bash scripts/train_qwen_lora.sh                         # real run
+```
+
+---
+
+## Path A — one-command remote training via Modal
+
+Modal rents GPUs by the minute and handles the Docker image, the
+package install, the CUDA toolchain, and weight persistence. You run
+**one command from your Mac** and get back a trained adapter + the
+LoRA's eval scores next to the GPT-4o-mini baseline.
+
+### Prerequisites
+
+```bash
+pip install modal        # Python SDK
+modal setup              # sign in + authorize a workspace
+```
+
+### Every run — export dataset first
+
+The SFT corpus lives in PostgreSQL and has to be exported to local
+JSONL before Modal can mount it:
+
+```bash
+DATABASE_URL=postgresql+asyncpg://yaniguan@localhost/chatdft_ase \
+  python -m scripts.export_sft_dataset --out artifacts/sft_v2
+
+python -m scripts.verify_sft_dataset artifacts/sft_v2
+# → must print "PASS" (warnings ok)
+```
+
+### Launch
+
+```bash
+# Full pipeline: overfit sanity check → real run → eval → compare to baseline
+modal run scripts/train_modal.py --overfit       # ~25 min, ~$0.45
+modal run scripts/train_modal.py                 # ~90 min, ~$1.50 + eval ~$0.05
+```
+
+Other flags:
+
+```bash
+modal run scripts/train_modal.py --preprocess-only   # tokenize + cache, no training
+modal run scripts/train_modal.py --train-only        # skip eval pass
+modal run scripts/train_modal.py --eval-only         # re-score an already-trained adapter
+modal run scripts/train_modal.py --config configs/custom.yaml
+```
+
+### What the Modal run does
+
+1. `_preflight()` — verifies `artifacts/sft_v2/train.jsonl` exists
+   and the config file is present. Fails fast with a fix hint.
+2. `train_lora.remote()` — boots a Modal container (winglian/axolotl
+   image, L4 24 GB GPU), pulls Qwen2.5-7B weights from HuggingFace
+   (first run only, then cached in a `modal.Volume`), runs
+   `axolotl preprocess` + `axolotl train`. Commits the adapter to a
+   persistent output volume.
+3. `eval_lora.remote()` — loads the just-trained adapter with
+   `peft.PeftModel.from_pretrained`, runs zero-temperature inference
+   on all 30 hand-labeled eval cases, parses the JSON, scores via the
+   harness's pure `score_case` + `aggregate` functions.
+4. Local entrypoint prints a side-by-side delta against
+   `artifacts/baseline_gpt4o_mini.json` with a ship-gate pass/fail
+   indicator. Also writes `artifacts/lora_eval.json` for future diffs.
+
+The canonical system prompt is imported from `server/chat/intent_prompt.py`
+on both ends — single source of truth, zero train/serve skew.
+
+### Cost reference
+
+| run | GPU wall time | Modal cost |
+|---|---|---|
+| `--overfit` (10 epochs × 1736 rows) | ~25 min on L4 | **~$0.45** |
+| production (`qwen_lora.yaml`, 3 epochs × 1736 rows) | ~90 min on L4 | **~$1.50** |
+| `eval_lora` | ~3 min on L4 | **~$0.05** |
+| Qwen-7B first download (one-time, then cached) | ~5 min | ~$0.10 |
+
+Override the GPU class if you want a different speed/cost tradeoff:
+
+```bash
+# Cheaper — 16 GB A10G, needs micro_batch_size=1
+# (edit configs/qwen_lora.yaml before launching)
+modal run scripts/train_modal.py --gpu A10G
+
+# Faster — A100 40 GB, ~2.5x speed for ~3x cost
+modal run scripts/train_modal.py --gpu A100-40GB
+```
+
+### Pulling the adapter back to your Mac
+
+After training, the LoRA weights live on a persistent Modal Volume:
+
+```bash
+modal volume get chatdft-intent-lora-output \
+  artifacts/qwen_lora_out ./artifacts/qwen_lora_out
+```
+
+You can then either:
+- Merge + serve via vLLM from a GPU workstation (see Path B step 6).
+- Skip merging entirely and re-run `modal run scripts/train_modal.py
+  --eval-only` as many times as you want — the adapter stays on the
+  volume and the eval is cheap.
+
+### Troubleshooting
+
+- **"artifacts/sft_v2/train.jsonl not found"**: you forgot to export
+  the dataset. See the Every-run section above.
+- **"Modal: ImagePullError"**: the axolotl image tag may have rotated.
+  Edit `_image = Image.from_registry("winglian/axolotl:main-latest"...)`
+  in `scripts/train_modal.py` and pin to a specific date tag.
+- **CUDA OOM**: drop `micro_batch_size` to 1 in the config, bump
+  `gradient_accumulation_steps` to 32 to keep effective batch = 32.
+- **eval loads model slow**: that's normal, the 15 GB base model
+  loads in ~45 s on first call. Subsequent calls are fast because
+  the HF volume is warm.
+
+---
+
+## Path B — training on a GPU workstation
+
+Local path, nothing pays per minute, but you own the env setup.
+
+### Short version
 
 ```bash
 # local (Mac, llm-agent env)

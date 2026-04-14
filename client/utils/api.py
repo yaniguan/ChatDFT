@@ -380,3 +380,34 @@ def dashboard_help() -> dict:
 
 def dashboard_alerts(window_minutes: int = 60) -> dict:
     return get("/dashboard/alerts", {"window_minutes": window_minutes})
+
+# ── Closed-loop orchestrator ────────────────────────────────────────────────
+def orchestrator_start(
+    session_id: int,
+    *,
+    max_iterations: int = 10,
+    confidence_threshold: float = 0.85,
+    no_new_actions_threshold: int = 2,
+    auto_submit: bool = False,
+    cluster: str = "hoffman2",
+    engine: str = "vasp",
+) -> dict:
+    return post("/api/orchestrator/start", {
+        "session_id": session_id,
+        "max_iterations": max_iterations,
+        "confidence_threshold": confidence_threshold,
+        "no_new_actions_threshold": no_new_actions_threshold,
+        "auto_submit": auto_submit,
+        "cluster": cluster,
+        "engine": engine,
+    })
+
+def orchestrator_status(run_id: int) -> dict:
+    return post("/api/orchestrator/status", {"run_id": run_id})
+
+def orchestrator_stop(run_id: int) -> dict:
+    return post("/api/orchestrator/stop", {"run_id": run_id})
+
+def orchestrator_runs(session_id: int, limit: int = 20) -> dict:
+    return post("/api/orchestrator/runs",
+                {"session_id": session_id, "limit": limit})

@@ -38,8 +38,10 @@ model_type: AutoModelForCausalLM
 tokenizer_type: AutoTokenizer
 trust_remote_code: false
 
+# QLoRA: 4-bit quantization slashes model memory from ~14 GB to ~4 GB,
+# making 7B training fit comfortably on a 24 GB L4/4090/3090.
 load_in_8bit: false
-load_in_4bit: false
+load_in_4bit: true
 strict: false
 
 # ── data (same exporter output as the real run) ─────────────────────────
@@ -67,13 +69,13 @@ test_datasets:
 output_dir: artifacts/qwen_lora_overfit_out
 
 # ── sequence packing ─────────────────────────────────────────────────────
-sequence_len: 4096
+sequence_len: 2048
 sample_packing: true
 pad_to_sequence_len: true
 
 # ── LoRA ─────────────────────────────────────────────────────────────────
 # Identical to production so the "it works here" signal is meaningful.
-adapter: lora
+adapter: qlora
 lora_r: 16
 lora_alpha: 32
 lora_dropout: 0.05
@@ -112,11 +114,16 @@ flash_attention: true
 
 # ── logging / eval ───────────────────────────────────────────────────────
 # Tight logging so you can SEE loss dropping step by step.
+# Step-based saving so a mid-run interruption (Modal spend cap, laptop
+# sleeping, preemption) leaves a usable checkpoint instead of nothing.
+# With ~200 steps per full overfit run, saving every 20 gives ~10
+# checkpoints — plenty of recovery granularity at minimal IO cost.
 logging_steps: 1
-save_strategy: epoch
-save_total_limit: 1
-eval_strategy: epoch
-eval_steps: 1
+save_strategy: steps
+save_steps: 20
+save_total_limit: 3
+eval_strategy: steps
+eval_steps: 20
 
 # ── misc ─────────────────────────────────────────────────────────────────
 seed: 42
